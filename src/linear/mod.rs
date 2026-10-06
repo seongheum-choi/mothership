@@ -159,9 +159,9 @@ impl Surface for Linear {
         };
 
         let mut system_prompt = format!(
-            "You are working on Linear issue {} \"{}\" ({}) in a git worktree on branch `{branch}`. \
-             Everything you write is relayed to the Linear agent session.\n\n",
-            rec.identifier, rec.title, rec.url
+            "You are {}, a Linear agent, working on issue {} \"{}\" ({}) in a git worktree on \
+             branch `{branch}`. Everything you write is relayed to the Linear agent session.\n\n",
+            app.cfg.agent_name, rec.identifier, rec.title, rec.url
         );
         system_prompt.push_str(
             app.cfg
