@@ -1,4 +1,8 @@
-use crate::{App, Res, Tokens};
+//! Linear API: webhook signatures, OAuth tokens, GraphQL.
+
+use super::Linear;
+use crate::{app::App, store::Tokens};
+use anyhow::{Context, Result, bail};
 use hmac::{Hmac, KeyInit, Mac};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -7,8 +11,8 @@ use sha2::Sha256;
 const GRAPHQL: &str = "https://api.linear.app/graphql";
 const TOKEN: &str = "https://api.linear.app/oauth/token";
 
-/// `Linear-Signature` is hex(HMAC-SHA256(secret, raw body)); a missing `webhookTimestamp`,
-/// or one more than a minute off, is treated as a replay. Same rules as `@linear/sdk` LinearWebhookClient.
+/// `Linear-Signature` is hex(HMAC-SHA256(secret, raw body)). A missing `webhookTimestamp`,
+/// or one more than a minute off, is treated as a replay.
 pub fn verify(secret: &str, body: &[u8], signature: &str, now_ms: u64) -> bool {
     let Some(sig) = decode_hex(signature) else {
         return false;
@@ -19,10 +23,10 @@ pub fn verify(secret: &str, body: &[u8], signature: &str, now_ms: u64) -> bool {
     if mac.verify_slice(&sig).is_err() {
         return false;
     }
-    let ts = serde_json::from_slice::<Value>(body)
+    serde_json::from_slice::<Value>(body)
         .ok()
-        .and_then(|v| v["webhookTimestamp"].as_u64());
-    ts.is_some_and(|ts| now_ms.abs_diff(ts) <= 60_000)
+        .and_then(|v| v["webhookTimestamp"].as_u64())
+        .is_some_and(|ts| now_ms.abs_diff(ts) <= 60_000)
 }
 
 fn decode_hex(s: &str) -> Option<Vec<u8>> {
@@ -41,12 +45,13 @@ struct TokenResponse {
     refresh_token: Option<String>,
 }
 
-impl App {
+impl Linear {
     /// GraphQL call that refreshes the OAuth token once on an auth failure (tokens expire after 24h).
-    pub async fn graphql(&self, query: &str, variables: Value) -> Res<Value> {
-        for attempt in 0..2 {
-            let token = self.store.lock().unwrap().linear.access_token.clone();
-            let res = self
+    pub async fn graphql(&self, app: &App, query: &str, variables: Value) -> Result<Value> {
+        let mut refreshed = false;
+        loop {
+            let token = app.store.read(|s| s.linear.access_token.clone());
+            let res = app
                 .http
                 .post(GRAPHQL)
                 .bearer_auth(&token)
@@ -57,68 +62,73 @@ impl App {
             let text = res.text().await?;
             let body: Value = serde_json::from_str(&text).unwrap_or_default();
             let auth_error = body["errors"].to_string().contains("AUTHENTICATION_ERROR");
-            if attempt == 0 && (status == reqwest::StatusCode::UNAUTHORIZED || auth_error) {
-                self.refresh(&token).await?;
+            if !refreshed && (status == reqwest::StatusCode::UNAUTHORIZED || auth_error) {
+                self.refresh(app, &token).await?;
+                refreshed = true;
                 continue;
             }
-            if !status.is_success() && body.get("errors").is_none() {
-                let snippet: String = text.chars().take(200).collect();
-                return Err(format!("Linear GraphQL: HTTP {status}: {snippet}").into());
-            }
             if let Some(errors) = body.get("errors") {
-                return Err(format!("Linear GraphQL: {errors}").into());
+                bail!("Linear GraphQL: {errors}");
+            }
+            if !status.is_success() {
+                let snippet: String = text.chars().take(200).collect();
+                bail!("Linear GraphQL: HTTP {status}: {snippet}");
             }
             return Ok(body["data"].clone());
         }
-        unreachable!()
     }
 
-    /// Refreshes unless another task already replaced `stale` (Linear rotates refresh tokens,
-    /// so two concurrent refreshes would invalidate each other).
-    async fn refresh(&self, stale: &str) -> Res<()> {
+    /// Refreshes unless another task already replaced `stale`. Linear rotates refresh
+    /// tokens, so two concurrent refreshes would invalidate each other.
+    async fn refresh(&self, app: &App, stale: &str) -> Result<()> {
         let _guard = self.refresh_lock.lock().await;
-        let current = self.store.lock().unwrap().linear.clone();
+        let current = app.store.read(|s| s.linear.clone());
         if current.access_token != stale {
             return Ok(());
         }
         let mut tokens = self
-            .token_request(&[
-                ("grant_type", "refresh_token"),
-                ("refresh_token", &current.refresh_token),
-            ])
+            .token_request(
+                app,
+                &[
+                    ("grant_type", "refresh_token"),
+                    ("refresh_token", &current.refresh_token),
+                ],
+            )
             .await?;
         if tokens.refresh_token.is_empty() {
             tokens.refresh_token = current.refresh_token; // not rotated this time
         }
-        self.update(|s| s.linear = tokens);
-        eprintln!("Linear token refreshed");
+        app.store.update(|s| s.linear = tokens);
+        tracing::info!("Linear token refreshed");
         Ok(())
     }
 
-    pub async fn exchange_code(&self, code: &str) -> Res<Tokens> {
-        let redirect_uri = format!("{}/callback", self.cfg.base_url);
-        self.token_request(&[
-            ("grant_type", "authorization_code"),
-            ("code", code),
-            ("redirect_uri", &redirect_uri),
-        ])
+    pub async fn exchange_code(&self, app: &App, code: &str) -> Result<Tokens> {
+        let redirect_uri = format!("{}/callback", app.cfg.base_url);
+        self.token_request(
+            app,
+            &[
+                ("grant_type", "authorization_code"),
+                ("code", code),
+                ("redirect_uri", &redirect_uri),
+            ],
+        )
         .await
     }
 
-    async fn token_request(&self, params: &[(&str, &str)]) -> Res<Tokens> {
+    async fn token_request(&self, app: &App, params: &[(&str, &str)]) -> Result<Tokens> {
         let mut form = vec![
-            ("client_id", self.cfg.client_id.as_str()),
-            ("client_secret", self.cfg.client_secret.as_str()),
+            ("client_id", app.cfg.linear.client_id.as_str()),
+            ("client_secret", app.cfg.linear.client_secret.as_str()),
         ];
         form.extend_from_slice(params);
-        let res = self.http.post(TOKEN).form(&form).send().await?;
+        let res = app.http.post(TOKEN).form(&form).send().await?;
         if !res.status().is_success() {
-            return Err(format!(
+            bail!(
                 "Linear token endpoint: {} {}",
                 res.status(),
                 res.text().await?
-            )
-            .into());
+            );
         }
         let t: TokenResponse = res.json().await?;
         Ok(Tokens {
@@ -127,20 +137,21 @@ impl App {
         })
     }
 
-    /// Posts an agent activity; failures are logged, never fatal to the session.
-    pub async fn activity(&self, session_id: &str, content: Value, ephemeral: bool) {
+    /// Posts an agent activity. Failures are logged, never fatal to the session.
+    pub async fn activity(&self, app: &App, session_id: &str, content: Value, ephemeral: bool) {
         let query = "mutation($input: AgentActivityCreateInput!) { agentActivityCreate(input: $input) { success } }";
         let input =
             json!({ "agentSessionId": session_id, "content": content, "ephemeral": ephemeral });
-        if let Err(e) = self.graphql(query, json!({ "input": input })).await {
-            eprintln!("[{session_id}] activity failed: {e}");
+        if let Err(e) = self.graphql(app, query, json!({ "input": input })).await {
+            tracing::warn!("[{session_id}] activity failed: {e:#}");
         }
     }
 
-    /// Linear's suggested git branch name for the issue (the "Copy git branch name" value).
-    pub async fn branch_name(&self, issue_id: &str) -> Res<String> {
+    /// Linear's suggested git branch name for the issue ("Copy git branch name").
+    pub async fn branch_name(&self, app: &App, issue_id: &str) -> Result<String> {
         let data = self
             .graphql(
+                app,
                 "query($id: String!) { issue(id: $id) { branchName } }",
                 json!({ "id": issue_id }),
             )
@@ -148,7 +159,7 @@ impl App {
         data["issue"]["branchName"]
             .as_str()
             .map(String::from)
-            .ok_or_else(|| "issue has no branchName".into())
+            .context("issue has no branchName")
     }
 }
 

@@ -1,51 +1,75 @@
 # mothership
 
-A minimal Linear agent that replaces Cyrus. A Linear agent session gets a git worktree and a `claude -p` run in it, and the run's output is relayed back to the session as agent activities.
+An agent deployer. mothership runs Claude Code agents for Linear agent sessions and Zulip conversations. Each Linear issue gets its own git worktree, and the agent's progress goes back to wherever the request came from.
 
-Stage 1 scope: Linear webhooks, a single repository, the Claude runner, and an optional Cloudflare tunnel. GitHub, Zulip, Codex, and Gerrit come later.
+Inspired by [Cyrus](https://github.com/cyrusagents/cyrus) (Apache-2.0). This is an independent implementation in Rust.
 
-## Flow
+## How it works
 
-1. `POST /linear-webhook` (or `/webhook`, the path Cyrus-era Linear apps use) checks the `Linear-Signature` HMAC and `webhookTimestamp`, answers 200 straight away, and handles the event in the background.
-2. `AgentSessionEvent/created` and `prompted` queue a prompt for that session. A `stop` signal kills the running turn.
-3. Each turn posts an ephemeral "Working on it…" thought, then sets up `<WORKTREES_DIR>/<ISSUE-ID>` on Linear's `branchName`, cut from `origin/<BASE_BRANCH>` with no upstream (so a bare `git push` never targets the base branch). If the branch already exists locally or on origin, that branch is used, and if it is already checked out in another worktree, that worktree is reused. Only one `claude` runs per worktree at a time. It then runs:
-   `claude -p --output-format stream-json --verbose --permission-mode bypassPermissions --strict-mcp-config --mcp-config <linear MCP> [MCP_CONFIGS] --append-system-prompt … [--resume <id>]`
-4. Assistant text is posted as `thought`, a tool call as an ephemeral `action`, `TodoWrite` as a checklist `thought`, and the result as `response` or `error`.
-5. Prompts that arrive during a turn are combined into the next turn, which resumes the same Claude session.
+| Surface | Request | Workspace | What the requester sees |
+| --- | --- | --- | --- |
+| Linear | Agent session created on an issue (delegation or @mention), or a prompt in it | `<WORKTREES_DIR>/<ISSUE-ID>` on Linear's `branchName` | Agent activities: thoughts, tool actions, progress lines, final response |
+| Zulip | @mention in a channel, or a direct message to the outgoing-webhook bot | `<home>/zulip-workspaces/<thread>`; the repo is read-only | :eyes: on receipt, then the reply and :check: |
 
-State (Linear OAuth tokens and session → worktree/Claude session id) is kept in `<MOTHERSHIP_HOME>/state.json` with mode 0600.
+- **One conversation, one worker:** turns run back to back, and each one resumes the same Claude session (`--resume`).
+- **Prompts during a turn:** a prompt that arrives while the agent works goes straight into the running process (`--input-format stream-json`), and Claude folds it into the current turn. Input closes at the turn's result, so anything later starts the next turn.
+- **Stop:** a Linear stop signal kills the agent's whole process group.
+- **Worktrees:** a new branch is cut from `origin/<BASE_BRANCH>` with no upstream, so a bare `git push` never targets the base branch. An existing local or remote branch is continued, and an existing checkout is reused. Only one agent runs per worktree at a time.
+- **Home directory:** agents may read only their workspace, the main clone, and plugin directories. Every other entry under `$HOME` gets a `Read` deny rule. Claude Code applies deny rules under `bypassPermissions` too, and checks reading shell commands against them.
+- **Progress:** every agent process gets `MOTHERSHIP_PROGRESS_FILE`. Lines that tools or skills append to it, from any depth of the process tree, show up in Linear as thoughts. Long-running skill workflows use it to report their phases.
+- **Environment:** `MOTHERSHIP_AGENT` (the `AGENT_NAME` setting) and `MOTHERSHIP_SURFACE` (`linear` or `zulip`) let hooks and skills tell where they run.
+
+Agents run as `claude -p --input-format stream-json --output-format stream-json`. The `--settings` deny rules, `--mcp-config` (Linear's hosted MCP with the app token, plus `MCP_CONFIGS`), and `--plugin-dir` for each plugin are generated per turn.
+
+## Extending
+
+| To add | Where |
+| --- | --- |
+| A chat or tracker (Slack, GitHub comments) | Implement `session::Surface` and add its routes in `app.rs` |
+| A tunnel (ngrok, ...) | A `tunnel::Tunnel` variant and its command |
+| A review system (Gerrit) | A `review::ReviewBackend` variant |
+| An agent runtime (Codex) | A runner that turns its output into `agent::Event`s |
+| Skills for every session | Drop a Claude Code plugin directory into `<home>/plugins/`; it loads on the next turn |
 
 ## Settings
 
-Settings come from the process environment or `~/.mothership/.env` (`MOTHERSHIP_HOME` overrides the directory). The process environment wins.
+Settings come from the process environment or `<home>/.env`, and the environment wins. `<home>` is `~/.mothership` unless `MOTHERSHIP_HOME` says otherwise.
 
-| Key | Required | Default |
+| Key | Default | |
 | --- | --- | --- |
-| `BASE_URL` | yes | public URL; the OAuth redirect is `<BASE_URL>/callback` |
-| `LINEAR_CLIENT_ID`, `LINEAR_CLIENT_SECRET`, `LINEAR_WEBHOOK_SECRET` | yes | |
-| `REPO_PATH` | yes | main clone that worktrees are cut from |
-| `BIND` | | `127.0.0.1:3456` |
-| `BASE_BRANCH` | | `main` |
-| `WORKTREES_DIR` | | `<MOTHERSHIP_HOME>/worktrees` |
-| `CLAUDE_BIN`, `CLAUDE_MODEL`, `CLAUDE_FALLBACK_MODEL` | | `claude`, `opus`, `sonnet` |
-| `MCP_CONFIGS` | | comma-separated extra MCP config files |
-| `APPEND_SYSTEM_PROMPT_FILE` | | replaces the default "commit, push, open a PR" instructions |
-| `CLOUDFLARE_TOKEN` | | runs `cloudflared tunnel run` with this remotely-managed tunnel token |
-| `CLOUDFLARED_BIN` | | `cloudflared` |
-| `LINEAR_ACCESS_TOKEN`, `LINEAR_REFRESH_TOKEN` | | seed tokens, used only when `state.json` has none |
+| `BASE_URL` | required | Public URL; the OAuth redirect is `<BASE_URL>/callback` |
+| `LINEAR_CLIENT_ID`, `LINEAR_CLIENT_SECRET`, `LINEAR_WEBHOOK_SECRET` | required | |
+| `REPO_PATH` | required | Main clone that worktrees are cut from |
+| `BIND` | `127.0.0.1:3456` | |
+| `AGENT_NAME` | `mothership` | Exported as `MOTHERSHIP_AGENT` |
+| `BASE_BRANCH` | `main` | |
+| `WORKTREES_DIR` | `<home>/worktrees` | |
+| `CLAUDE_BIN`, `CLAUDE_MODEL`, `CLAUDE_FALLBACK_MODEL` | `claude`, `opus`, `sonnet` | |
+| `CHAT_PERMISSION_MODE` | `auto` | Issue sessions always use `bypassPermissions` |
+| `MCP_CONFIGS` | | Comma-separated extra MCP config files |
+| `REVIEW_BACKEND` | `github` | |
+| `APPEND_SYSTEM_PROMPT_FILE` | | Replaces the review backend's instructions in issue sessions |
+| `ZULIP_SITE`, `ZULIP_BOT_EMAIL`, `ZULIP_API_KEY`, `ZULIP_WEBHOOK_TOKEN` | | Turn on Zulip (`POST /zulip-webhook`) |
+| `CLOUDFLARE_TOKEN`, `CLOUDFLARED_BIN` | | Supervise a remotely-managed Cloudflare tunnel |
+| `LINEAR_ACCESS_TOKEN`, `LINEAR_REFRESH_TOKEN` | | Seed tokens, used only while `state.json` has none |
+
+State (Linear tokens, and each conversation's workspace and Claude session id) is kept in `<home>/state.json` with mode 0600.
 
 ## Linear auth
 
-Open `<BASE_URL>/oauth/authorize` to install the app with `actor=app`. It works only while no token is stored, because the endpoint is public; to install again, clear `linear` in `state.json` and restart. To move over from Cyrus without installing again, copy `linearToken` and `linearRefreshToken` from `~/.cyrus/config.json` into the seed variables. Tokens refresh by themselves on a 401.
+Open `<BASE_URL>/oauth/authorize` to install the app with `actor=app`. It works only while no token is stored, because the endpoint is public. To install again, clear `linear` in `state.json` and restart. Tokens refresh by themselves when Linear rejects them.
 
 ## Tunnel
 
-mothership has no tunnel code apart from the Cloudflare one. ngrok, or a `cloudflared` you run yourself, only needs to forward to `BIND`. With `CLOUDFLARE_TOKEN` set, mothership supervises `cloudflared` itself and restarts it 5 seconds after it exits. The hostname → `http://localhost:<port>` route is configured in the Cloudflare dashboard, the same contract as Cyrus' `CLOUDFLARE_TOKEN`.
+Any tunnel that forwards to `BIND` works. With `CLOUDFLARE_TOKEN` set, mothership runs `cloudflared tunnel run` itself and restarts it 5 seconds after it exits. The tunnel's hostname → `http://localhost:<port>` route is configured in the Cloudflare dashboard.
 
 ## Develop
 
+See [AGENTS.md](AGENTS.md) for the code standards.
+
 ```sh
-mise install   # Rust 1.99 (mise.toml)
-cargo test
+mise install          # Rust 1.99 (mise.toml)
+scripts/check.sh      # fmt, clippy (pedantic, warnings are errors), tests
+git config core.hooksPath .githooks   # run the check before every commit
 cargo run
 ```

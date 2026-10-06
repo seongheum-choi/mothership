@@ -1,0 +1,115 @@
+//! Durable state: Linear OAuth tokens and per-session bookkeeping, in `<home>/state.json`.
+
+use serde::{Deserialize, Serialize};
+use std::fmt::Write as _;
+use std::{
+    collections::HashMap,
+    io::{Read, Write},
+    os::unix::fs::OpenOptionsExt,
+    path::{Path, PathBuf},
+    sync::Mutex,
+};
+
+#[derive(Serialize, Deserialize, Default, Clone)]
+pub struct Tokens {
+    pub access_token: String,
+    pub refresh_token: String,
+}
+
+/// One conversation: a Linear agent session or a Zulip thread.
+#[derive(Serialize, Deserialize, Default, Clone)]
+#[serde(default)]
+pub struct SessionRec {
+    /// Linear issue fields; empty for chat threads.
+    pub issue_id: String,
+    pub identifier: String,
+    pub title: String,
+    pub url: String,
+    #[serde(alias = "worktree")]
+    pub workspace: Option<PathBuf>,
+    pub branch: Option<String>,
+    pub claude_session_id: Option<String>,
+    /// Zulip: id of the newest topic message the agent has already seen.
+    pub cursor: Option<u64>,
+}
+
+#[derive(Serialize, Deserialize, Default)]
+pub struct State {
+    #[serde(default)]
+    pub linear: Tokens,
+    #[serde(default)]
+    pub sessions: HashMap<String, SessionRec>,
+}
+
+pub struct Store {
+    path: PathBuf,
+    state: Mutex<State>,
+}
+
+impl Store {
+    pub fn open(path: PathBuf) -> anyhow::Result<Self> {
+        let state = match std::fs::read(&path) {
+            Ok(bytes) => serde_json::from_slice(&bytes)?,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => State::default(),
+            Err(e) => return Err(e.into()),
+        };
+        Ok(Self {
+            path,
+            state: Mutex::new(state),
+        })
+    }
+
+    pub fn read<T>(&self, f: impl FnOnce(&State) -> T) -> T {
+        f(&self.state.lock().expect("store lock poisoned"))
+    }
+
+    /// Applies `f` and persists the result. A failed write is logged, not returned: the
+    /// in-memory state stays authoritative and the next update retries the write.
+    pub fn update<T>(&self, f: impl FnOnce(&mut State) -> T) -> T {
+        let mut state = self.state.lock().expect("store lock poisoned");
+        let out = f(&mut state);
+        let written = serde_json::to_vec_pretty(&*state)
+            .map_err(std::io::Error::from)
+            .and_then(|bytes| write_private(&self.path, &bytes));
+        if let Err(e) = written {
+            tracing::error!("saving {}: {e}", self.path.display());
+        }
+        out
+    }
+}
+
+/// Atomic 0600 write: readers see the old file or the new one, never a partial one.
+pub fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    let tmp = path.with_extension(format!("{}.tmp", random_hex(4)));
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&tmp)?;
+    file.write_all(bytes)?;
+    std::fs::rename(&tmp, path)
+}
+
+pub fn random_hex(bytes: usize) -> String {
+    let mut buf = vec![0u8; bytes];
+    std::fs::File::open("/dev/urandom")
+        .and_then(|mut f| f.read_exact(&mut buf))
+        .expect("/dev/urandom is readable");
+    buf.iter().fold(String::new(), |mut hex, b| {
+        let _ = write!(hex, "{b:02x}");
+        hex
+    })
+}
+
+/// A session key as a single file or directory name.
+pub fn file_name(key: &str) -> String {
+    key.chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '.' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
