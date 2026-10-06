@@ -2,7 +2,9 @@
 
 An agent deployer. mothership runs Claude Code agents for Linear agent sessions and Zulip conversations. Each Linear issue gets its own git worktree, and the agent's progress goes back to wherever the request came from.
 
-Inspired by [Cyrus](https://github.com/cyrusagents/cyrus) (Apache-2.0). This is an independent implementation in Rust.
+Inspired by [Cyrus](https://github.com/cyrusagents/cyrus) (Apache-2.0); the home directory read restrictions follow its approach. This is an independent implementation in Rust.
+
+Licensed under the [Apache License 2.0](LICENSE).
 
 ## How it works
 

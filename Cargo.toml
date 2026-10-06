@@ -3,6 +3,9 @@ name = "mothership"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.99"
+description = "Agent deployer: runs Claude Code agents for Linear agent sessions and Zulip conversations"
+license = "Apache-2.0"
+repository = "https://github.com/seongheum-choi/mothership"
 
 [dependencies]
 anyhow = "1.0.104"
