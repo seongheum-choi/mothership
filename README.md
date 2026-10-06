@@ -66,6 +66,35 @@ Open `<BASE_URL>/oauth/authorize` to install the app with `actor=app`. It works 
 
 Any tunnel that forwards to `BIND` works. With `CLOUDFLARE_TOKEN` set, mothership runs `cloudflared tunnel run` itself and restarts it 5 seconds after it exits. The tunnel's hostname → `http://localhost:<port>` route is configured in the Cloudflare dashboard.
 
+## Operating on macOS (launchd)
+
+[`contrib/launchd/mothership.plist`](contrib/launchd/mothership.plist) is a user-agent template: it logs to `~/.mothership/logs/`, restarts the binary (`RunAtLoad`, `KeepAlive`, `ThrottleInterval`, `ProcessType=Background`), and carries only `PATH` in `EnvironmentVariables`. Secrets stay in `~/.mothership/.env`. Edit every `/Users/YOU` path and the binary path first — launchd does not expand `~`.
+
+```sh
+cp contrib/launchd/mothership.plist ~/Library/LaunchAgents/com.mothership.agent.plist
+mkdir -p ~/.mothership/logs
+
+# Install and start (idempotent: bootout first to reload after edits)
+launchctl bootstrap gui/$UID ~/Library/LaunchAgents/com.mothership.agent.plist
+
+# Restart in place
+launchctl kickstart -k gui/$UID/com.mothership.agent
+
+# Logs
+tail -f ~/.mothership/logs/mothership.out.log ~/.mothership/logs/mothership.err.log
+
+# Remove
+launchctl bootout gui/$UID/com.mothership.agent
+```
+
+Before a restart, check the server is not mid-turn, or `kickstart -k` will kill a running agent:
+
+```sh
+curl -s localhost:3456/status   # restart only when this reports {"status":"idle"}
+```
+
+On Linux, run it as a systemd user service instead — see [`contrib/systemd/mothership.service`](contrib/systemd/mothership.service), whose header lists the matching `systemctl --user` commands.
+
 ## Develop
 
 See [AGENTS.md](AGENTS.md) for the code standards.

@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  launchd user agent for mothership on macOS.
+
+  Replace every /Users/YOU path and the mothership binary path before use, then
+  install per the "Operating on macOS (launchd)" section of the README. launchd
+  does not expand ~, so all paths must be absolute.
+
+  Secrets stay out of this file: mothership reads them from ~/.mothership/.env.
+  EnvironmentVariables holds only PATH, so the binary and the tools it spawns
+  (claude, git, cloudflared) are found under the launchd (non-login) session.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.mothership.agent</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/YOU/path/to/mothership</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/YOU/.mothership</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+
+    <key>StandardOutPath</key>
+    <string>/Users/YOU/.mothership/logs/mothership.out.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/YOU/.mothership/logs/mothership.err.log</string>
+</dict>
+</plist>

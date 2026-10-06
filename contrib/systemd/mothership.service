@@ -1,0 +1,33 @@
+# systemd user service for mothership on Linux (e.g. a remote server).
+#
+# Install as a per-user service so it runs under your login, matching the
+# macOS launchd user agent:
+#
+#   mkdir -p ~/.config/systemd/user
+#   cp contrib/systemd/mothership.service ~/.config/systemd/user/
+#   # edit the paths below, then:
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now mothership
+#   loginctl enable-linger "$USER"   # keep it running after you log out
+#
+# Restart (after /status reports idle):   systemctl --user restart mothership
+# Logs:                                    journalctl --user -u mothership -f
+# Remove:                                  systemctl --user disable --now mothership
+#
+# Secrets stay in ~/.mothership/.env, which mothership loads itself; keep them
+# out of this unit. Replace every /home/YOU path before use.
+
+[Unit]
+Description=mothership agent deployer
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/home/YOU/path/to/mothership
+WorkingDirectory=/home/YOU/.mothership
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target
