@@ -13,10 +13,14 @@ mod worktree;
 mod zulip;
 
 use anyhow::{Context, Result};
+use std::io::IsTerminal;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    tracing_subscriber::fmt().with_target(false).init();
+    tracing_subscriber::fmt()
+        .with_target(false)
+        .with_ansi(std::io::stdout().is_terminal()) // plain text in pm2/systemd logs
+        .init();
     let mut cfg = config::Config::load()?;
     let tunnel = cfg.tunnel.take();
     let app = app::App::new(cfg)?;
