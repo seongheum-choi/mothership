@@ -13,6 +13,9 @@ pub struct Config {
     /// Exported to every agent process as `MOTHERSHIP_AGENT`, so hooks and skills can tell
     /// which deployment they run under.
     pub agent_name: String,
+    /// Secrets and settings forwarded into every agent process, resolved from the `AGENT_ENV`
+    /// key list so values like `CLAUDE_CODE_OAUTH_TOKEN` can live only in `<home>/.env`.
+    pub agent_env: Vec<(String, String)>,
     pub linear: LinearConfig,
     pub zulip: Option<ZulipConfig>,
     /// Main clone that issue worktrees are cut from.
@@ -93,6 +96,12 @@ impl Config {
             agent_name: vars
                 .get("AGENT_NAME")
                 .unwrap_or_else(|| "mothership".into()),
+            agent_env: vars.resolve_keys(
+                &vars
+                    .get("AGENT_ENV")
+                    .map(|list| parse_env_keys(&list))
+                    .unwrap_or_default(),
+            ),
             linear: LinearConfig {
                 client_id: vars.require("LINEAR_CLIENT_ID")?,
                 client_secret: vars.require("LINEAR_CLIENT_SECRET")?,
@@ -184,5 +193,64 @@ impl Vars {
                 self.file_path.display()
             )
         })
+    }
+
+    /// Pair each key with its value, warning about any key that has none so a missing secret
+    /// is visible at startup rather than as a silent agent failure.
+    fn resolve_keys(&self, keys: &[String]) -> Vec<(String, String)> {
+        keys.iter()
+            .filter_map(|key| {
+                if let Some(value) = self.get(key) {
+                    return Some((key.clone(), value));
+                }
+                tracing::warn!(
+                    "AGENT_ENV lists {key}, but it has no value in the environment or {}",
+                    self.file_path.display()
+                );
+                None
+            })
+            .collect()
+    }
+}
+
+/// Split a comma-separated `AGENT_ENV` list into keys: trimmed, empties dropped, first
+/// occurrence of each kept.
+fn parse_env_keys(list: &str) -> Vec<String> {
+    let mut keys: Vec<String> = Vec::new();
+    for key in list.split(',').map(str::trim).filter(|k| !k.is_empty()) {
+        if !keys.iter().any(|seen| seen == key) {
+            keys.push(key.to_string());
+        }
+    }
+    keys
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_env_keys;
+
+    #[test]
+    fn parses_trimmed_nonempty_keys() {
+        assert_eq!(
+            parse_env_keys("CLAUDE_CODE_OAUTH_TOKEN, CLAUDE_CODE_EFFORT_LEVEL"),
+            ["CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_EFFORT_LEVEL"]
+        );
+    }
+
+    #[test]
+    fn drops_empty_entries() {
+        assert_eq!(parse_env_keys(" , A ,, B , "), ["A", "B"]);
+    }
+
+    #[test]
+    fn deduplicates_keeping_first() {
+        assert_eq!(parse_env_keys("A,B,A"), ["A", "B"]);
+    }
+
+    #[test]
+    fn empty_list_yields_no_keys() {
+        let none: [String; 0] = [];
+        assert_eq!(parse_env_keys(""), none);
+        assert_eq!(parse_env_keys("   "), none);
     }
 }

@@ -64,12 +64,15 @@ impl App {
         lock.lock_owned().await
     }
 
-    /// Environment every agent process gets, so hooks and skills know where they run.
+    /// Environment every agent process gets: the `MOTHERSHIP_*` markers so hooks and skills know
+    /// where they run, plus the `AGENT_ENV` keys resolved from the environment or `<home>/.env`.
     pub fn agent_env(&self, surface: &str) -> Vec<(String, String)> {
-        vec![
+        let mut env = vec![
             ("MOTHERSHIP_AGENT".into(), self.cfg.agent_name.clone()),
             ("MOTHERSHIP_SURFACE".into(), surface.into()),
-        ]
+        ];
+        env.extend(self.cfg.agent_env.iter().cloned());
+        env
     }
 
     fn busy(&self) -> bool {
