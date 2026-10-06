@@ -107,6 +107,15 @@ impl<S: Surface> Registry<S> {
         live.get(key).is_some_and(|tx| tx.send(Msg::Stop).is_ok())
     }
 
+    /// Stops every running conversation. Returns how many were told to stop; each reports
+    /// `Outcome::Stopped` and its worker leaves `live` once its agent has been killed.
+    pub fn stop_all(&self) -> usize {
+        let live = self.live.lock().expect("live lock poisoned");
+        live.values()
+            .filter(|tx| tx.send(Msg::Stop).is_ok())
+            .count()
+    }
+
     pub fn busy(&self) -> bool {
         !self.live.lock().expect("live lock poisoned").is_empty()
     }
