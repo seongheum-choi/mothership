@@ -29,6 +29,12 @@ mothership is a long-running service that other people's work depends on, so cha
 | `sandbox.rs` | Home directory read restrictions |
 | `tunnel.rs`, `review.rs` | Extension points for ingress and review systems |
 
+## Git
+
+- Pull requests merge by rebase only; merge commits and squash merges are turned off, and a ruleset keeps `main` history linear.
+- Bring a branch up to date with `git rebase origin/main`, never by merging `main` into it, then push with `git push --force-with-lease`.
+- Keep each commit buildable and self-explanatory, since rebase merging keeps them all on `main`.
+
 ## Before committing
 
 Run `scripts/check.sh`. The `.githooks/pre-commit` hook runs it when `core.hooksPath` points at `.githooks`.
