@@ -14,6 +14,7 @@ mod zulip;
 
 use anyhow::{Context, Result};
 use std::io::IsTerminal;
+use std::time::Duration;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -42,6 +43,42 @@ async fn main() -> Result<()> {
         app.cfg.bind,
         if app.zulip.is_some() { "on" } else { "off" }
     );
-    axum::serve(listener, app.router()).await?;
+    axum::serve(listener, app.router())
+        .with_graceful_shutdown(shutdown_signal())
+        .await?;
+    // The HTTP server stopped accepting requests; stop the agents it left running.
+    app.shutdown(Duration::from_secs(10)).await;
+    tracing::info!("shutdown complete");
     Ok(())
+}
+
+/// Resolves on the first SIGTERM (launchd, pm2, systemd) or SIGINT (Ctrl-C).
+async fn shutdown_signal() {
+    #[cfg(unix)]
+    let term = async {
+        use tokio::signal::unix::{SignalKind, signal};
+        match signal(SignalKind::terminate()) {
+            Ok(mut term) => {
+                term.recv().await;
+            }
+            Err(e) => {
+                tracing::error!("cannot listen for SIGTERM: {e:#}");
+                std::future::pending::<()>().await;
+            }
+        }
+    };
+    #[cfg(not(unix))]
+    let term = std::future::pending::<()>();
+
+    let int = async {
+        if let Err(e) = tokio::signal::ctrl_c().await {
+            tracing::error!("cannot listen for SIGINT: {e:#}");
+            std::future::pending::<()>().await;
+        }
+    };
+
+    tokio::select! {
+        () = term => tracing::info!("SIGTERM received; shutting down"),
+        () = int => tracing::info!("SIGINT received; shutting down"),
+    }
 }

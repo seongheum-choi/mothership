@@ -8,6 +8,7 @@ use std::{
     collections::HashMap,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
+    time::Duration,
 };
 
 pub struct App {
@@ -77,6 +78,27 @@ impl App {
 
     fn busy(&self) -> bool {
         self.linear.busy() || self.zulip.as_ref().is_some_and(|z| z.busy())
+    }
+
+    /// Stops every running session and waits for their agent process trees to be killed,
+    /// giving up after `grace`. Returns at once when nothing is running.
+    pub async fn shutdown(&self, grace: Duration) {
+        let stopped = self.linear.stop_all() + self.zulip.as_ref().map_or(0, |z| z.stop_all());
+        if stopped == 0 {
+            return;
+        }
+        tracing::info!(
+            "stopping {stopped} running session(s), up to {}s",
+            grace.as_secs()
+        );
+        let drained = async {
+            while self.busy() {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        };
+        if tokio::time::timeout(grace, drained).await.is_err() {
+            tracing::warn!("grace period elapsed; exiting with sessions still stopping");
+        }
     }
 }
 
