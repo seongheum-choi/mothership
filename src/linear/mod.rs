@@ -86,6 +86,7 @@ async fn handle(app: Arc<App>, p: Value) {
             .to_string(),
         _ => return,
     };
+    tracing::info!("[{sid}] linear {} on {}", p["action"], issue["identifier"]);
     let field = |k: &str| issue[k].as_str().unwrap_or_default().to_string();
     app.store.update(|s| {
         let rec = s.sessions.entry(sid.to_string()).or_default();

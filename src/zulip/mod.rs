@@ -68,6 +68,7 @@ async fn handle(app: Arc<App>, p: Value) {
         tracing::warn!("zulip reaction failed: {e:#}");
     }
     let (key, dest, location) = conversation(message);
+    tracing::info!("[{key}] zulip message {message_id}");
 
     let mut prompt = String::new();
     if let Destination::Stream { topic, .. } = &dest

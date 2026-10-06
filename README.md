@@ -46,7 +46,7 @@ Settings come from the process environment or `<home>/.env`, and the environment
 | `AGENT_NAME` | `mothership` | Exported as `MOTHERSHIP_AGENT` |
 | `BASE_BRANCH` | `main` | |
 | `WORKTREES_DIR` | `<home>/worktrees` | |
-| `CLAUDE_BIN`, `CLAUDE_MODEL`, `CLAUDE_FALLBACK_MODEL` | `claude`, `opus`, `sonnet` | |
+| `CLAUDE_BIN`, `CLAUDE_MODEL`, `CLAUDE_FALLBACK_MODEL` | `claude`, `opus`, `sonnet` | On macOS with the native installer, point `CLAUDE_BIN` at `~/.local/share/claude/ClaudeCode.app/Contents/MacOS/claude`; launched through `~/.local/bin/claude`, privacy prompts name a version number ("2.1.x") that changes with every update |
 | `CHAT_PERMISSION_MODE` | `auto` | Issue sessions always use `bypassPermissions` |
 | `MCP_CONFIGS` | | Comma-separated extra MCP config files |
 | `REVIEW_BACKEND` | `github` | |
