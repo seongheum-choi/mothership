@@ -1,6 +1,10 @@
 use crate::{App, Res, SessionRec};
 use serde_json::{Value, json};
-use std::{os::unix::fs::OpenOptionsExt, path::Path, process::Stdio, sync::Arc};
+use std::{
+    path::{Path, PathBuf},
+    process::Stdio,
+    sync::Arc,
+};
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     process::Command,
@@ -91,19 +95,20 @@ async fn submit(app: &Arc<App>, sid: &str, issue: &Value, prompt: String) {
 }
 
 async fn stop(app: &Arc<App>, sid: &str) {
-    let tx = app.live.lock().unwrap().get(sid).cloned();
-    match tx {
-        Some(tx) => {
-            let _ = tx.send(Msg::Stop);
-        }
-        None => {
-            app.activity(
-                sid,
-                json!({ "type": "response", "body": "Stopped." }),
-                false,
-            )
-            .await
-        }
+    // Send under the lock (see submit); a failed send means the worker is gone.
+    let delivered = app
+        .live
+        .lock()
+        .unwrap()
+        .get(sid)
+        .is_some_and(|tx| tx.send(Msg::Stop).is_ok());
+    if !delivered {
+        app.activity(
+            sid,
+            json!({ "type": "response", "body": "Stopped." }),
+            false,
+        )
+        .await
     }
 }
 
@@ -166,6 +171,14 @@ async fn run_turn(
     .await;
     let rec = ensure_worktree(app, sid).await?;
     let worktree = rec.worktree.clone().expect("set by ensure_worktree");
+    let lock = app
+        .worktree_locks
+        .lock()
+        .unwrap()
+        .entry(worktree.clone())
+        .or_default()
+        .clone();
+    let _turn = lock.lock().await;
 
     let mut cmd = Command::new(&app.cfg.claude_bin);
     cmd.args(["-p", "--output-format", "stream-json", "--verbose"])
@@ -181,7 +194,7 @@ async fn run_turn(
             &app.cfg.fallback_model,
         ])
         .arg("--mcp-config")
-        .arg(write_linear_mcp_config(app)?)
+        .arg(write_linear_mcp_config(app, sid)?)
         .args(&app.cfg.mcp_configs)
         .arg("--append-system-prompt")
         .arg(system_prompt(app, &rec));
@@ -194,6 +207,7 @@ async fn run_turn(
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .kill_on_drop(true)
+        .process_group(0) // so Stop can take down the tools claude started, too
         .spawn()
         .map_err(|e| format!("spawning {}: {e}", app.cfg.claude_bin))?;
     // Prompt over stdin: no argv length limit, and it stays out of `ps`.
@@ -222,6 +236,9 @@ async fn run_turn(
                     app.activity(sid, json!({ "type": "thought", "body": "Noted, I'll pick this up when the current step finishes." }), true).await;
                 }
                 Msg::Stop => {
+                    if let Some(pid) = child.id() {
+                        let _ = Command::new("kill").args(["-KILL", &format!("-{pid}")]).status().await;
+                    }
                     child.kill().await.ok();
                     queued.clear();
                     app.activity(sid, json!({ "type": "response", "body": "Stopped." }), false).await;
@@ -249,26 +266,43 @@ async fn ensure_worktree(app: &App, sid: &str) -> Res<SessionRec> {
             rec.identifier.to_lowercase()
         }
     };
-    let path = app.cfg.worktrees_dir.join(&rec.identifier);
-    if !path.exists() {
-        let repo = &app.cfg.repo;
-        if let Err(e) = git(repo, &["fetch", "origin"]).await {
-            eprintln!("[{sid}] git fetch failed, using local refs: {e}");
-        }
-        let p = path.to_str().ok_or("worktree path is not UTF-8")?;
-        if git(
-            repo,
-            &["rev-parse", "--verify", &format!("refs/heads/{branch}")],
-        )
-        .await
-        .is_ok()
-        {
-            git(repo, &["worktree", "add", p, &branch]).await?;
-        } else {
-            let base = format!("origin/{}", app.cfg.base_branch);
-            git(repo, &["worktree", "add", "-b", &branch, p, &base]).await?;
-        }
+    let repo = &app.cfg.repo;
+    if let Err(e) = git(repo, &["fetch", "origin"]).await {
+        eprintln!("[{sid}] git fetch failed, using local refs: {e}");
     }
+    let path = match checked_out_at(
+        &git(repo, &["worktree", "list", "--porcelain"]).await?,
+        &branch,
+    ) {
+        // git refuses a second checkout of a branch (an earlier session, a Cyrus worktree): reuse it.
+        Some(existing) => existing,
+        None => {
+            let path = app.cfg.worktrees_dir.join(&rec.identifier);
+            if !path.exists() {
+                let p = path.to_str().ok_or("worktree path is not UTF-8")?;
+                let has = |r: String| async move {
+                    git(repo, &["rev-parse", "--verify", "--quiet", &r])
+                        .await
+                        .is_ok()
+                };
+                if has(format!("refs/heads/{branch}")).await {
+                    git(repo, &["worktree", "add", p, &branch]).await?;
+                } else if has(format!("refs/remotes/origin/{branch}")).await {
+                    let remote = format!("origin/{branch}");
+                    git(repo, &["worktree", "add", "-b", &branch, p, &remote]).await?;
+                } else {
+                    // --no-track: otherwise the upstream is origin/<base> and a bare `git push` targets it.
+                    let base = format!("origin/{}", app.cfg.base_branch);
+                    git(
+                        repo,
+                        &["worktree", "add", "--no-track", "-b", &branch, p, &base],
+                    )
+                    .await?;
+                }
+            }
+            path
+        }
+    };
     Ok(app.update(|s| {
         let r = s.sessions.get_mut(sid).expect("inserted by submit");
         r.worktree = Some(path);
@@ -277,7 +311,19 @@ async fn ensure_worktree(app: &App, sid: &str) -> Res<SessionRec> {
     }))
 }
 
-async fn git(repo: &Path, args: &[&str]) -> Res<()> {
+/// Path of the worktree that has `branch` checked out, from `git worktree list --porcelain`.
+fn checked_out_at(porcelain: &str, branch: &str) -> Option<PathBuf> {
+    let want = format!("branch refs/heads/{branch}");
+    porcelain.split("\n\n").find_map(|block| {
+        let path = block.lines().find_map(|l| l.strip_prefix("worktree "))?;
+        block
+            .lines()
+            .any(|l| l == want)
+            .then(|| PathBuf::from(path))
+    })
+}
+
+async fn git(repo: &Path, args: &[&str]) -> Res<String> {
     let out = Command::new("git")
         .arg("-C")
         .arg(repo)
@@ -292,26 +338,22 @@ async fn git(repo: &Path, args: &[&str]) -> Res<()> {
         )
         .into());
     }
-    Ok(())
+    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
 /// Linear's hosted MCP with the app token, rewritten per turn so it carries the current token.
 // ponytail: a turn longer than the 24h token lifetime loses Linear MCP mid-turn; proxy MCP through mothership if that ever happens.
-fn write_linear_mcp_config(app: &App) -> Res<std::path::PathBuf> {
+fn write_linear_mcp_config(app: &App, sid: &str) -> Res<PathBuf> {
     let token = app.store.lock().unwrap().linear.access_token.clone();
     let config = json!({ "mcpServers": { "linear": {
         "type": "http",
         "url": "https://mcp.linear.app/mcp",
         "headers": { "Authorization": format!("Bearer {token}") },
     }}});
-    let path = app.cfg.home.join("mcp-linear.json");
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .mode(0o600)
-        .open(&path)?;
-    serde_json::to_writer(&mut file, &config)?;
+    let dir = app.cfg.home.join("mcp");
+    std::fs::create_dir_all(&dir)?;
+    let path = dir.join(format!("{sid}.json"));
+    crate::write_private(&path, &serde_json::to_vec(&config)?)?;
     Ok(path)
 }
 
@@ -460,6 +502,16 @@ mod tests {
             ]
         );
         assert!(r.finished);
+    }
+
+    #[test]
+    fn finds_existing_checkout() {
+        let porcelain = "worktree /repo\nHEAD abc\nbranch refs/heads/main\n\nworktree /wt/A-1\nHEAD def\nbranch refs/heads/dev/a-1\n";
+        assert_eq!(
+            checked_out_at(porcelain, "dev/a-1"),
+            Some(PathBuf::from("/wt/A-1"))
+        );
+        assert_eq!(checked_out_at(porcelain, "dev/a-10"), None);
     }
 
     #[test]

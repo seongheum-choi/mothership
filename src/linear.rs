@@ -7,8 +7,8 @@ use sha2::Sha256;
 const GRAPHQL: &str = "https://api.linear.app/graphql";
 const TOKEN: &str = "https://api.linear.app/oauth/token";
 
-/// `Linear-Signature` is hex(HMAC-SHA256(secret, raw body)); a `webhookTimestamp`
-/// more than a minute off is a replay. Same rules as `@linear/sdk` LinearWebhookClient.
+/// `Linear-Signature` is hex(HMAC-SHA256(secret, raw body)); a missing `webhookTimestamp`,
+/// or one more than a minute off, is treated as a replay. Same rules as `@linear/sdk` LinearWebhookClient.
 pub fn verify(secret: &str, body: &[u8], signature: &str, now_ms: u64) -> bool {
     let Some(sig) = decode_hex(signature) else {
         return false;
@@ -22,7 +22,7 @@ pub fn verify(secret: &str, body: &[u8], signature: &str, now_ms: u64) -> bool {
     let ts = serde_json::from_slice::<Value>(body)
         .ok()
         .and_then(|v| v["webhookTimestamp"].as_u64());
-    ts.is_none_or(|ts| now_ms.abs_diff(ts) <= 60_000)
+    ts.is_some_and(|ts| now_ms.abs_diff(ts) <= 60_000)
 }
 
 fn decode_hex(s: &str) -> Option<Vec<u8>> {
@@ -53,12 +53,17 @@ impl App {
                 .json(&json!({ "query": query, "variables": variables }))
                 .send()
                 .await?;
-            let unauthorized = res.status() == reqwest::StatusCode::UNAUTHORIZED;
-            let body: Value = res.json().await.unwrap_or_default();
+            let status = res.status();
+            let text = res.text().await?;
+            let body: Value = serde_json::from_str(&text).unwrap_or_default();
             let auth_error = body["errors"].to_string().contains("AUTHENTICATION_ERROR");
-            if attempt == 0 && (unauthorized || auth_error) {
+            if attempt == 0 && (status == reqwest::StatusCode::UNAUTHORIZED || auth_error) {
                 self.refresh(&token).await?;
                 continue;
+            }
+            if !status.is_success() && body.get("errors").is_none() {
+                let snippet: String = text.chars().take(200).collect();
+                return Err(format!("Linear GraphQL: HTTP {status}: {snippet}").into());
             }
             if let Some(errors) = body.get("errors") {
                 return Err(format!("Linear GraphQL: {errors}").into());
@@ -76,12 +81,15 @@ impl App {
         if current.access_token != stale {
             return Ok(());
         }
-        let tokens = self
+        let mut tokens = self
             .token_request(&[
                 ("grant_type", "refresh_token"),
                 ("refresh_token", &current.refresh_token),
             ])
             .await?;
+        if tokens.refresh_token.is_empty() {
+            tokens.refresh_token = current.refresh_token; // not rotated this time
+        }
         self.update(|s| s.linear = tokens);
         eprintln!("Linear token refreshed");
         Ok(())

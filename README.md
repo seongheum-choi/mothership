@@ -8,7 +8,7 @@ Stage 1 scope: Linear webhooks, a single repository, the Claude runner, and an o
 
 1. `POST /linear-webhook` (or `/webhook`, the path Cyrus-era Linear apps use) checks the `Linear-Signature` HMAC and `webhookTimestamp`, answers 200 straight away, and handles the event in the background.
 2. `AgentSessionEvent/created` and `prompted` queue a prompt for that session. A `stop` signal kills the running turn.
-3. Each turn posts an ephemeral "Working on it…" thought, then sets up `<WORKTREES_DIR>/<ISSUE-ID>` on Linear's `branchName`, cut from `origin/<BASE_BRANCH>`. It then runs:
+3. Each turn posts an ephemeral "Working on it…" thought, then sets up `<WORKTREES_DIR>/<ISSUE-ID>` on Linear's `branchName`, cut from `origin/<BASE_BRANCH>` with no upstream (so a bare `git push` never targets the base branch). If the branch already exists locally or on origin, that branch is used, and if it is already checked out in another worktree, that worktree is reused. Only one `claude` runs per worktree at a time. It then runs:
    `claude -p --output-format stream-json --verbose --permission-mode bypassPermissions --strict-mcp-config --mcp-config <linear MCP> [MCP_CONFIGS] --append-system-prompt … [--resume <id>]`
 4. Assistant text is posted as `thought`, a tool call as an ephemeral `action`, `TodoWrite` as a checklist `thought`, and the result as `response` or `error`.
 5. Prompts that arrive during a turn are combined into the next turn, which resumes the same Claude session.
@@ -36,7 +36,7 @@ Settings come from the process environment or `~/.mothership/.env` (`MOTHERSHIP_
 
 ## Linear auth
 
-Open `<BASE_URL>/oauth/authorize` to install the app with `actor=app`. To move over from Cyrus without installing again, copy `linearToken` and `linearRefreshToken` from `~/.cyrus/config.json` into the seed variables. Tokens refresh by themselves on a 401.
+Open `<BASE_URL>/oauth/authorize` to install the app with `actor=app`. It works only while no token is stored, because the endpoint is public; to install again, clear `linear` in `state.json` and restart. To move over from Cyrus without installing again, copy `linearToken` and `linearRefreshToken` from `~/.cyrus/config.json` into the seed variables. Tokens refresh by themselves on a 401.
 
 ## Tunnel
 

@@ -101,7 +101,13 @@ impl Config {
             model: get("CLAUDE_MODEL").unwrap_or_else(|| "opus".into()),
             fallback_model: get("CLAUDE_FALLBACK_MODEL").unwrap_or_else(|| "sonnet".into()),
             mcp_configs: get("MCP_CONFIGS")
-                .map(|s| s.split(',').map(|p| p.trim().to_string()).collect())
+                .map(|s| {
+                    s.split(',')
+                        .map(str::trim)
+                        .filter(|p| !p.is_empty())
+                        .map(String::from)
+                        .collect()
+                })
                 .unwrap_or_default(),
             extra_prompt,
             cloudflare_token: get("CLOUDFLARE_TOKEN"),
@@ -145,6 +151,8 @@ pub struct App {
     pub live: Mutex<HashMap<String, mpsc::UnboundedSender<session::Msg>>>,
     pub refresh_lock: tokio::sync::Mutex<()>,
     oauth_state: Mutex<Option<String>>,
+    /// Sessions on the same issue share a worktree; one `claude` at a time per worktree.
+    pub worktree_locks: Mutex<HashMap<PathBuf, Arc<tokio::sync::Mutex<()>>>>,
 }
 
 impl App {
@@ -153,22 +161,26 @@ impl App {
         let mut store = self.store.lock().unwrap();
         let out = f(&mut store);
         let path = self.cfg.home.join("state.json");
-        let tmp = path.with_extension("json.tmp");
-        let write = || -> std::io::Result<()> {
-            let mut file = std::fs::OpenOptions::new()
-                .write(true)
-                .create(true)
-                .truncate(true)
-                .mode(0o600)
-                .open(&tmp)?;
-            serde_json::to_writer_pretty(&mut file, &*store)?;
-            std::fs::rename(&tmp, &path)
-        };
-        if let Err(e) = write() {
+        let written = serde_json::to_vec_pretty(&*store)
+            .map_err(std::io::Error::from)
+            .and_then(|bytes| write_private(&path, &bytes));
+        if let Err(e) = written {
             eprintln!("saving {}: {e}", path.display());
         }
         out
     }
+}
+
+/// Atomic 0600 write: readers see the old file or the new one, never a partial one.
+pub fn write_private(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+    let tmp = path.with_extension(format!("{}.tmp", random_hex(4)));
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&tmp)?;
+    std::io::Write::write_all(&mut file, bytes)?;
+    std::fs::rename(&tmp, path)
 }
 
 fn random_hex(bytes: usize) -> String {
@@ -223,7 +235,12 @@ async fn status(State(app): State<Arc<App>>) -> Json<Value> {
     Json(json!({ "status": if busy { "busy" } else { "idle" } }))
 }
 
-async fn authorize(State(app): State<Arc<App>>) -> Redirect {
+/// Only installs into an empty token store: the endpoint is public, so once installed nobody
+/// can swap in their own workspace. To re-install, clear `linear` in state.json and restart.
+async fn authorize(State(app): State<Arc<App>>) -> Result<Redirect, (StatusCode, &'static str)> {
+    if !app.store.lock().unwrap().linear.access_token.is_empty() {
+        return Err((StatusCode::FORBIDDEN, "already installed"));
+    }
     let state = random_hex(16);
     *app.oauth_state.lock().unwrap() = Some(state.clone());
     let redirect_uri = format!("{}/callback", app.cfg.base_url);
@@ -239,7 +256,7 @@ async fn authorize(State(app): State<Arc<App>>) -> Redirect {
         ],
     )
     .unwrap();
-    Redirect::to(url.as_str())
+    Ok(Redirect::to(url.as_str()))
 }
 
 async fn callback(
@@ -294,6 +311,7 @@ async fn main() {
         store: Mutex::new(store),
         live: Mutex::default(),
         refresh_lock: tokio::sync::Mutex::new(()),
+        worktree_locks: Mutex::default(),
         oauth_state: Mutex::default(),
     });
     app.update(|_| ()); // persist seeded tokens
