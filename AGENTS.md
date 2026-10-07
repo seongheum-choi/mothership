@@ -26,6 +26,7 @@ mothership is a long-running service that other people's work depends on, so cha
 | `session.rs` | `Surface` trait, per-conversation workers, turn loop |
 | `agent.rs` | Claude Code process and its stream-json protocol |
 | `linear/`, `zulip/` | Surfaces: webhooks, API clients, how updates are shown |
+| `github.rs` | PR review webhooks that continue Linear sessions |
 | `worktree.rs` | Git worktrees per issue |
 | `sandbox.rs` | Home directory read restrictions |
 | `tunnel.rs`, `review.rs` | Extension points for ingress and review systems |

@@ -11,10 +11,12 @@ Licensed under the [Apache License 2.0](LICENSE).
 | Surface | Request | Workspace | What the requester sees |
 | --- | --- | --- | --- |
 | Linear | Agent session created on an issue (delegation or @mention), or a prompt in it | `<WORKTREES_DIR>/<ISSUE-ID>` on Linear's `branchName`, cut from the issue's [repository](#repositories); a non-git repository's own directory | Agent activities: which repository and why, thoughts, tool actions, progress lines, final response |
+| GitHub | A review, review comment or PR comment on a branch a Linear session works on | That session's worktree | The Linear session continues; the agent answers on GitHub with `gh` |
 | Zulip | @mention in a channel, or a direct message to the outgoing-webhook bot | `<home>/zulip-workspaces/<thread>`; every repository is read-only | :eyes: on receipt, then the reply and :check: |
 
 - **One conversation, one worker:** turns run back to back, and each one resumes the same Claude session (`--resume`).
 - **Prompts during a turn:** a prompt that arrives while the agent works goes straight into the running process (`--input-format stream-json`), and Claude folds it into the current turn. Input closes at the turn's result, so anything later starts the next turn.
+- **PR feedback:** `POST /github-webhook` takes the GitHub App's `pull_request_review` (submitted, with text), `pull_request_review_comment` (created) and `issue_comment` (created, on a PR) events, checked against `X-Hub-Signature-256`. Only comments and reviews whose `author_association` is `OWNER`, or whose author is in `GITHUB_TRUSTED_LOGINS`, are heard, and only on same-repository PRs in the origins of the git repositories in `repos.json`; a repeated `X-GitHub-Delivery` id is answered 200 and dropped. The PR's head branch picks the newest Linear session recorded on that branch, or on the branch it is stacked on (`en-593-3` → `en-593`). That session gets the author, file and lines, URLs and the text quoted in a `<github_comment>` block as a prompt, and posts its results in Linear as usual. The agent replies with `gh-reply` (installed in its own `<home>/gh-reply` directory and put first on agents' `PATH`; it refuses an empty reply), which appends `<!-- mothership -->`; text with that marker is dropped, as are comments by bots (`type: Bot`) and feedback on branches no session knows. A session that gets 10 GitHub prompts within an hour is stopped and told so in Linear, and further GitHub feedback for it waits for the hour to pass. `issue_comment` events carry no branch, so the server looks the PR up with `gh api`. With `GITHUB_WEBHOOK_SECRET` set, startup fails when no git repository has a GitHub origin or `<home>/gh-reply` cannot be written.
 - **Stop:** a Linear stop signal kills the agent's whole process group.
 - **Worktrees:** a new branch is cut from `origin/<BASE_BRANCH>` with no upstream, so a bare `git push` never targets the base branch. An existing local or remote branch is continued, and an existing checkout is reused. Only one agent runs per worktree at a time.
 - **Home directory:** agents may read only their workspace, their repository's main clone (every repository's, in Zulip), and plugin directories. Every other entry under `$HOME` gets a `Read` deny rule. Claude Code applies deny rules under `bypassPermissions` too, and checks reading shell commands against them.
@@ -27,7 +29,7 @@ Agents run as `claude -p --input-format stream-json --output-format stream-json`
 
 | To add | Where |
 | --- | --- |
-| A chat or tracker (Slack, GitHub comments) | Implement `session::Surface` and add its routes in `app.rs` |
+| A chat or tracker (Slack, GitHub issues) | Implement `session::Surface` and add its routes in `app.rs` |
 | A tunnel (ngrok, ...) | A `tunnel::Tunnel` variant and its command |
 | A review system (Gerrit) | A `review::ReviewBackend` variant |
 | An agent runtime (Codex) | A runner that turns its output into `agent::Event`s |
@@ -66,6 +68,8 @@ Settings come from the process environment or `<home>/.env`, and the environment
 | `MCP_CONFIGS` | | Comma-separated extra MCP config files, for every repository |
 | `REVIEW_BACKEND` | `github` | |
 | `APPEND_SYSTEM_PROMPT_FILE` | | Replaces the review backend's instructions in issue sessions of git repositories without their own `prompt_file` |
+| `GITHUB_WEBHOOK_SECRET` | | Turns on GitHub PR feedback (`POST /github-webhook`); the GitHub App's webhook secret |
+| `GITHUB_TRUSTED_LOGINS` | | Comma-separated GitHub logins heard besides the repository owner. On an organisation repository GitHub reports even the owner's own account as `MEMBER`, so list it here |
 | `ZULIP_SITE`, `ZULIP_BOT_EMAIL`, `ZULIP_API_KEY`, `ZULIP_WEBHOOK_TOKEN` | | Turn on Zulip (`POST /zulip-webhook`) |
 | `CLOUDFLARE_TOKEN`, `CLOUDFLARED_BIN` | | Supervise a remotely-managed Cloudflare tunnel |
 | `LINEAR_ACCESS_TOKEN`, `LINEAR_REFRESH_TOKEN` | | Seed tokens, used only while `state.json` has none |
