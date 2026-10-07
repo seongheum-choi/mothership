@@ -105,3 +105,5 @@ scripts/check.sh      # fmt, clippy (pedantic, warnings are errors), tests
 git config core.hooksPath .githooks   # run the check before every commit
 cargo run
 ```
+
+CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs `scripts/check.sh` with the same toolchain and a gitleaks secret scan on every pull request and every push to `main`.
