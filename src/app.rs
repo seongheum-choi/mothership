@@ -1,6 +1,8 @@
 //! Shared state and the HTTP surface.
 
-use crate::{config::Config, linear::Linear, session::Registry, store::Store, zulip::Zulip};
+use crate::{
+    config::Config, github::GitHub, linear::Linear, session::Registry, store::Store, zulip::Zulip,
+};
 use anyhow::{Context, Result};
 use axum::{Json, Router, extract::State, routing::get};
 use serde_json::{Value, json};
@@ -19,6 +21,7 @@ pub struct App {
     pub store: Store,
     pub linear: Arc<Registry<Linear>>,
     pub zulip: Option<Arc<Registry<Zulip>>>,
+    pub github: Option<GitHub>,
     /// Sessions on the same issue share a worktree; one agent at a time per workspace.
     workspace_locks: Mutex<HashMap<PathBuf, Arc<tokio::sync::Mutex<()>>>>,
 }
@@ -33,12 +36,19 @@ impl App {
         {
             store.update(|s| s.linear = seed.clone());
         }
+        let github = cfg
+            .github
+            .as_ref()
+            .map(|_| GitHub::new(&cfg.repos, &cfg.home))
+            .transpose()
+            .context("setting up GitHub feedback")?;
         Ok(Arc::new(Self {
             home_dir: PathBuf::from(std::env::var("HOME").context("HOME is not set")?),
             http: reqwest::Client::new(),
             store,
             linear: Arc::new(Registry::new(Linear::default())),
             zulip: cfg.zulip.as_ref().map(|_| Arc::new(Registry::new(Zulip))),
+            github,
             workspace_locks: Mutex::default(),
             cfg,
         }))
@@ -50,6 +60,9 @@ impl App {
             .merge(crate::linear::routes());
         if self.zulip.is_some() {
             router = router.merge(crate::zulip::routes());
+        }
+        if self.github.is_some() {
+            router = router.merge(crate::github::routes());
         }
         router.with_state(self.clone())
     }
@@ -67,12 +80,26 @@ impl App {
 
     /// Environment every agent process gets: the `MOTHERSHIP_*` markers so hooks and skills know
     /// where they run, plus the `AGENT_ENV` keys resolved from the environment or `<home>/.env`.
+    /// With GitHub feedback on, `gh-reply` comes first on `PATH`.
     pub fn agent_env(&self, surface: &str) -> Vec<(String, String)> {
         let mut env = vec![
             ("MOTHERSHIP_AGENT".into(), self.cfg.agent_name.clone()),
             ("MOTHERSHIP_SURFACE".into(), surface.into()),
         ];
         env.extend(self.cfg.agent_env.iter().cloned());
+        if let Some(github) = &self.github {
+            let path = env
+                .iter()
+                .rev()
+                .find(|(k, _)| k == "PATH")
+                .map(|(_, v)| v.clone())
+                .or_else(|| std::env::var("PATH").ok())
+                .unwrap_or_default();
+            env.push((
+                "PATH".into(),
+                format!("{}:{path}", github.bin_dir.display()),
+            ));
+        }
         env
     }
 

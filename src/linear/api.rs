@@ -14,7 +14,7 @@ const TOKEN: &str = "https://api.linear.app/oauth/token";
 /// `Linear-Signature` is hex(HMAC-SHA256(secret, raw body)). A missing `webhookTimestamp`,
 /// or one more than a minute off, is treated as a replay.
 pub fn verify(secret: &str, body: &[u8], signature: &str, now_ms: u64) -> bool {
-    let Some(sig) = decode_hex(signature) else {
+    let Some(sig) = crate::store::decode_hex(signature) else {
         return false;
     };
     let mut mac =
@@ -27,16 +27,6 @@ pub fn verify(secret: &str, body: &[u8], signature: &str, now_ms: u64) -> bool {
         .ok()
         .and_then(|v| v["webhookTimestamp"].as_u64())
         .is_some_and(|ts| now_ms.abs_diff(ts) <= 60_000)
-}
-
-fn decode_hex(s: &str) -> Option<Vec<u8>> {
-    if !s.len().is_multiple_of(2) {
-        return None;
-    }
-    (0..s.len())
-        .step_by(2)
-        .map(|i| u8::from_str_radix(s.get(i..i + 2)?, 16).ok())
-        .collect()
 }
 
 #[derive(Deserialize)]

@@ -35,6 +35,9 @@ pub struct SessionRec {
     pub pending_prompt: Option<String>,
     /// Zulip: id of the newest topic message the agent has already seen.
     pub cursor: Option<u64>,
+    /// Unix seconds of the newest prompt, so GitHub feedback on a branch that several
+    /// sessions of one issue share goes to the latest of them.
+    pub prompted_at: u64,
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -103,6 +106,22 @@ pub fn random_hex(bytes: usize) -> String {
         let _ = write!(hex, "{b:02x}");
         hex
     })
+}
+
+pub fn decode_hex(s: &str) -> Option<Vec<u8>> {
+    if !s.len().is_multiple_of(2) {
+        return None;
+    }
+    (0..s.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(s.get(i..i + 2)?, 16).ok())
+        .collect()
+}
+
+pub fn now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs())
 }
 
 /// A session key as a single file or directory name.
