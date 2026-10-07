@@ -4,9 +4,9 @@ use anyhow::{Context, Result, bail};
 use std::path::{Path, PathBuf};
 use tokio::process::Command;
 
-/// Returns a worktree with `branch` checked out, creating it under `dir` if needed.
+/// Returns the issue's worktree, creating it under `dir` with `branch` if needed.
 ///
-/// An existing checkout of the branch (an earlier session, another tool's worktree) is
+/// An existing `dir` is reused as is. An existing checkout of the branch (an earlier session, another tool's worktree) is
 /// reused, because git refuses a second one. A branch that exists locally or on origin is
 /// continued. A new branch starts from `origin/<base>` with no upstream, so a bare
 /// `git push` can never target the base branch.
@@ -19,10 +19,15 @@ pub async fn ensure(repo: &Path, dir: &Path, branch: &str, base: &str) -> Result
         return Ok(existing);
     }
     if dir.exists() {
-        bail!(
-            "{} exists but does not have {branch} checked out",
-            dir.display()
-        );
+        // The issue's own worktree. Reuse it on whatever branch it is now: skills move it
+        // across stacked branches, and it may belong to another clone of the same repository.
+        if git(dir, &["rev-parse", "--is-inside-work-tree"])
+            .await
+            .is_ok()
+        {
+            return Ok(dir.to_path_buf());
+        }
+        bail!("{} exists but is not a git worktree", dir.display());
     }
     let path = dir.to_str().context("worktree path is not UTF-8")?;
     if has_ref(repo, &format!("refs/heads/{branch}")).await {
@@ -56,6 +61,14 @@ pub async fn ensure(repo: &Path, dir: &Path, branch: &str, base: &str) -> Result
         .await?;
     }
     Ok(dir.to_path_buf())
+}
+
+/// The branch checked out in `worktree`, if it is on one.
+pub async fn current_branch(worktree: &Path) -> Option<String> {
+    let head = git(worktree, &["symbolic-ref", "--short", "HEAD"])
+        .await
+        .ok()?;
+    Some(head.trim().to_string()).filter(|b| !b.is_empty())
 }
 
 async fn has_ref(repo: &Path, name: &str) -> bool {

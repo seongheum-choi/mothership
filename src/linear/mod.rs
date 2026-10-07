@@ -149,6 +149,7 @@ impl Surface for Linear {
                 let dir = app.cfg.worktrees_dir.join(&rec.identifier);
                 let workspace =
                     worktree::ensure(&app.cfg.repo, &dir, &branch, &app.cfg.base_branch).await?;
+                let branch = worktree::current_branch(&workspace).await.unwrap_or(branch);
                 app.store.update(|s| {
                     if let Some(r) = s.sessions.get_mut(key) {
                         r.workspace = Some(workspace.clone());
