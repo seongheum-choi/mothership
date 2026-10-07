@@ -290,13 +290,24 @@ async fn handle(app: Arc<App>, feedback: Feedback) {
         );
         return;
     }
-    let Some(sid) = session_for(&app, github, &feedback.repo, &head.branch).await else {
-        tracing::info!(
-            "github {} on {}: no session for this branch in this repository, ignored",
-            feedback.pr_url,
-            head.branch
-        );
-        return;
+    let sid = match session_for(&app, github, &feedback.repo, &head.branch).await {
+        Some(Found::Open(sid)) => sid,
+        Some(Found::Closed(sid)) => {
+            tracing::info!(
+                "[{sid}] github {} on {}: the session's issue is closed, ignored",
+                feedback.pr_url,
+                head.branch
+            );
+            return;
+        }
+        None => {
+            tracing::info!(
+                "github {} on {}: no session for this branch in this repository, ignored",
+                feedback.pr_url,
+                head.branch
+            );
+            return;
+        }
     };
     let allowed = github
         .budget
@@ -316,7 +327,7 @@ async fn handle(app: Arc<App>, feedback: Feedback) {
             tracing::warn!(
                 "[{sid}] {PROMPTS_PER_WINDOW} GitHub prompts within the hour; pausing GitHub feedback"
             );
-            app.linear.stop(&sid);
+            app.linear.stop(&sid, None);
             let body = format!(
                 "Paused GitHub feedback: this session got {PROMPTS_PER_WINDOW} prompts from GitHub \
                  within an hour, which looks like the agent answering its own comments. The \
@@ -345,7 +356,7 @@ async fn handle(app: Arc<App>, feedback: Feedback) {
 }
 
 /// The session that owns `branch` in a repository whose origin is `repo`; see [`find_session`].
-async fn session_for(app: &App, github: &GitHub, repo: &str, branch: &str) -> Option<String> {
+async fn session_for(app: &App, github: &GitHub, repo: &str, branch: &str) -> Option<Found> {
     let mut candidates: Vec<(String, SessionRec)> = app.store.read(|s| {
         s.sessions
             .iter()
@@ -368,27 +379,38 @@ async fn session_for(app: &App, github: &GitHub, repo: &str, branch: &str) -> Op
                 .map(|r| r.name.clone());
         }
     }
-    let sid = find_session(
+    let found = find_session(
         candidates.iter().map(|(sid, rec)| (sid, rec)),
         branch,
         &github.names(repo),
     )?;
+    let Found::Open(sid) = &found else {
+        return Some(found);
+    };
     // Record the repository found for a pre-routing session, as Linear does on its next turn;
     // the turn this feedback starts needs it.
     if let Some(name) = candidates
         .iter()
-        .find(|(s, _)| *s == sid)
+        .find(|(s, _)| s == sid)
         .and_then(|(_, rec)| rec.repo.clone())
     {
         app.store.update(|s| {
-            if let Some(rec) = s.sessions.get_mut(&sid)
+            if let Some(rec) = s.sessions.get_mut(sid)
                 && rec.repo.is_none()
             {
                 rec.repo = Some(name);
             }
         });
     }
-    Some(sid)
+    Some(found)
+}
+
+/// The session GitHub feedback belongs to.
+#[derive(Debug, PartialEq)]
+enum Found {
+    Open(String),
+    /// Its issue was closed and its worktree cleaned up; feedback is only logged.
+    Closed(String),
 }
 
 /// `issue_comment` payloads describe the PR as an issue, without its head.
@@ -422,13 +444,14 @@ fn on_branch(branch: &str, head: &str) -> Option<bool> {
 }
 
 /// The newest session in one of `repos` (names) whose branch owns `head`. An exact match wins
-/// over a stacked one. Branch names repeat across repositories, so a session in another
-/// repository, or with none recorded, never matches.
+/// over a stacked one, then an open session over a closed one, so feedback on a closed issue's
+/// branch never wakes the issue it is stacked on. Branch names repeat across
+/// repositories, so a session in another repository, or with none recorded, never matches.
 fn find_session<'a>(
     sessions: impl IntoIterator<Item = (&'a String, &'a SessionRec)>,
     head: &str,
     repos: &[&str],
-) -> Option<String> {
+) -> Option<Found> {
     sessions
         .into_iter()
         .filter(|(_, rec)| {
@@ -438,10 +461,16 @@ fn find_session<'a>(
         })
         .filter_map(|(sid, rec)| {
             let exact = on_branch(rec.branch.as_deref()?, head)?;
-            Some((exact, rec.prompted_at, sid))
+            Some((exact, !rec.closed, rec.prompted_at, sid))
         })
         .max()
-        .map(|(_, _, sid)| sid.clone())
+        .map(|(_, open, _, sid)| {
+            if open {
+                Found::Open(sid.clone())
+            } else {
+                Found::Closed(sid.clone())
+            }
+        })
 }
 
 /// Delivery ids already handled, oldest dropped first.
@@ -1042,6 +1071,63 @@ mod tests {
         assert!(Feedback::parse("push", &json!({ "action": "created" })).is_none());
     }
 
+    fn open(found: Option<Found>) -> Option<String> {
+        match found? {
+            Found::Open(sid) => Some(sid),
+            Found::Closed(sid) => panic!("{sid} is closed"),
+        }
+    }
+
+    #[test]
+    fn closed_sessions_get_no_feedback() {
+        let rec = |closed, prompted_at| SessionRec {
+            repo: Some("app".into()),
+            branch: Some("en-593".into()),
+            prompted_at,
+            closed,
+            ..SessionRec::default()
+        };
+        let closed = HashMap::from([("done".to_string(), rec(true, 9))]);
+        assert_eq!(
+            find_session(&closed, "en-593", &["app"]),
+            Some(Found::Closed("done".into()))
+        );
+        let reopened = HashMap::from([
+            ("done".to_string(), rec(true, 9)),
+            ("again".to_string(), rec(false, 1)),
+        ]);
+        assert_eq!(
+            find_session(&reopened, "en-593", &["app"]),
+            Some(Found::Open("again".into())),
+            "an open session wins over a newer closed one"
+        );
+        let stacked = HashMap::from([
+            (
+                "s12".to_string(),
+                SessionRec {
+                    branch: Some("en-5-2".into()),
+                    ..rec(true, 1)
+                },
+            ),
+            (
+                "s13".to_string(),
+                SessionRec {
+                    branch: Some("en-5".into()),
+                    ..rec(false, 9)
+                },
+            ),
+        ]);
+        assert_eq!(
+            find_session(&stacked, "en-5-2", &["app"]),
+            Some(Found::Closed("s12".into())),
+            "a closed exact match wins over an open stacked one"
+        );
+        assert_eq!(
+            find_session(&stacked, "en-5", &["app"]),
+            Some(Found::Open("s13".into()))
+        );
+    }
+
     #[test]
     fn finds_the_newest_session_on_the_branch_or_its_stack() {
         let rec = |branch: &str, prompted_at| SessionRec {
@@ -1057,7 +1143,7 @@ mod tests {
             ("other".to_string(), rec("en-59", 9)),
             ("chat".to_string(), SessionRec::default()),
         ]);
-        let find = |head| find_session(&sessions, head, &["app"]);
+        let find = |head| open(find_session(&sessions, head, &["app"]));
         assert_eq!(find("en-593").as_deref(), Some("new"));
         assert_eq!(
             find("en-593-3").as_deref(),
@@ -1084,7 +1170,7 @@ mod tests {
             ("unknown".to_string(), rec(None, 9)),
         ]);
         let gh = github();
-        let find = |full_name| find_session(&sessions, "fix-login", &gh.names(full_name));
+        let find = |full_name| open(find_session(&sessions, "fix-login", &gh.names(full_name)));
         assert_eq!(find("o/r").as_deref(), Some("app"));
         assert_eq!(find("o/lib").as_deref(), Some("lib"), "names ignore case");
         assert_eq!(find("o/other"), None);

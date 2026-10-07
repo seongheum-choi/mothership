@@ -38,6 +38,9 @@ pub struct SessionRec {
     /// Unix seconds of the newest prompt, so GitHub feedback on a branch that several
     /// sessions of one issue share goes to the latest of them.
     pub prompted_at: u64,
+    /// Linear: the issue was closed and the session's worktree cleaned up, so GitHub feedback
+    /// no longer starts turns. A new Linear prompt reopens it.
+    pub closed: bool,
 }
 
 #[derive(Serialize, Deserialize, Default)]
