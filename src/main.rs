@@ -4,6 +4,7 @@ mod agent;
 mod app;
 mod config;
 mod linear;
+mod repos;
 mod review;
 mod sandbox;
 mod session;
@@ -39,9 +40,15 @@ async fn main() -> Result<()> {
         .await
         .with_context(|| format!("binding {}", app.cfg.bind))?;
     tracing::info!(
-        "listening on {} (zulip {})",
+        "listening on {} (zulip {}, repos: {})",
         app.cfg.bind,
-        if app.zulip.is_some() { "on" } else { "off" }
+        if app.zulip.is_some() { "on" } else { "off" },
+        app.cfg
+            .repos
+            .iter()
+            .map(|r| r.name.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
     );
     axum::serve(listener, app.router())
         .with_graceful_shutdown(shutdown_signal())

@@ -147,6 +147,21 @@ impl Linear {
         }
     }
 
+    /// The issue's description, project, team and labels: what repository routing looks at.
+    /// Webhook payloads carry none of the last three.
+    pub async fn issue_routing(&self, app: &App, issue_id: &str) -> Result<Value> {
+        let data = self
+            .graphql(
+                app,
+                "query($id: String!) { issue(id: $id) { description \
+                 project { id name slugId } team { id key name } \
+                 labels { nodes { id name } } } }",
+                json!({ "id": issue_id }),
+            )
+            .await?;
+        Ok(data["issue"].clone())
+    }
+
     /// Linear's suggested git branch name for the issue ("Copy git branch name").
     pub async fn branch_name(&self, app: &App, issue_id: &str) -> Result<String> {
         let data = self
