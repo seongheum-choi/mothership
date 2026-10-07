@@ -74,7 +74,7 @@ Any tunnel that forwards to `BIND` works. With `CLOUDFLARE_TOKEN` set, mothershi
 cp contrib/launchd/mothership.plist ~/Library/LaunchAgents/com.mothership.agent.plist
 mkdir -p ~/.mothership/logs
 
-# Install and start (idempotent: bootout first to reload after edits)
+# Install and start (fails if already loaded; to reload after edits, bootout first)
 launchctl bootstrap gui/$UID ~/Library/LaunchAgents/com.mothership.agent.plist
 
 # Restart in place

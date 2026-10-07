@@ -54,7 +54,6 @@ async fn main() -> Result<()> {
 
 /// Resolves on the first SIGTERM (launchd, pm2, systemd) or SIGINT (Ctrl-C).
 async fn shutdown_signal() {
-    #[cfg(unix)]
     let term = async {
         use tokio::signal::unix::{SignalKind, signal};
         match signal(SignalKind::terminate()) {
@@ -67,8 +66,6 @@ async fn shutdown_signal() {
             }
         }
     };
-    #[cfg(not(unix))]
-    let term = std::future::pending::<()>();
 
     let int = async {
         if let Err(e) = tokio::signal::ctrl_c().await {

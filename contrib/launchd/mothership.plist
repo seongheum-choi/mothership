@@ -10,6 +10,8 @@
   Secrets stay out of this file: mothership reads them from ~/.mothership/.env.
   EnvironmentVariables holds only PATH, so the binary and the tools it spawns
   (claude, git, cloudflared) are found under the launchd (non-login) session.
+  Add the directories your tools live in. On macOS, also set CLAUDE_BIN in .env
+  to ~/.local/share/claude/ClaudeCode.app/Contents/MacOS/claude (see README).
 -->
 <plist version="1.0">
 <dict>
@@ -27,7 +29,7 @@
     <key>EnvironmentVariables</key>
     <dict>
         <key>PATH</key>
-        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <string>/Users/YOU/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
     </dict>
 
     <key>RunAtLoad</key>

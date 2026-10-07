@@ -19,8 +19,6 @@
 
 [Unit]
 Description=mothership agent deployer
-After=network-online.target
-Wants=network-online.target
 
 [Service]
 Type=simple
