@@ -1,0 +1,5 @@
+{
+  "name": "unshipped-work",
+  "version": "0.1.0",
+  "description": "Turns back an agent's first Stop in a worktree with uncommitted tracked changes or unpushed commits."
+}
