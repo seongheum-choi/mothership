@@ -1,6 +1,6 @@
-//! Where finished work goes for review. Today the agent drives the backend's own CLI from
-//! its instructions; a backend that sends review feedback back (Gerrit stream-events,
-//! GitHub review webhooks) adds its routes here.
+//! Where finished work goes for review. The agent drives the backend's own CLI from its
+//! instructions. GitHub review feedback comes back through `github`; another backend that
+//! sends feedback (Gerrit stream-events) adds its routes next to it.
 
 use anyhow::bail;
 use std::str::FromStr;

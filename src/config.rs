@@ -18,6 +18,7 @@ pub struct Config {
     pub agent_env: Vec<(String, String)>,
     pub linear: LinearConfig,
     pub zulip: Option<ZulipConfig>,
+    pub github: Option<GitHubConfig>,
     /// From `<home>/repos.json`, or the one `REPO_PATH`/`BASE_BRANCH` describe. Never empty.
     pub repos: Vec<Repo>,
     pub worktrees_dir: PathBuf,
@@ -45,6 +46,33 @@ pub struct ZulipConfig {
     pub bot_email: String,
     pub api_key: String,
     pub webhook_token: String,
+}
+
+pub struct GitHubConfig {
+    pub webhook_secret: String,
+    /// Logins heard besides the repository owner, such as the owner's own account on an
+    /// organisation repository, where GitHub reports it as `MEMBER`.
+    pub trusted_logins: Vec<String>,
+}
+
+impl GitHubConfig {
+    /// On when `GITHUB_WEBHOOK_SECRET` is set.
+    fn from_vars(vars: &Vars) -> Option<Self> {
+        vars.get("GITHUB_WEBHOOK_SECRET")
+            .map(|webhook_secret| Self {
+                webhook_secret,
+                trusted_logins: vars
+                    .get("GITHUB_TRUSTED_LOGINS")
+                    .map(|list| parse_list(&list))
+                    .unwrap_or_default(),
+            })
+    }
+
+    pub fn trusts(&self, login: &str) -> bool {
+        self.trusted_logins
+            .iter()
+            .any(|l| l.eq_ignore_ascii_case(login))
+    }
 }
 
 pub struct ClaudeConfig {
@@ -85,6 +113,7 @@ impl Config {
             }),
             None => None,
         };
+        let github = GitHubConfig::from_vars(&vars);
         let tunnel = vars
             .get("CLOUDFLARE_TOKEN")
             .map(|token| Tunnel::Cloudflare {
@@ -107,7 +136,7 @@ impl Config {
             agent_env: vars.resolve_keys(
                 &vars
                     .get("AGENT_ENV")
-                    .map(|list| parse_env_keys(&list))
+                    .map(|list| parse_list(&list))
                     .unwrap_or_default(),
             ),
             linear: LinearConfig {
@@ -118,6 +147,7 @@ impl Config {
                 seed_tokens,
             },
             zulip,
+            github,
             repos,
             worktrees_dir: vars
                 .get("WORKTREES_DIR")
@@ -225,9 +255,9 @@ impl Vars {
     }
 }
 
-/// Split a comma-separated `AGENT_ENV` list into keys: trimmed, empties dropped, first
-/// occurrence of each kept.
-fn parse_env_keys(list: &str) -> Vec<String> {
+/// Split a comma-separated list (`AGENT_ENV`, `GITHUB_TRUSTED_LOGINS`): trimmed, empties
+/// dropped, first occurrence of each kept.
+fn parse_list(list: &str) -> Vec<String> {
     let mut keys: Vec<String> = Vec::new();
     for key in list.split(',').map(str::trim).filter(|k| !k.is_empty()) {
         if !keys.iter().any(|seen| seen == key) {
@@ -239,30 +269,30 @@ fn parse_env_keys(list: &str) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_env_keys;
+    use super::parse_list;
 
     #[test]
     fn parses_trimmed_nonempty_keys() {
         assert_eq!(
-            parse_env_keys("CLAUDE_CODE_OAUTH_TOKEN, CLAUDE_CODE_EFFORT_LEVEL"),
+            parse_list("CLAUDE_CODE_OAUTH_TOKEN, CLAUDE_CODE_EFFORT_LEVEL"),
             ["CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_EFFORT_LEVEL"]
         );
     }
 
     #[test]
     fn drops_empty_entries() {
-        assert_eq!(parse_env_keys(" , A ,, B , "), ["A", "B"]);
+        assert_eq!(parse_list(" , A ,, B , "), ["A", "B"]);
     }
 
     #[test]
     fn deduplicates_keeping_first() {
-        assert_eq!(parse_env_keys("A,B,A"), ["A", "B"]);
+        assert_eq!(parse_list("A,B,A"), ["A", "B"]);
     }
 
     #[test]
     fn empty_list_yields_no_keys() {
         let none: [String; 0] = [];
-        assert_eq!(parse_env_keys(""), none);
-        assert_eq!(parse_env_keys("   "), none);
+        assert_eq!(parse_list(""), none);
+        assert_eq!(parse_list("   "), none);
     }
 }

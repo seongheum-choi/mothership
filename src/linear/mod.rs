@@ -173,6 +173,7 @@ async fn handle(app: Arc<App>, p: Value) {
                 ..std::mem::take(rec)
             };
         }
+        rec.prompted_at = crate::store::now_secs();
     });
     let linear = &app.linear.surface;
     if let Err(unrouted) = linear.choose_repo(&app, sid, issue, request).await {
@@ -321,7 +322,7 @@ impl Linear {
 
 /// The repository of a session that has a worktree but predates routing: the one whose main
 /// clone the worktree was cut from, or with a single repository, that one as before.
-fn existing_repo<'a>(repos: &'a [Repo], main_clone: Option<&Path>) -> Option<&'a Repo> {
+pub fn existing_repo<'a>(repos: &'a [Repo], main_clone: Option<&Path>) -> Option<&'a Repo> {
     main_clone
         .and_then(|clone| repos::owning(repos, clone))
         .or(match repos {
@@ -445,6 +446,7 @@ impl Surface for Linear {
         let plugin_dirs = app.cfg.plugin_dirs();
         let mut readable = vec![workspace.clone(), repo.path.clone()];
         readable.extend(plugin_dirs.iter().cloned());
+        readable.extend(app.github.as_ref().map(|g| g.bin_dir.clone()));
         let mut mcp_configs = vec![app.linear_mcp_config(key)?];
         mcp_configs.extend(app.cfg.mcp_configs.iter().cloned());
         mcp_configs.extend(repo.mcp_configs.iter().cloned());
