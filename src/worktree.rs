@@ -89,6 +89,21 @@ fn clone_of(common_dir: &Path) -> PathBuf {
     }
 }
 
+/// Removes the worktree at `dir` from the main clone `repo` and keeps its branch. Returns
+/// `false`, removing nothing, when it has uncommitted changes or untracked files.
+pub async fn remove(repo: &Path, dir: &Path) -> Result<bool> {
+    if !git(dir, &["status", "--porcelain"])
+        .await?
+        .trim()
+        .is_empty()
+    {
+        return Ok(false);
+    }
+    let path = dir.to_str().context("worktree path is not UTF-8")?;
+    git(repo, &["worktree", "remove", path]).await?;
+    Ok(true)
+}
+
 async fn has_ref(repo: &Path, name: &str) -> bool {
     git(repo, &["rev-parse", "--verify", "--quiet", name])
         .await

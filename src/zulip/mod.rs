@@ -295,7 +295,7 @@ impl Surface for Zulip {
         let reply = match outcome {
             Outcome::Reply(text) => text,
             Outcome::Failed(text) => format!("Sorry, that failed: {text}"),
-            Outcome::Stopped => return,
+            Outcome::Stopped(_) => return,
         };
         let reply: String = reply.chars().take(MAX_REPLY).collect();
         if let Err(e) = client.post_message(&dest, &reply).await {

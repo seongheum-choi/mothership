@@ -60,12 +60,13 @@ pub enum Update {
 pub enum Outcome {
     Reply(String),
     Failed(String),
-    Stopped,
+    /// Stopped by request; the note, when there is one, says why.
+    Stopped(Option<String>),
 }
 
 pub enum Msg<T> {
     Prompt { text: String, ticket: T },
-    Stop,
+    Stop(Option<String>),
 }
 
 /// Running conversations of one surface.
@@ -101,10 +102,12 @@ impl<S: Surface> Registry<S> {
         tokio::spawn(worker(app.clone(), self.clone(), key.to_string(), rx));
     }
 
-    /// Stops the running turn. Returns false when nothing was running.
-    pub fn stop(&self, key: &str) -> bool {
+    /// Stops the running turn, reporting `Outcome::Stopped(note)`. Returns false when nothing
+    /// was running.
+    pub fn stop(&self, key: &str, note: Option<String>) -> bool {
         let live = self.live.lock().expect("live lock poisoned");
-        live.get(key).is_some_and(|tx| tx.send(Msg::Stop).is_ok())
+        live.get(key)
+            .is_some_and(|tx| tx.send(Msg::Stop(note)).is_ok())
     }
 
     /// Stops every running conversation. Returns how many were told to stop; each reports
@@ -112,7 +115,7 @@ impl<S: Surface> Registry<S> {
     pub fn stop_all(&self) -> usize {
         let live = self.live.lock().expect("live lock poisoned");
         live.values()
-            .filter(|tx| tx.send(Msg::Stop).is_ok())
+            .filter(|tx| tx.send(Msg::Stop(None)).is_ok())
             .count()
     }
 
@@ -141,9 +144,9 @@ async fn worker<S: Surface>(
             };
             match msg {
                 Msg::Prompt { text, ticket } => queued.push((text, ticket)),
-                Msg::Stop => {
+                Msg::Stop(note) => {
                     reg.surface
-                        .finish(&app, &key, Vec::new(), Outcome::Stopped)
+                        .finish(&app, &key, Vec::new(), Outcome::Stopped(note))
                         .await;
                     continue;
                 }
@@ -187,7 +190,15 @@ impl<S: Surface> Turn<'_, S> {
         let (app, surface, key) = (self.app, &self.reg.surface, self.key);
         surface.update(app, key, Update::Working).await;
         let mut launch = surface.launch(app, key).await?;
-        let _workspace = app.lock_workspace(&launch.cwd).await;
+        let _workspace = match app.lock_workspace(&launch.cwd).await {
+            guard if launch.cwd.exists() => guard,
+            guard => {
+                // A closed issue's cleanup removed the worktree while this turn waited for it.
+                drop(guard);
+                launch = surface.launch(app, key).await?;
+                app.lock_workspace(&launch.cwd).await
+            }
+        };
         let mut progress = ProgressTail::create(
             app.cfg
                 .home
@@ -235,10 +246,10 @@ impl<S: Surface> Turn<'_, S> {
                         surface.update(app, key, Update::Noted).await;
                     }
                     Msg::Prompt { text, ticket } => queued.push((text, ticket)),
-                    Msg::Stop => {
+                    Msg::Stop(note) => {
                         agent.kill().await;
                         tickets.extend(queued.drain(..).map(|(_, ticket)| ticket));
-                        surface.finish(app, key, std::mem::take(tickets), Outcome::Stopped).await;
+                        surface.finish(app, key, std::mem::take(tickets), Outcome::Stopped(note)).await;
                         return Ok(());
                     }
                 },
