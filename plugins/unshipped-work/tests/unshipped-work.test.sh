@@ -6,6 +6,9 @@ hook="$(cd "$(dirname "$0")/.." && pwd)/hooks/unshipped-work.sh"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 
+# Run as part of a pre-commit hook, git exports GIT_INDEX_FILE and friends; without this the
+# throwaway repositories below would write into the outer repository's index.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_PREFIX
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null
 export GIT_AUTHOR_NAME=test GIT_AUTHOR_EMAIL=test@example.com
 export GIT_COMMITTER_NAME=test GIT_COMMITTER_EMAIL=test@example.com
