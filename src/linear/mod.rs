@@ -12,7 +12,8 @@ use crate::{
     store::{SessionRec, random_hex},
     worktree,
 };
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
+use api::Workspace;
 use axum::{
     Router,
     body::Bytes,
@@ -33,6 +34,59 @@ use std::{
 pub struct Linear {
     refresh_lock: tokio::sync::Mutex<()>,
     oauth_state: Mutex<Option<String>>,
+    /// The one workspace this instance serves; `None` until a token has been checked.
+    workspace: Mutex<Option<Workspace>>,
+}
+
+impl Linear {
+    /// Looks up the stored token's workspace and pins it. Errors when it is not the
+    /// configured `LINEAR_WORKSPACE`.
+    pub async fn pin_current(&self, app: &App) -> Result<()> {
+        let ws = self.current_workspace(app).await?;
+        self.pin(app, ws)
+    }
+
+    /// Pins `ws` unless `LINEAR_WORKSPACE` names another one, or a different workspace is
+    /// already pinned: an instance never switches workspaces while running.
+    fn pin(&self, app: &App, ws: Workspace) -> Result<()> {
+        let mut pinned = self.workspace.lock().expect("workspace lock poisoned");
+        check_pin(app.cfg.linear.workspace.as_deref(), pinned.as_ref(), &ws)?;
+        if pinned.is_none() {
+            tracing::info!("Linear workspace: {ws}");
+        }
+        *pinned = Some(ws);
+        Ok(())
+    }
+
+    fn pinned_id(&self) -> Option<String> {
+        self.workspace
+            .lock()
+            .expect("workspace lock poisoned")
+            .as_ref()
+            .map(|w| w.id.clone())
+    }
+}
+
+/// Whether `ws` may be pinned, given the `LINEAR_WORKSPACE` setting and the workspace
+/// already pinned, if any.
+fn check_pin(want: Option<&str>, pinned: Option<&Workspace>, ws: &Workspace) -> Result<()> {
+    if let Some(want) = want
+        && !ws.is(want)
+    {
+        bail!("Linear token belongs to workspace {ws}, not LINEAR_WORKSPACE={want}");
+    }
+    if let Some(p) = pinned
+        && p.id != ws.id
+    {
+        bail!("Linear workspace {p} is pinned; refusing {ws}");
+    }
+    Ok(())
+}
+
+/// Whether a webhook from `org` may be handled: only the pinned workspace's are. Before
+/// anything is pinned, every webhook is refused because nothing says whose it is.
+fn admits(pinned: Option<&str>, org: Option<&str>) -> bool {
+    pinned.is_some() && org == pinned
 }
 
 pub fn routes() -> Router<Arc<App>> {
@@ -57,6 +111,17 @@ async fn webhook(State(app): State<Arc<App>>, headers: HeaderMap, body: Bytes) -
     let Ok(payload) = serde_json::from_slice::<Value>(&body) else {
         return StatusCode::BAD_REQUEST;
     };
+    let event = payload["type"].as_str().unwrap_or_default();
+    let org = payload["organizationId"].as_str();
+    let pinned = app.linear.surface.pinned_id();
+    if !admits(pinned.as_deref(), org) {
+        tracing::warn!(
+            "refused Linear webhook {event} from organization {} (pinned: {})",
+            org.unwrap_or("none"),
+            pinned.as_deref().unwrap_or("none")
+        );
+        return StatusCode::FORBIDDEN;
+    }
     // Linear wants a 200 within 5 seconds; the work happens in the background.
     tokio::spawn(handle(app, payload));
     StatusCode::OK
@@ -519,19 +584,38 @@ async fn callback(
     let Some(code) = q.get("code") else {
         return (StatusCode::BAD_REQUEST, "missing code".into());
     };
-    match linear.exchange_code(&app, code).await {
-        Ok(tokens) => {
-            app.store.update(|s| s.linear = tokens);
-            (
-                StatusCode::OK,
-                "Linear authorized. You can close this tab.".into(),
-            )
+    let tokens = match linear.exchange_code(&app, code).await {
+        Ok(tokens) => tokens,
+        Err(e) => {
+            return (
+                StatusCode::BAD_GATEWAY,
+                format!("token exchange failed: {e:#}"),
+            );
         }
-        Err(e) => (
-            StatusCode::BAD_GATEWAY,
-            format!("token exchange failed: {e:#}"),
-        ),
+    };
+    let ws = match api::workspace_of(&app, &tokens.access_token).await {
+        Ok(ws) => ws,
+        Err(e) => {
+            return (
+                StatusCode::BAD_GATEWAY,
+                format!("workspace lookup failed: {e:#}"),
+            );
+        }
+    };
+    // The token is stored only once its workspace is the one this instance serves.
+    if let Err(e) = linear.pin(&app, ws) {
+        // The details name workspaces, so they stay in the log, not the public response.
+        tracing::warn!("refused Linear install: {e:#}");
+        return (
+            StatusCode::FORBIDDEN,
+            "this instance serves another Linear workspace".into(),
+        );
     }
+    app.store.update(|s| s.linear = tokens);
+    (
+        StatusCode::OK,
+        "Linear authorized. You can close this tab.".into(),
+    )
 }
 
 impl App {
@@ -621,6 +705,39 @@ mod tests {
             "single repo as before"
         );
         assert_eq!(pick(&two[..1], Some("/src/gone")), Some("app".into()));
+    }
+
+    #[test]
+    fn webhooks_only_from_the_pinned_workspace() {
+        assert!(admits(Some("org-1"), Some("org-1")));
+        assert!(!admits(Some("org-1"), Some("org-2")));
+        assert!(!admits(Some("org-1"), None));
+        assert!(!admits(None, Some("org-1")), "unpinned");
+        assert!(!admits(None, None), "unpinned, no organization");
+    }
+
+    #[test]
+    fn pin_checks_setting_and_existing_pin() {
+        let ws = |id: &str, url_key: &str| Workspace {
+            id: id.into(),
+            url_key: url_key.into(),
+            name: url_key.to_uppercase(),
+        };
+        let alean = ws("org-1", "alean");
+        let personal = ws("org-2", "personal");
+        assert!(
+            check_pin(None, None, &alean).is_ok(),
+            "first install, no setting"
+        );
+        assert!(check_pin(Some("alean"), None, &alean).is_ok());
+        assert!(check_pin(Some("org-1"), None, &alean).is_ok());
+        assert!(check_pin(Some("personal"), None, &alean).is_err());
+        assert!(check_pin(None, Some(&alean), &alean).is_ok(), "same pin");
+        assert!(check_pin(None, Some(&alean), &personal).is_err());
+        assert!(
+            check_pin(Some("personal"), Some(&alean), &personal).is_err(),
+            "pin never switches"
+        );
     }
 
     #[test]
