@@ -6,6 +6,7 @@ mod api;
 use crate::{
     agent::Launch,
     app::App,
+    repos::Repo,
     sandbox,
     session::{Outcome, Surface, Update},
     store::file_name,
@@ -208,15 +209,14 @@ fn launch(app: &App, key: &str) -> Result<Launch> {
         .context("unknown conversation")?;
     let workspace = app.cfg.home.join("zulip-workspaces").join(file_name(key));
     std::fs::create_dir_all(&workspace)?;
-    let repo = app.cfg.repo.display();
     let system_prompt = format!(
         "You are {agent}, answering in a Zulip conversation ({location}). Every message you \
          receive is addressed to you, as an @mention or a direct message, and starts with who \
          sent it. Topic messages you have not seen yet arrive in a <zulip_topic_context> block \
          as background, not as separate requests.\n\n\
          Your working directory is scratch space for this conversation, not a repository. \
-         {repo} is a read-only checkout of the main repository; run `git -C {repo} pull` first \
-         when freshness matters. Do not change code from here. When a request needs code \
+         These repositories are open to you read-only:\n{repos}\n\
+         Do not change code from here. When a request needs code \
          changes, create a Linear issue with clear acceptance criteria and delegate it to \
          yourself (the Linear user the Linear MCP is authenticated as); that starts an issue \
          session that does the work.\n\n\
@@ -225,15 +225,22 @@ fn launch(app: &App, key: &str) -> Result<Launch> {
          headings; put a bold line on its own instead. Mention people as @**Full Name**.",
         agent = app.cfg.agent_name,
         location = rec.title,
+        repos = repo_list(&app.cfg.repos),
     );
     let plugin_dirs = app.cfg.plugin_dirs();
-    let mut readable = vec![workspace.clone(), app.cfg.repo.clone()];
+    let mut readable = vec![workspace.clone()];
+    readable.extend(app.cfg.repos.iter().map(|r| r.path.clone()));
     readable.extend(plugin_dirs.iter().cloned());
-    let read_only_repo = format!("Edit(/{repo}/**)");
+    let read_only: Vec<String> = app
+        .cfg
+        .repos
+        .iter()
+        .map(|r| format!("Edit(/{}/**)", r.path.display()))
+        .collect();
     let mut mcp_configs = vec![app.linear_mcp_config(key)?];
     mcp_configs.extend(app.cfg.mcp_configs.iter().cloned());
     Ok(Launch {
-        settings: sandbox::settings(&app.home_dir, &readable, &[read_only_repo]),
+        settings: sandbox::settings(&app.home_dir, &readable, &read_only),
         cwd: workspace,
         system_prompt,
         resume: rec.claude_session_id,
@@ -242,6 +249,25 @@ fn launch(app: &App, key: &str) -> Result<Launch> {
         plugin_dirs,
         env: app.agent_env("zulip"),
     })
+}
+
+/// One line per repository for the chat system prompt.
+fn repo_list(repos: &[Repo]) -> String {
+    repos
+        .iter()
+        .map(|r| {
+            let path = r.path.display();
+            if r.git {
+                format!(
+                    "- `{}`: {path}, a git checkout; run `git -C {path} pull` first when \
+                     freshness matters\n",
+                    r.name
+                )
+            } else {
+                format!("- `{}`: {path}, a plain directory (not git)\n", r.name)
+            }
+        })
+        .collect()
 }
 
 impl Surface for Zulip {
@@ -304,6 +330,18 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lists_repos_by_kind() {
+        let mut vault = Repo::single("/notes/vault".into(), "main".into());
+        vault.git = false;
+        let repos = [Repo::single("/src/app".into(), "main".into()), vault];
+        assert_eq!(
+            repo_list(&repos),
+            "- `app`: /src/app, a git checkout; run `git -C /src/app pull` first when freshness \
+             matters\n- `vault`: /notes/vault, a plain directory (not git)\n"
+        );
+    }
 
     #[test]
     fn strips_leading_mention() {
