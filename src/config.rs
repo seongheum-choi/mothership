@@ -39,6 +39,9 @@ pub struct LinearConfig {
     pub workspace: Option<String>,
     /// Seeds the token store on first start (tokens carried over from an earlier install).
     pub seed_tokens: Option<Tokens>,
+    /// `LINEAR_API_URL`, the GraphQL and OAuth token host. Left unset except by the integration
+    /// tests, which point it at a local mock.
+    pub api_url: String,
 }
 
 pub struct ZulipConfig {
@@ -145,6 +148,7 @@ impl Config {
                 webhook_secret: vars.require("LINEAR_WEBHOOK_SECRET")?,
                 workspace: vars.get("LINEAR_WORKSPACE"),
                 seed_tokens,
+                api_url: linear_api_url(vars.get("LINEAR_API_URL")),
             },
             zulip,
             github,
@@ -255,6 +259,14 @@ impl Vars {
     }
 }
 
+/// `LINEAR_API_URL` without trailing slashes, or Linear's own host when it is unset.
+fn linear_api_url(setting: Option<String>) -> String {
+    setting.map_or_else(
+        || "https://api.linear.app".into(),
+        |url| url.trim_end_matches('/').to_string(),
+    )
+}
+
 /// Split a comma-separated list (`AGENT_ENV`, `GITHUB_TRUSTED_LOGINS`): trimmed, empties
 /// dropped, first occurrence of each kept.
 fn parse_list(list: &str) -> Vec<String> {
@@ -269,7 +281,7 @@ fn parse_list(list: &str) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_list;
+    use super::{linear_api_url, parse_list};
 
     #[test]
     fn parses_trimmed_nonempty_keys() {
@@ -294,5 +306,16 @@ mod tests {
         let none: [String; 0] = [];
         assert_eq!(parse_list(""), none);
         assert_eq!(parse_list("   "), none);
+    }
+
+    #[test]
+    fn linear_api_url_defaults_to_linear_and_drops_trailing_slashes() {
+        assert_eq!(linear_api_url(None), "https://api.linear.app");
+        assert_eq!(
+            linear_api_url(Some("http://127.0.0.1:9/".into())),
+            "http://127.0.0.1:9"
+        );
+        assert_eq!(linear_api_url(Some("http://mock//".into())), "http://mock");
+        assert_eq!(linear_api_url(Some("http://mock".into())), "http://mock");
     }
 }
