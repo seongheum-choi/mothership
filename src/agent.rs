@@ -17,6 +17,8 @@ pub struct Launch {
     pub system_prompt: String,
     pub resume: Option<String>,
     pub permission_mode: String,
+    /// Replaces the configured model for this session.
+    pub model: Option<String>,
     pub mcp_configs: Vec<PathBuf>,
     pub plugin_dirs: Vec<PathBuf>,
     /// Claude Code settings layered over the user's (permission deny rules).
@@ -69,7 +71,7 @@ impl Agent {
         ])
         .args([
             "--model",
-            &claude.model,
+            launch.model.as_deref().unwrap_or(&claude.model),
             "--fallback-model",
             &claude.fallback_model,
         ])

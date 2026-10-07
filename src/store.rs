@@ -27,6 +27,11 @@ pub struct SessionRec {
     pub url: String,
     /// Name of the repository a Linear session works in, chosen once at its start.
     pub repo: Option<String>,
+    /// Linear: the `<home>/modes` mode its labels picked at its start; `None` works as before.
+    pub mode: Option<String>,
+    /// Linear: the mode is not settled yet (labels conflicted, or a mode file did not parse),
+    /// so no turn may run. Sessions from before modes have it false and keep the default.
+    pub mode_pending: bool,
     #[serde(alias = "worktree")]
     pub workspace: Option<PathBuf>,
     pub branch: Option<String>,
