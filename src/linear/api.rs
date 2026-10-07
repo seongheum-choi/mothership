@@ -45,37 +45,98 @@ struct TokenResponse {
     refresh_token: Option<String>,
 }
 
+/// The workspace (Linear organization) an OAuth token belongs to.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Workspace {
+    pub id: String,
+    pub url_key: String,
+    pub name: String,
+}
+
+const VIEWER_ORGANIZATION: &str = "query { viewer { organization { id urlKey name } } }";
+
+impl Workspace {
+    fn from_viewer(data: &Value) -> Result<Self> {
+        let org = &data["viewer"]["organization"];
+        let field = |k: &str| {
+            org[k]
+                .as_str()
+                .map(String::from)
+                .with_context(|| format!("viewer.organization.{k} missing"))
+        };
+        Ok(Self {
+            id: field("id")?,
+            url_key: field("urlKey")?,
+            name: field("name")?,
+        })
+    }
+
+    /// `LINEAR_WORKSPACE` names the workspace by ID or by URL key (`linear.app/<urlKey>`),
+    /// the latter case-insensitively since Linear lowercases it.
+    pub fn is(&self, setting: &str) -> bool {
+        self.id == setting || self.url_key.eq_ignore_ascii_case(setting)
+    }
+}
+
+impl std::fmt::Display for Workspace {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} ({}, {})", self.name, self.url_key, self.id)
+    }
+}
+
+/// One GraphQL request with `token`; `None` when Linear rejects the token.
+async fn request(app: &App, token: &str, query: &str, variables: Value) -> Result<Option<Value>> {
+    let res = app
+        .http
+        .post(GRAPHQL)
+        .bearer_auth(token)
+        .json(&json!({ "query": query, "variables": variables }))
+        .send()
+        .await?;
+    let status = res.status();
+    let text = res.text().await?;
+    let body: Value = serde_json::from_str(&text).unwrap_or_default();
+    if status == reqwest::StatusCode::UNAUTHORIZED
+        || body["errors"].to_string().contains("AUTHENTICATION_ERROR")
+    {
+        return Ok(None);
+    }
+    if let Some(errors) = body.get("errors") {
+        bail!("Linear GraphQL: {errors}");
+    }
+    if !status.is_success() {
+        let snippet: String = text.chars().take(200).collect();
+        bail!("Linear GraphQL: HTTP {status}: {snippet}");
+    }
+    Ok(Some(body["data"].clone()))
+}
+
+/// The workspace `token` belongs to, without refreshing it.
+pub async fn workspace_of(app: &App, token: &str) -> Result<Workspace> {
+    let data = request(app, token, VIEWER_ORGANIZATION, json!({}))
+        .await?
+        .context("Linear rejected the token")?;
+    Workspace::from_viewer(&data)
+}
+
 impl Linear {
     /// GraphQL call that refreshes the OAuth token once on an auth failure (tokens expire after 24h).
     pub async fn graphql(&self, app: &App, query: &str, variables: Value) -> Result<Value> {
-        let mut refreshed = false;
-        loop {
-            let token = app.store.read(|s| s.linear.access_token.clone());
-            let res = app
-                .http
-                .post(GRAPHQL)
-                .bearer_auth(&token)
-                .json(&json!({ "query": query, "variables": variables }))
-                .send()
-                .await?;
-            let status = res.status();
-            let text = res.text().await?;
-            let body: Value = serde_json::from_str(&text).unwrap_or_default();
-            let auth_error = body["errors"].to_string().contains("AUTHENTICATION_ERROR");
-            if !refreshed && (status == reqwest::StatusCode::UNAUTHORIZED || auth_error) {
-                self.refresh(app, &token).await?;
-                refreshed = true;
-                continue;
-            }
-            if let Some(errors) = body.get("errors") {
-                bail!("Linear GraphQL: {errors}");
-            }
-            if !status.is_success() {
-                let snippet: String = text.chars().take(200).collect();
-                bail!("Linear GraphQL: HTTP {status}: {snippet}");
-            }
-            return Ok(body["data"].clone());
+        let token = app.store.read(|s| s.linear.access_token.clone());
+        if let Some(data) = request(app, &token, query, variables.clone()).await? {
+            return Ok(data);
         }
+        self.refresh(app, &token).await?;
+        let token = app.store.read(|s| s.linear.access_token.clone());
+        request(app, &token, query, variables)
+            .await?
+            .context("Linear GraphQL: token rejected right after a refresh")
+    }
+
+    /// The workspace of the stored token, refreshing the token if it has expired.
+    pub async fn current_workspace(&self, app: &App) -> Result<Workspace> {
+        let data = self.graphql(app, VIEWER_ORGANIZATION, json!({})).await?;
+        Workspace::from_viewer(&data)
     }
 
     /// Refreshes unless another task already replaced `stale`. Linear rotates refresh
@@ -98,6 +159,12 @@ impl Linear {
         if tokens.refresh_token.is_empty() {
             tokens.refresh_token = current.refresh_token; // not rotated this time
         }
+        // Like /callback, store the token only once its workspace is the pinned one.
+        let ws = workspace_of(app, &tokens.access_token)
+            .await
+            .context("workspace lookup after token refresh")?;
+        self.pin(app, ws)
+            .context("refreshed Linear token kept out of the store")?;
         app.store.update(|s| s.linear = tokens);
         tracing::info!("Linear token refreshed");
         Ok(())
@@ -191,5 +258,18 @@ mod tests {
         assert!(!verify("s", body, sig, 1_070_000), "stale timestamp");
         assert!(!verify("t", body, sig, 1_030_000), "wrong secret");
         assert!(!verify("s", body, "zz", 1_030_000), "not hex");
+    }
+
+    #[test]
+    fn workspace_matches_id_or_url_key() {
+        let data =
+            json!({"viewer":{"organization":{"id":"org-1","urlKey":"alean","name":"ALEAN"}}});
+        let ws = Workspace::from_viewer(&data).unwrap();
+        assert!(ws.is("org-1"));
+        assert!(ws.is("alean"));
+        assert!(ws.is("ALEAN"), "URL key is case-insensitive");
+        assert!(!ws.is("ORG-1"), "IDs are compared exactly");
+        assert!(!ws.is("personal"));
+        assert!(Workspace::from_viewer(&json!({"viewer":null})).is_err());
     }
 }

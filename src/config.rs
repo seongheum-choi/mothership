@@ -34,6 +34,8 @@ pub struct LinearConfig {
     pub client_id: String,
     pub client_secret: String,
     pub webhook_secret: String,
+    /// `LINEAR_WORKSPACE`: the workspace (URL key or ID) this instance must serve.
+    pub workspace: Option<String>,
     /// Seeds the token store on first start (tokens carried over from an earlier install).
     pub seed_tokens: Option<Tokens>,
 }
@@ -112,6 +114,7 @@ impl Config {
                 client_id: vars.require("LINEAR_CLIENT_ID")?,
                 client_secret: vars.require("LINEAR_CLIENT_SECRET")?,
                 webhook_secret: vars.require("LINEAR_WEBHOOK_SECRET")?,
+                workspace: vars.get("LINEAR_WORKSPACE"),
                 seed_tokens,
             },
             zulip,

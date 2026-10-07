@@ -27,11 +27,22 @@ async fn main() -> Result<()> {
     let tunnel = cfg.tunnel.take();
     let app = app::App::new(cfg)?;
 
+    if app.cfg.linear.workspace.is_none() {
+        tracing::warn!(
+            "LINEAR_WORKSPACE is not set: whichever workspace installs the app first is pinned"
+        );
+    }
     if app.store.read(|s| s.linear.access_token.is_empty()) {
         tracing::warn!(
-            "no Linear token yet: open {}/oauth/authorize",
+            "no Linear token yet: open {}/oauth/authorize; webhooks are refused until then",
             app.cfg.base_url
         );
+    } else {
+        app.linear
+            .surface
+            .pin_current(&app)
+            .await
+            .context("pinning the Linear workspace")?;
     }
     if let Some(tunnel) = tunnel {
         tokio::spawn(tunnel.supervise());
