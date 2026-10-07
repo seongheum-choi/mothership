@@ -159,12 +159,15 @@ impl Linear {
         if tokens.refresh_token.is_empty() {
             tokens.refresh_token = current.refresh_token; // not rotated this time
         }
-        // Like /callback, store the token only once its workspace is the pinned one.
-        let ws = workspace_of(app, &tokens.access_token)
-            .await
-            .context("workspace lookup after token refresh")?;
-        self.pin(app, ws)
-            .context("refreshed Linear token kept out of the store")?;
+        // A token from another workspace never reaches the store. When the lookup itself fails,
+        // store the pair anyway: Linear has already rotated the refresh token, so dropping the
+        // new pair would leave none that works, and a refresh grant cannot change workspace.
+        match workspace_of(app, &tokens.access_token).await {
+            Ok(ws) => self
+                .pin(app, ws)
+                .context("refreshed Linear token kept out of the store")?,
+            Err(e) => tracing::warn!("workspace lookup after token refresh failed: {e:#}"),
+        }
         app.store.update(|s| s.linear = tokens);
         tracing::info!("Linear token refreshed");
         Ok(())
