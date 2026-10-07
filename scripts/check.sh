@@ -5,3 +5,6 @@ cd "$(dirname "$0")/.."
 cargo fmt --check
 cargo clippy --all-targets --quiet -- -D warnings
 cargo test --quiet
+for test in plugins/*/tests/*.test.sh; do
+    "$test"
+done

@@ -33,6 +33,19 @@ Agents run as `claude -p --input-format stream-json --output-format stream-json`
 | An agent runtime (Codex) | A runner that turns its output into `agent::Event`s |
 | Skills for every session | Drop a Claude Code plugin directory into `<home>/plugins/`; it loads on the next turn |
 
+### Bundled plugins
+
+`plugins/` holds plugins that ship with mothership. None load until installed, by copying or symlinking the directory into `<home>/plugins/`:
+
+```sh
+mkdir -p ~/.mothership/plugins
+ln -s "$PWD/plugins/unshipped-work" ~/.mothership/plugins/   # run from the mothership checkout
+```
+
+| Plugin | What it does |
+| --- | --- |
+| `unshipped-work` | Stop hook. In an issue worktree with uncommitted tracked changes or commits no remote has, the agent's first Stop is sent back to commit and push, or to say why the work stays unshipped. The second Stop always passes. Directories that are not linked worktrees, such as Zulip workspaces, are left alone. |
+
 ## Settings
 
 Settings come from the process environment or `<home>/.env`, and the environment wins. `<home>` is `~/.mothership` unless `MOTHERSHIP_HOME` says otherwise.
