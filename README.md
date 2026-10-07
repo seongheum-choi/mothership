@@ -35,6 +35,7 @@ Agents run as `claude -p --input-format stream-json --output-format stream-json`
 | A review system (Gerrit) | A `review::ReviewBackend` variant |
 | An agent runtime (Codex) | A runner that turns its output into `agent::Event`s |
 | Skills for every session | Drop a Claude Code plugin directory into `<home>/plugins/`; it loads on the next turn |
+| A working mode picked by Linear labels | A [`<home>/modes/<name>.md`](#modes) file |
 
 ### Bundled plugins
 
@@ -119,6 +120,35 @@ With a single repository none of this is read: every session works there, as bef
 The project, team and labels come from a GraphQL lookup, because webhook payloads carry none of them. The session's first thought names the repository and the rule. If no rule decides, a `[repo=…]` or `repo:` label names an unknown repository, the lookup fails, or one rule points at two repositories, the session asks and waits. A reply carrying `[repo=<name>]` starts the work, with the issue context it was created with; it is read before the description, so it also corrects a wrong `[repo=…]` there.
 
 A session that started before `repos.json` keeps the repository its worktree was cut from. A session whose repository has been removed from `repos.json` stops with an error instead of starting over somewhere else.
+
+### Modes
+
+A mode changes how a Linear session works: `<home>/modes/<name>.md` holds instructions for the system prompt, with optional YAML frontmatter. `contrib/modes/` has examples (`implement`, `research`, `debug`); copy or symlink the ones you want into `<home>/modes/`.
+
+```markdown
+---
+labels: [Research]
+model: opus
+permission_mode: dontAsk
+deny:
+  - Edit
+  - Bash(git push:*)
+---
+Answer the question in the issue; do not change anything.
+```
+
+| Field | Default | |
+| --- | --- | --- |
+| `labels` | | Linear label names that turn the mode on, case-insensitive |
+| `model` | `CLAUDE_MODEL` | Model for the session's turns |
+| `permission_mode` | `bypassPermissions` | Claude Code `--permission-mode` |
+| `deny` | | Claude Code permission deny rules, added to the home directory ones |
+
+Deny rules are a safety net, not a guarantee: a Bash command such as `sed -i` or `git -c user.name=x commit` gets past `Edit` and `Bash(git commit:*)`. For a read-only mode, use `permission_mode: dontAsk`. It refuses every tool call that Claude Code does not judge read-only, including Linear MCP tools and reads outside the worktree; the final reply still reaches the Linear session. `plan` is not enough: in `-p` sessions it refuses MCP writes but lets Bash change files (Claude Code 2.1.293).
+
+A session picks its mode when it starts, from the labels of the same GraphQL lookup repository routing uses, and keeps it for every later turn; the first thought names the mode and the label. An issue with no mode label works as without modes. When labels pick two modes, or a mode file does not parse, the session says so and waits; a reply after fixing the labels or the file starts it. Every mode file is read to pick one, so a single file that does not parse stops every new Linear session, labelled or not, until it is fixed. Mode files are read again every turn, so edits apply without a restart, and a file that no longer parses fails the turn rather than running it without the mode.
+
+The repository's instructions (the review backend's, `prompt_file`, or a `"git": false` repository's no-commit rule) come after the mode's and still decide how work is delivered, so a mode cannot bring commits or pull requests back into a non-git repository. Mode files say how to work, not how to deliver.
 
 ## Linear auth
 

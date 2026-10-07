@@ -245,6 +245,7 @@ fn launch(app: &App, key: &str) -> Result<Launch> {
         system_prompt,
         resume: rec.claude_session_id,
         permission_mode: app.cfg.claude.chat_permission_mode.clone(),
+        model: None,
         mcp_configs,
         plugin_dirs,
         env: app.agent_env("zulip"),

@@ -5,6 +5,7 @@ mod app;
 mod config;
 mod github;
 mod linear;
+mod modes;
 mod repos;
 mod review;
 mod sandbox;
