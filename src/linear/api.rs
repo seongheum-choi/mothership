@@ -8,9 +8,6 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use sha2::Sha256;
 
-const GRAPHQL: &str = "https://api.linear.app/graphql";
-const TOKEN: &str = "https://api.linear.app/oauth/token";
-
 /// `Linear-Signature` is hex(HMAC-SHA256(secret, raw body)). A missing `webhookTimestamp`,
 /// or one more than a minute off, is treated as a replay.
 pub fn verify(secret: &str, body: &[u8], signature: &str, now_ms: u64) -> bool {
@@ -78,7 +75,7 @@ impl std::fmt::Display for Workspace {
 async fn request(app: &App, token: &str, query: &str, variables: Value) -> Result<Option<Value>> {
     let res = app
         .http
-        .post(GRAPHQL)
+        .post(format!("{}/graphql", app.cfg.linear.api_url))
         .bearer_auth(token)
         .json(&json!({ "query": query, "variables": variables }))
         .send()
@@ -182,7 +179,12 @@ impl Linear {
             ("client_secret", app.cfg.linear.client_secret.as_str()),
         ];
         form.extend_from_slice(params);
-        let res = app.http.post(TOKEN).form(&form).send().await?;
+        let res = app
+            .http
+            .post(format!("{}/oauth/token", app.cfg.linear.api_url))
+            .form(&form)
+            .send()
+            .await?;
         if !res.status().is_success() {
             bail!(
                 "Linear token endpoint: {} {}",
