@@ -22,6 +22,7 @@ mothership is a long-running service that other people's work depends on, so cha
 | `app.rs` | Shared state, HTTP router, agent environment |
 | `config.rs` | Settings |
 | `repos.rs` | `repos.json`, and which repository a Linear issue belongs to |
+| `modes.rs` | `<home>/modes/*.md`, and which mode a Linear issue's labels pick |
 | `store.rs` | `state.json` and atomic private writes |
 | `session.rs` | `Surface` trait, per-conversation workers, turn loop |
 | `agent.rs` | Claude Code process and its stream-json protocol |

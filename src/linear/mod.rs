@@ -6,6 +6,7 @@ mod api;
 use crate::{
     agent::Launch,
     app::App,
+    modes,
     repos::{self, IssueFacts, Ref, Repo},
     sandbox,
     session::{Outcome, Surface, Update},
@@ -181,6 +182,18 @@ async fn handle(app: Arc<App>, p: Value) {
         _ => return,
     };
     tracing::info!("[{sid}] linear {} on {}", p["action"], issue["identifier"]);
+    start_turn(&app, sid, issue, prompt, request).await;
+}
+
+/// Records the session, settles its repository and mode, then runs the prompt, or keeps it
+/// until a reply settles whatever is missing.
+async fn start_turn(
+    app: &Arc<App>,
+    sid: &str,
+    issue: &Value,
+    prompt: String,
+    request: Option<&str>,
+) {
     let field = |k: &str| issue[k].as_str().unwrap_or_default().to_string();
     app.store.update(|s| {
         let rec = s.sessions.entry(sid.to_string()).or_default();
@@ -190,6 +203,7 @@ async fn handle(app: Arc<App>, p: Value) {
                 identifier: field("identifier"),
                 title: field("title"),
                 url: field("url"),
+                mode_pending: true,
                 ..std::mem::take(rec)
             };
         }
@@ -197,24 +211,32 @@ async fn handle(app: Arc<App>, p: Value) {
         rec.closed = false;
     });
     let linear = &app.linear.surface;
-    if let Err(unrouted) = linear.choose_repo(&app, sid, issue, request).await {
-        // Keep Linear's issue context for the turn that runs once the repository is known.
+    let mut lookup = IssueLookup::new(issue["id"].as_str().unwrap_or_default());
+    let ready = match linear
+        .choose_repo(app, sid, issue, request, &mut lookup)
+        .await
+    {
+        Ok(()) => linear.choose_mode(app, sid, &mut lookup).await,
+        blocked => blocked,
+    };
+    if let Err(blocked) = ready {
+        // Keep Linear's issue context for the turn that runs once the session can start.
         app.store.update(|s| {
             if let Some(rec) = s.sessions.get_mut(sid) {
                 rec.pending_prompt.get_or_insert(prompt);
             }
         });
-        let content = match unrouted {
-            Unrouted::Ask(question) => {
-                tracing::info!("[{sid}] no repository: {question}");
+        let content = match blocked {
+            Blocked::Ask(question) => {
+                tracing::info!("[{sid}] waiting: {question}");
                 json!({ "type": "elicitation", "body": question })
             }
-            Unrouted::Stuck(problem) => {
-                tracing::warn!("[{sid}] repository unavailable: {problem}");
+            Blocked::Stuck(problem) => {
+                tracing::warn!("[{sid}] cannot start: {problem}");
                 json!({ "type": "error", "body": problem })
             }
         };
-        linear.activity(&app, sid, content, false).await;
+        linear.activity(app, sid, content, false).await;
         return;
     }
     let pending = app.store.update(|s| {
@@ -226,7 +248,7 @@ async fn handle(app: Arc<App>, p: Value) {
         Some(first) => format!("{first}\n\n{prompt}"),
         None => prompt,
     };
-    app.linear.submit(&app, sid, prompt, ());
+    app.linear.submit(app, sid, prompt, ());
 }
 
 /// A change to an issue that ends the agent's work on it.
@@ -427,12 +449,43 @@ fn cleanup_repo<'a>(
 }
 
 /// Why a session cannot start its turn yet.
-enum Unrouted {
-    /// Nothing on the issue decides the repository; the question for the requester.
+enum Blocked {
+    /// Nothing on the issue decides the repository, or its labels pick several modes; the
+    /// question for the requester.
     Ask(String),
-    /// The session already belongs to a repository that is not configured; a reply cannot fix
-    /// that, the config must.
+    /// Something only mothership's files can fix: the session's repository is not configured,
+    /// or a mode file does not parse.
     Stuck(String),
+}
+
+/// The issue lookup (`Linear::issue_routing`), made at most once per webhook and shared by
+/// repository and mode selection. `None` when it failed.
+struct IssueLookup<'a> {
+    issue_id: &'a str,
+    done: bool,
+    found: Option<Value>,
+}
+
+impl<'a> IssueLookup<'a> {
+    fn new(issue_id: &'a str) -> Self {
+        Self {
+            issue_id,
+            done: false,
+            found: None,
+        }
+    }
+
+    async fn get(&mut self, linear: &Linear, app: &App, sid: &str) -> Option<&Value> {
+        if !self.done {
+            self.done = true;
+            self.found = linear
+                .issue_routing(app, self.issue_id)
+                .await
+                .inspect_err(|e| tracing::warn!("[{sid}] issue lookup failed: {e:#}"))
+                .ok();
+        }
+        self.found.as_ref()
+    }
 }
 
 impl Linear {
@@ -443,7 +496,8 @@ impl Linear {
         sid: &str,
         issue: &Value,
         request: Option<&str>,
-    ) -> Result<(), Unrouted> {
+        lookup: &mut IssueLookup<'_>,
+    ) -> Result<(), Blocked> {
         let (current, workspace) = app.store.read(|s| {
             s.sessions
                 .get(sid)
@@ -455,7 +509,7 @@ impl Linear {
             // another repository's prompt and sandbox.
             return match app.cfg.repo(&name) {
                 Some(_) => Ok(()),
-                None => Err(Unrouted::Stuck(format!(
+                None => Err(Blocked::Stuck(format!(
                     "This session works in `{name}`, which is no longer in repos.json. Add it \
                      back and restart mothership to continue."
                 ))),
@@ -465,7 +519,7 @@ impl Linear {
             // A session from before repository routing: it stays where its worktree is.
             let main_clone = worktree::main_clone(&workspace).await.ok();
             let Some(repo) = existing_repo(&app.cfg.repos, main_clone.as_deref()) else {
-                return Err(Unrouted::Stuck(format!(
+                return Err(Blocked::Stuck(format!(
                     "This session's worktree {} belongs to no repository in repos.json. Add \
                      its repository and restart mothership to continue.",
                     workspace.display()
@@ -475,19 +529,65 @@ impl Linear {
                 .await;
             return Ok(());
         }
+        let null = Value::Null;
         let routing = if app.cfg.repos.len() > 1 {
-            self.issue_routing(app, issue["id"].as_str().unwrap_or_default())
-                .await
-                .inspect_err(|e| {
-                    tracing::warn!("[{sid}] issue lookup for repository routing failed: {e:#}");
-                })
-                .ok()
+            lookup.get(self, app, sid).await
         } else {
-            Some(Value::Null)
+            Some(&null)
         };
-        let facts = issue_facts(routing.as_ref(), issue, request);
-        let choice = repos::select(&app.cfg.repos, &facts).map_err(Unrouted::Ask)?;
+        let facts = issue_facts(routing, issue, request);
+        let choice = repos::select(&app.cfg.repos, &facts).map_err(Blocked::Ask)?;
         self.settle(app, sid, choice.repo, &choice.reason).await;
+        Ok(())
+    }
+
+    /// Settles the session's mode from the issue's labels, once, at its start. Until it is
+    /// settled no turn runs, so a conflict or a broken mode file never falls back to the default.
+    async fn choose_mode(
+        &self,
+        app: &Arc<App>,
+        sid: &str,
+        lookup: &mut IssueLookup<'_>,
+    ) -> Result<(), Blocked> {
+        if !app
+            .store
+            .read(|s| s.sessions.get(sid).is_some_and(|r| r.mode_pending))
+        {
+            return Ok(());
+        }
+        let all = modes::load_all(&modes::dir(&app.cfg.home)).map_err(|e| {
+            Blocked::Stuck(format!(
+                "A mode file is broken: {e:#}. Fix it and reply to start."
+            ))
+        })?;
+        let choice = if all.is_empty() {
+            None
+        } else {
+            let Some(issue) = lookup.get(self, app, sid).await else {
+                return Err(Blocked::Stuck(
+                    "Could not look up the issue's labels to choose a mode. Reply to try again."
+                        .into(),
+                ));
+            };
+            let labels: Vec<String> = routing_facts(issue)
+                .labels
+                .into_iter()
+                .map(|l| l.name)
+                .collect();
+            modes::select(&all, &labels).map_err(Blocked::Ask)?
+        };
+        let name = choice.as_ref().map(|c| c.mode.name.clone());
+        app.store.update(|s| {
+            if let Some(rec) = s.sessions.get_mut(sid) {
+                rec.mode.clone_from(&name);
+                rec.mode_pending = false;
+            }
+        });
+        if let Some(c) = choice {
+            tracing::info!("[{sid}] mode {} (label {})", c.mode.name, c.label);
+            let note = format!("Mode: `{}` (label `{}`).", c.mode.name, c.label);
+            self.activity(app, sid, thought(&note), false).await;
+        }
         Ok(())
     }
 
@@ -635,6 +735,19 @@ impl Surface for Linear {
             .as_deref()
             .and_then(|name| app.cfg.repo(name))
             .context("the session's repository is not configured")?;
+        if rec.mode_pending {
+            bail!("the session's mode is not settled yet");
+        }
+        // Read every turn, so an edit applies to the next one; a broken file fails the turn
+        // rather than running it without the mode.
+        let mode = rec
+            .mode
+            .as_deref()
+            .map(|name| {
+                modes::load(&modes::dir(&app.cfg.home), name)
+                    .with_context(|| format!("mode `{name}`"))
+            })
+            .transpose()?;
         let (workspace, place) = if repo.git {
             let (workspace, branch) = self.worktree(app, key, &rec, repo).await?;
             let place = format!("in a git worktree of `{}` on branch `{branch}`", repo.name);
@@ -660,14 +773,13 @@ impl Surface for Linear {
              matters only in paths git ignores.\n\n",
             app.cfg.agent_name, rec.identifier, rec.title, rec.url
         );
-        system_prompt.push_str(
-            &repo.instructions(
-                app.cfg
-                    .extra_prompt
-                    .as_deref()
-                    .unwrap_or(app.cfg.review.instructions()),
-            ),
+        let delivery = repo.instructions(
+            app.cfg
+                .extra_prompt
+                .as_deref()
+                .unwrap_or(app.cfg.review.instructions()),
         );
+        system_prompt.push_str(&work_instructions(mode.as_ref(), &delivery));
 
         let plugin_dirs = app.cfg.plugin_dirs();
         let mut readable = vec![workspace.clone(), repo.path.clone()];
@@ -677,11 +789,19 @@ impl Surface for Linear {
         mcp_configs.extend(app.cfg.mcp_configs.iter().cloned());
         mcp_configs.extend(repo.mcp_configs.iter().cloned());
         Ok(Launch {
-            settings: sandbox::settings(&app.home_dir, &readable, &[]),
+            settings: sandbox::settings(
+                &app.home_dir,
+                &readable,
+                mode.as_ref().map_or(&[], |m| &m.deny),
+            ),
             cwd: workspace,
             system_prompt,
             resume: rec.claude_session_id,
-            permission_mode: "bypassPermissions".into(),
+            permission_mode: mode
+                .as_ref()
+                .and_then(|m| m.permission_mode.clone())
+                .unwrap_or_else(|| "bypassPermissions".into()),
+            model: mode.and_then(|m| m.model),
             mcp_configs,
             plugin_dirs,
             env: app.agent_env("linear"),
@@ -713,6 +833,18 @@ impl Surface for Linear {
             }),
         };
         self.activity(app, key, content, false).await;
+    }
+}
+
+/// The mode's instructions, then the repository's delivery instructions. Delivery comes last so
+/// a mode cannot bring commits or pull requests back into a non-git repository.
+fn work_instructions(mode: Option<&modes::Mode>, delivery: &str) -> String {
+    match mode {
+        Some(mode) => format!(
+            "This session is in the `{}` mode:\n\n{}\n\n{delivery}",
+            mode.name, mode.instructions
+        ),
+        None => delivery.to_string(),
     }
 }
 
@@ -1102,6 +1234,22 @@ mod tests {
             check_pin(Some("personal"), Some(&alean), &personal).is_err(),
             "pin never switches"
         );
+    }
+
+    #[test]
+    fn delivery_instructions_come_after_the_mode() {
+        let mut repo = Repo::single("/notes".into(), "main".into());
+        repo.git = false;
+        let mode = modes::Mode {
+            name: "implement".into(),
+            instructions: "Open a pull request.".into(),
+            ..modes::Mode::default()
+        };
+        let prompt = work_instructions(Some(&mode), &repo.instructions("Use gh pr create."));
+        assert!(prompt.starts_with("This session is in the `implement` mode:\n\nOpen a pull"));
+        assert!(prompt.ends_with("say what you changed in your final reply."));
+        assert!(!prompt.contains("gh pr create"));
+        assert_eq!(work_instructions(None, "Deliver."), "Deliver.");
     }
 
     #[test]
