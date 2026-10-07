@@ -141,10 +141,24 @@ async fn handle(app: Arc<App>, p: Value) {
         return;
     }
     let (prompt, request) = match p["action"].as_str() {
-        Some("created") => (
-            initial_prompt(&p),
-            p["agentSession"]["comment"]["body"].as_str(),
-        ),
+        Some("created") => {
+            // A delegated session starts work on the issue. A mention may be just a question,
+            // so the agent moves those issues itself when it starts work (see the prompt).
+            if mention_request(&p).is_none()
+                && let Some(issue_id) = issue["id"].as_str()
+            {
+                let (app, sid, issue_id) = (app.clone(), sid.to_string(), issue_id.to_string());
+                tokio::spawn(async move {
+                    if let Err(e) = app.linear.surface.start_issue(&app, &issue_id).await {
+                        tracing::warn!("[{sid}] moving issue to started failed: {e:#}");
+                    }
+                });
+            }
+            (
+                initial_prompt(&p),
+                p["agentSession"]["comment"]["body"].as_str(),
+            )
+        }
         Some("prompted") if p["agentActivity"]["signal"] == "stop" => {
             if !app.linear.stop(sid) {
                 app.linear
@@ -389,15 +403,19 @@ fn initial_prompt(p: &Value) -> String {
         issue["title"].as_str().unwrap_or_default(),
         issue["description"].as_str().unwrap_or_default()
     );
-    // A session started by an @mention carries the mention as its comment.
-    let comment = p["agentSession"]["comment"]["body"]
-        .as_str()
-        .unwrap_or_default();
-    if !comment.is_empty() && !comment.contains("This thread is for an agent session") {
+    if let Some(comment) = mention_request(p) {
         prompt.push_str("\n\nRequest:\n");
         prompt.push_str(comment);
     }
     prompt
+}
+
+/// The @mention that started the session, if it was one. A delegated session also carries a
+/// comment, Linear's own thread marker, which is not a request.
+fn mention_request(p: &Value) -> Option<&str> {
+    p["agentSession"]["comment"]["body"]
+        .as_str()
+        .filter(|c| !c.is_empty() && !c.contains("This thread is for an agent session"))
 }
 
 impl Surface for Linear {
@@ -431,7 +449,9 @@ impl Surface for Linear {
             "You are {}, a Linear agent, working on issue {} \"{}\" ({}) {place}. Everything \
              you write is relayed to the Linear agent session. Images in the issue or its \
              comments (uploads.linear.app links) need auth, so open them with the Linear MCP \
-             `extract_images` tool.\n\n",
+             `extract_images` tool. If you start working on the issue while it is still in \
+             triage, backlog or an unstarted status, move it to its team's first started status \
+             with the Linear MCP; a delegated issue is moved for you.\n\n",
             app.cfg.agent_name, rec.identifier, rec.title, rec.url
         );
         system_prompt.push_str(
@@ -641,6 +661,18 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mention_is_told_apart_from_delegation() {
+        let with = |body: &str| json!({"agentSession": {"comment": {"body": body}}});
+        assert_eq!(mention_request(&with("@bot fix it")), Some("@bot fix it"));
+        assert_eq!(
+            mention_request(&with("This thread is for an agent session with Bot.")),
+            None
+        );
+        assert_eq!(mention_request(&with("")), None);
+        assert_eq!(mention_request(&json!({"agentSession": {}})), None);
+    }
 
     #[test]
     fn mention_prompt_includes_request() {
