@@ -25,10 +25,14 @@ pub struct SessionRec {
     pub identifier: String,
     pub title: String,
     pub url: String,
+    /// Name of the repository a Linear session works in, chosen once at its start.
+    pub repo: Option<String>,
     #[serde(alias = "worktree")]
     pub workspace: Option<PathBuf>,
     pub branch: Option<String>,
     pub claude_session_id: Option<String>,
+    /// Linear: the first prompt of a session still waiting to be told its repository.
+    pub pending_prompt: Option<String>,
     /// Zulip: id of the newest topic message the agent has already seen.
     pub cursor: Option<u64>,
 }

@@ -71,6 +71,24 @@ pub async fn current_branch(worktree: &Path) -> Option<String> {
     Some(head.trim().to_string()).filter(|b| !b.is_empty())
 }
 
+/// The main clone `worktree` was cut from, from its shared git directory.
+pub async fn main_clone(worktree: &Path) -> Result<PathBuf> {
+    let common = git(
+        worktree,
+        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+    )
+    .await?;
+    Ok(clone_of(Path::new(common.trim())))
+}
+
+/// `<clone>/.git` belongs to `<clone>`; a bare repository is its own git directory.
+fn clone_of(common_dir: &Path) -> PathBuf {
+    match (common_dir.file_name(), common_dir.parent()) {
+        (Some(name), Some(parent)) if name == ".git" => parent.to_path_buf(),
+        _ => common_dir.to_path_buf(),
+    }
+}
+
 async fn has_ref(repo: &Path, name: &str) -> bool {
     git(repo, &["rev-parse", "--verify", "--quiet", name])
         .await
@@ -119,5 +137,17 @@ mod tests {
             Some(PathBuf::from("/wt/A-1"))
         );
         assert_eq!(checked_out_at(porcelain, "dev/a-10"), None);
+    }
+
+    #[test]
+    fn clone_of_common_dir() {
+        assert_eq!(
+            clone_of(Path::new("/src/app/.git")),
+            PathBuf::from("/src/app")
+        );
+        assert_eq!(
+            clone_of(Path::new("/src/app.git")),
+            PathBuf::from("/src/app.git")
+        );
     }
 }

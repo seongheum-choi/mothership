@@ -1,6 +1,6 @@
 //! Settings, read from the process environment and `<home>/.env` (the environment wins).
 
-use crate::{review::ReviewBackend, store::Tokens, tunnel::Tunnel};
+use crate::{repos::Repo, review::ReviewBackend, store::Tokens, tunnel::Tunnel};
 use anyhow::{Context, Result, anyhow};
 use std::{collections::HashMap, path::PathBuf};
 
@@ -18,9 +18,8 @@ pub struct Config {
     pub agent_env: Vec<(String, String)>,
     pub linear: LinearConfig,
     pub zulip: Option<ZulipConfig>,
-    /// Main clone that issue worktrees are cut from.
-    pub repo: PathBuf,
-    pub base_branch: String,
+    /// From `<home>/repos.json`, or the one `REPO_PATH`/`BASE_BRANCH` describe. Never empty.
+    pub repos: Vec<Repo>,
     pub worktrees_dir: PathBuf,
     pub claude: ClaudeConfig,
     /// Extra MCP config files for every session, next to the Linear one.
@@ -60,6 +59,13 @@ impl Config {
         let home = std::env::var("MOTHERSHIP_HOME")
             .map_or_else(|_| user_home.join(".mothership"), PathBuf::from);
         let vars = Vars::load(&home);
+        let repos = match crate::repos::load(&home.join("repos.json"), &user_home)? {
+            Some(repos) => repos,
+            None => vec![Repo::single(
+                PathBuf::from(vars.require("REPO_PATH")?),
+                vars.get("BASE_BRANCH").unwrap_or_else(|| "main".into()),
+            )],
+        };
 
         let extra_prompt = vars
             .get("APPEND_SYSTEM_PROMPT_FILE")
@@ -109,8 +115,7 @@ impl Config {
                 seed_tokens,
             },
             zulip,
-            repo: PathBuf::from(vars.require("REPO_PATH")?),
-            base_branch: vars.get("BASE_BRANCH").unwrap_or_else(|| "main".into()),
+            repos,
             worktrees_dir: vars
                 .get("WORKTREES_DIR")
                 .map_or_else(|| home.join("worktrees"), PathBuf::from),
@@ -143,6 +148,10 @@ impl Config {
             tunnel,
             home,
         })
+    }
+
+    pub fn repo(&self, name: &str) -> Option<&Repo> {
+        crate::repos::by_name(&self.repos, name)
     }
 
     /// Claude Code plugins installed by dropping a directory into `<home>/plugins`.
