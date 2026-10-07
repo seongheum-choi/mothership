@@ -19,6 +19,12 @@ tokio = { version = "1.53.2", features = ["rt-multi-thread", "macros", "process"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", default-features = false, features = ["fmt", "ansi", "std"] }
 
+# A harness of its own, so the test executable can also act as `claude` and `gh`.
+[[test]]
+name = "integration"
+path = "tests/integration/main.rs"
+harness = false
+
 [lints.rust]
 unsafe_code = "forbid"
 
