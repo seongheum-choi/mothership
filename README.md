@@ -19,16 +19,17 @@ Licensed under the [Apache License 2.0](LICENSE).
 - **PR feedback:** `POST /github-webhook` takes the GitHub App's `pull_request_review` (submitted, with text), `pull_request_review_comment` (created) and `issue_comment` (created, on a PR) events, checked against `X-Hub-Signature-256`. Only comments and reviews whose `author_association` is `OWNER`, or whose author is in `GITHUB_TRUSTED_LOGINS`, are heard, only when their text mentions the agent's GitHub account (`@<GITHUB_MENTION_LOGIN>`, in any letter case), and only on same-repository PRs in the origins of the git repositories in `repos.json`; a repeated `X-GitHub-Delivery` id is answered 200 and dropped. The PR's head branch picks the newest Linear session recorded on that branch, or on the branch it is stacked on (`en-593-3` → `en-593`). That session gets the author, file and lines, URLs and the text quoted in a `<github_comment>` block as a prompt, and posts its results in Linear as usual. The agent replies with `gh-reply` (installed in its own `<home>/gh-reply` directory and put first on agents' `PATH`; it refuses an empty reply), which appends `<!-- mothership -->`; text with that marker is dropped, as are comments by bots (`type: Bot`) and feedback on branches no session knows. A session that gets 10 GitHub prompts within an hour is stopped and told so in Linear, and further GitHub feedback for it waits for the hour to pass. `issue_comment` events carry no branch, so the server looks the PR up with `gh api`. With `GITHUB_WEBHOOK_SECRET` set, startup fails when no git repository has a GitHub origin or `<home>/gh-reply` cannot be written.
 - **Pull request links:** when a Linear turn ends, every GitHub pull request URL (`https://github.com/<owner>/<repo>/pull/<n>`) in its final response or interim thoughts, with fragment and query dropped, is added to the session's external URLs (`agentSessionUpdate` `addedExternalUrls`, labelled `<owner>/<repo>#<n>`), so the session shows the link and Linear can tie the session to the pull request once it is synced. Tool inputs are not searched, since they name pull requests the agent reads as often as ones it opens. Each URL is sent once per session and recorded in `state.json`; a failed update is logged, does not affect the turn, and is retried at the next turn that mentions the URL.
 - **Stop:** a Linear stop signal kills the agent's whole process group.
+- **Start watchdog:** an agent that announces no session (`system:init`) within `AGENT_START_TIMEOUT` is killed with its process tree, and the turn fails with an error that links [the macOS privacy section](#agent-does-not-start-macos-privacy-prompts), so a hang shows up in minutes rather than as a silent session.
 - **Closed issues:** when an issue moves to a completed or canceled state or is deleted, its running sessions stop and its worktree under `WORKTREES_DIR` is removed from the session's own repository, ignored files such as `.env` or `build/` included; the branch stays, and a worktree with uncommitted changes is kept with a warning. A worktree that an open session of another issue records (a stacked branch) or that a new prompt reopened meanwhile stays. A non-git repository's directory is never removed. GitHub feedback on a closed session's PR is logged and ignored until the session is prompted again in Linear. When the app is unassigned or undelegated, running sessions stop with a note and the worktree stays. This needs the Linear app's `Issue` data-change and app notification webhooks.
 - **Worktrees:** a new branch is cut from `origin/<BASE_BRANCH>` with no upstream, so a bare `git push` never targets the base branch. An existing local or remote branch is continued, and an existing checkout is reused. Only one agent runs per worktree at a time.
-- **Home directory:** agents may read only their workspace, their repository's main clone (every repository's, in Zulip), and plugin directories. Every other entry under `$HOME` gets a `Read` deny rule, except the paths in `SANDBOX_READ` and `SANDBOX_WRITE` and the progress directory. Claude Code applies deny rules under `bypassPermissions` too.
+- **Home directory:** agents may read only their workspace, their repository's main clone (every repository's, in Zulip), and plugin directories. Every other entry under `$HOME` gets a `Read` deny rule, except the paths in `SANDBOX_READ`, `SANDBOX_WRITE` and `SANDBOX_SKIP_DENY` and the progress directory. Claude Code applies deny rules under `bypassPermissions` too.
 - **Bash sandbox:** Bash runs in Claude Code's sandbox (Seatbelt on macOS, bubblewrap on Linux), which enforces the deny rules on every process it starts and allows writes only to the working directory, `SANDBOX_WRITE` and `<home>/progress`. Commands cannot opt out of it, and `CLAUDE_CODE_OAUTH_TOKEN` is hidden from Bash. Its limits:
   - Without Seatbelt (macOS) or bubblewrap and socat (Linux), the session fails (`failIfUnavailable`) rather than run unconfined.
   - The sandbox judges a symlink by its target, so `SANDBOX_READ` and `SANDBOX_WRITE` list each path's resolved target next to it, as read at startup.
   - The Read, Edit and Write tools, hooks and MCP servers run outside it; only the deny rules bind them, and nothing stops the Edit and Write tools from writing in `$HOME`.
   - The other `AGENT_ENV` values, such as `GH_TOKEN`, are visible to Bash.
   - Under `bypassPermissions` the network stays open: direct connections are blocked, but everything through the sandbox's proxy is allowed.
-  - `gh` cannot reach the keyring or read `~/.config/gh`, so it needs `GH_TOKEN` in `AGENT_ENV`.
+  - `gh` cannot reach the keyring or read `~/.config/gh`, so it needs `GH_TOKEN` in `AGENT_ENV`, and a config directory of its own: see [sandbox host setup](#sandbox-host-setup).
 - **Progress:** every agent process gets `MOTHERSHIP_PROGRESS_FILE`. Lines that tools or skills append to it, from any depth of the process tree, show up in Linear as thoughts. Long-running skill workflows use it to report their phases.
 - **Environment:** `MOTHERSHIP_AGENT` (the `AGENT_NAME` setting) and `MOTHERSHIP_SURFACE` (`linear` or `zulip`) let hooks and skills tell where they run. The keys named in `AGENT_ENV` are forwarded on top, so secrets like `CLAUDE_CODE_OAUTH_TOKEN` can live only in `<home>/.env` instead of the daemon config.
 
@@ -73,6 +74,8 @@ Settings come from the process environment or `<home>/.env`, and the environment
 | `AGENT_ENV` | | Comma-separated keys whose values (from the environment or `.env`) are forwarded into every agent process, e.g. `CLAUDE_CODE_OAUTH_TOKEN`; a listed key with no value is warned about at startup |
 | `SANDBOX_READ` | | Comma-separated home paths (files or directories, `~/` allowed) every agent may read besides its workspace and repositories, e.g. `~/.gitconfig,~/.rustup,~/.cargo`. Symlink targets are added; home itself is refused at startup. Without it, git config and toolchains under `$HOME` are unreadable and `git commit` and `cargo` fail Git also needs the targets of any `[include]` in `~/.gitconfig`, and a mise-managed toolchain needs `~/.config/mise` and `~/.local/share/mise` here plus `~/.local/state/mise` and `~/.cache/mise` in `SANDBOX_WRITE`. |
 | `SANDBOX_WRITE` | | Comma-separated paths Bash may write, and every agent may read, besides the working directory, e.g. `~/.cargo/registry,~/.cargo/git`. Symlink targets are added; home itself is refused at startup |
+| `SANDBOX_SKIP_DENY` | | Comma-separated entries directly under home (`~/Documents,~/Desktop`) that get no deny rule, for macOS hosts where the [privacy approval](#agent-does-not-start-macos-privacy-prompts) cannot be given. The trade-off: the Read tool, and every command in Bash, can then read everything in those folders. Paths are not resolved, and anything deeper than one level is refused at startup |
+| `AGENT_START_TIMEOUT` | `120` | Seconds an agent may run without announcing its session before it is killed and the turn fails |
 | `BASE_BRANCH` | `main` | Ignored when `repos.json` exists |
 | `WORKTREES_DIR` | `<home>/worktrees` | |
 | `CLAUDE_BIN`, `CLAUDE_MODEL`, `CLAUDE_FALLBACK_MODEL` | `claude`, `opus`, `sonnet` | On macOS with the native installer, point `CLAUDE_BIN` at `~/.local/share/claude/ClaudeCode.app/Contents/MacOS/claude`; launched through `~/.local/bin/claude`, privacy prompts name a version number ("2.1.x") that changes with every update |
@@ -213,6 +216,53 @@ curl -s localhost:3456/status   # restart only when this reports {"status":"idle
 
 On Linux, run it as a systemd user service instead — see [`contrib/systemd/mothership.service`](contrib/systemd/mothership.service), whose header lists the matching `systemctl --user` commands.
 
+### Agent does not start (macOS privacy prompts)
+
+**Symptom:** every session's agent hangs at start: the process is alive at 0% CPU with no output, no transcript, no sockets and no children, and after `AGENT_START_TIMEOUT` the session fails with `The agent did not start within …`. The same command run over ssh works.
+
+**Cause:** the deny rules name `~/Desktop`, `~/Documents` and `~/Downloads`, and Claude Code touches each rule's path. Those folders are protected by macOS privacy controls (TCC). A background process in the GUI launchd domain gets a permission dialog for them, and the call blocks until someone answers it; over ssh there is no UI, so the access is refused at once and the agent carries on. TCC attributes the access to the launchd job's responsible process, the mothership binary, so the dialog is named `mothership`.
+
+**Fix:** approve it once, before the first session:
+
+1. Sign the binary with a fixed identity (next section), or every rebuild is a new program to TCC and asks again.
+2. Start mothership under launchd, send it one session, and answer the dialog on the Mac's screen (Screen Sharing works). Alternatively grant the binary Full Disk Access, or Files and Folders → Desktop, Documents and Downloads, in System Settings → Privacy & Security.
+
+A hung agent continues by itself once the dialog is answered. Where nobody can approve it, list the folders in `SANDBOX_SKIP_DENY`, which leaves them readable to agents.
+
+**Checking:** a one-shot LaunchAgent (no `KeepAlive`) whose program runs `launchctl managername` prints `Aqua` when it is in the GUI domain. Running the agent's `claude` command line from it hangs, and the same command without `--settings` works; adding the deny rules back one at a time shows which folder asks.
+
+### Signing and deploying
+
+TCC remembers an approval by the program's identifier and signing certificate. `cargo build` leaves an ad-hoc linker signature with an identifier like `mothership-<hash>` that changes every build (`codesign -dv` shows it), so sign with a self-signed code-signing certificate instead. Create it once, from a GUI session (a locked keychain cannot be unlocked over ssh):
+
+```sh
+openssl req -x509 -newkey rsa:2048 -nodes -days 3650 -subj "/CN=Mothership Dev" \
+  -keyout dev.key -out dev.crt -addext extendedKeyUsage=codeSigning
+# -legacy is for OpenSSL 3, whose default p12 encryption macOS cannot import; drop it with /usr/bin/openssl (LibreSSL)
+openssl pkcs12 -export -inkey dev.key -in dev.crt -out dev.p12 -legacy
+security create-keychain mothership.keychain-db        # choose a password
+security import dev.p12 -k mothership.keychain-db -T /usr/bin/codesign
+security set-key-partition-list -S apple-tool:,apple: -k <password> mothership.keychain-db
+trash dev.key dev.p12
+```
+
+`security find-identity -v` lists no *valid* identity for a self-signed certificate; that is expected. `codesign` still signs with it, and TCC compares the certificate, not its trust.
+
+[`contrib/deploy.sh`](contrib/deploy.sh) then pulls, builds, signs (`codesign -s "Mothership Dev" -i mothership`), waits for `/status` to report idle, replaces the binary and kickstarts the agent. Its paths, launchd label and keychain are variables at the top of the script; put the keychain password in `~/.mothership/.keychain-pw` (mode 0600) to run it unattended. The first signed binary needs the approval once; later rebuilds keep it. If the first session after a deploy hangs, check the signature with `codesign -dv` first.
+
+With the native installer, `CLAUDE_BIN` pointing at the `ClaudeCode.app` bundle (see [Settings](#settings)) gives Claude Code its own stable identity for its own prompts; the folder dialog is still attributed to mothership.
+
+### Sandbox host setup
+
+The Bash sandbox blocks some things a development host relies on. What has been needed so far:
+
+- **gh:** `~/.config/gh/hosts.yml` holds a plain-text token, so do not open `~/.config/gh`. Give agents a config directory without it: copy `config.yml` to `~/.mothership/gh`, set `GH_CONFIG_DIR=~/.mothership/gh` in `.env`, list `GH_CONFIG_DIR` and `GH_TOKEN` in `AGENT_ENV`, and add the directory to `SANDBOX_WRITE`.
+- **Temporary files:** the sandbox blocks `/var/folders`, so `mktemp` fails. Set `TMPDIR=~/.mothership/tmp` in `.env`, list it in `AGENT_ENV`, and add the directory to `SANDBOX_WRITE`.
+- **mise:** each new worktree's `mise.toml` is untrusted, and the shims stop with `Config files … are not trusted`. Trust the worktree and clone directories once in `~/.config/mise/config.toml`: `[settings]` `trusted_config_paths = ["~/.mothership/worktrees", "~/.mothership/repos"]`.
+- **Symlinked directories:** symlink targets are resolved only for the listed path itself, not for symlinks inside a listed directory. If `~/.claude/skills/x` links to `~/settings/ai/skills/x`, list the target directory (`~/settings/ai/skills`) in `SANDBOX_READ` as well, or the skill's scripts fail with `operation not permitted`.
+- **Other paths seen so far:** `~/.gitignore_global` (or whatever `core.excludesfile` names) in `SANDBOX_READ`, or git warns on every command; `~/.cache/node` in `SANDBOX_WRITE` for corepack.
+
+
 ## Develop
 
 See [AGENTS.md](AGENTS.md) for the code standards.
@@ -225,5 +275,7 @@ cargo run
 ```
 
 `cargo test` includes [`tests/integration`](tests/integration), which runs the built binary against local stand-ins for Linear (through `LINEAR_API_URL`), Zulip, GitHub webhooks, `claude` and `gh`. `cargo test --test integration -- <name>` runs only the scenarios whose name contains `<name>`; a failed one keeps its directory and prints the end of mothership's log.
+
+An agent working on mothership inside the Bash sandbox cannot pass the scenarios that check a process tree is killed (`linear_stop_kills_the_agent`, `linear_agent_that_never_starts_is_stopped`, `sigterm_stops_running_agents`), since the sandbox blocks signalling those processes; CI is the gate for them.
 
 CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs `scripts/check.sh` with the same toolchain and a gitleaks secret scan on every pull request and every push to `main`.

@@ -11,10 +11,15 @@ pub struct Paths {
     /// `SANDBOX_WRITE` and the progress directory: writable from Bash on top of the working
     /// directory, and readable like `read`.
     pub write: Vec<PathBuf>,
+    /// `SANDBOX_SKIP_DENY`: entries of home that get no deny rule at all, so the Read tool
+    /// can read them. On macOS, a deny rule on Desktop, Documents or Downloads makes Claude
+    /// Code touch the folder, which raises a privacy dialog that blocks an unapproved
+    /// background agent forever.
+    pub skip_deny: Vec<PathBuf>,
 }
 
 /// Claude Code settings that deny reads of every home entry not on the way to `allowed`,
-/// `paths.read` or `paths.write`, and run Bash in Claude Code's OS sandbox.
+/// `paths.read`, `paths.write` or `paths.skip_deny`, and run Bash in Claude Code's OS sandbox.
 ///
 /// For each directory from `home` down to an allowed path, siblings that lead nowhere
 /// allowed get a `Read` deny rule; an allowed path's own subtree stays open. The rules stop
@@ -28,6 +33,7 @@ pub fn settings(home: &Path, allowed: &[PathBuf], extra_deny: &[String], paths: 
         .iter()
         .chain(&paths.read)
         .chain(&paths.write)
+        .chain(&paths.skip_deny)
         .cloned()
         .collect();
     let mut deny = home_deny_rules(home, &allowed);
