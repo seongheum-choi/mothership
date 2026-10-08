@@ -20,7 +20,7 @@ mothership is a long-running service that other people's work depends on, so cha
 | --- | --- |
 | `main.rs` | Startup |
 | `app.rs` | Shared state, HTTP router, agent environment |
-| `config.rs` | Settings |
+| `config/` | Settings: `Config`, its loading and derived paths (`mod.rs`), the environment over `<home>/.env` and list formats (`vars.rs`), per-surface settings (`surfaces.rs`) |
 | `repos/` | `repos.json`, and which repository a Linear issue belongs to |
 | `modes.rs` | `<home>/modes/*.md`, and which mode a Linear issue's labels pick |
 | `store.rs` | `state.json` and atomic private writes |
@@ -28,7 +28,7 @@ mothership is a long-running service that other people's work depends on, so cha
 | `session/` | `Surface` trait, per-conversation workers, turn loop |
 | `agent.rs` | Claude Code process and its stream-json protocol |
 | `linear/` | Linear surface: `Surface` impl and routes (`mod.rs`), webhook intake (`webhook.rs`), workspace pinning (`pin.rs`), repository and mode choice (`routing.rs`), closed-issue cleanup (`cleanup.rs`), activity rendering (`activity.rs`), OAuth install (`oauth.rs`), GraphQL and token refresh (`api.rs`), pull request links on the session (`pr.rs`), Linear MCP config (`mcp.rs`) |
-| `zulip/` | Zulip surface: webhooks, API client, how updates are shown |
+| `zulip/` | Zulip surface: webhook intake and the `Ticket` (`mod.rs`), conversation keys, topic context and mention stripping (`conversation.rs`), agent launch and posting the answer (`surface.rs`), REST client (`api.rs`) |
 | `github/` | GitHub surface: `GitHub` state and webhook intake (`mod.rs`), what an event says and its prompt (`feedback.rs`), which session it continues (`route.rs`), delivery dedup and hourly prompt cap (`guard.rs`), `gh-reply` and origin resolution (`reply.rs`) |
 | `sessions.rs` | Session lookups shared by surfaces: a pre-routing session's repository, the session that owns a branch |
 | `worktree.rs` | Git worktrees per issue |
