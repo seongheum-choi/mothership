@@ -13,6 +13,10 @@ use std::{
 /// runs shell commands, so a stop must kill the whole tree, not just close stdin.
 pub const HOLD: &str = "[hold]";
 pub const RELEASE: &str = "[release]";
+/// A prompt containing this has a shell command append [`PROGRESS_LINE`] to
+/// `MOTHERSHIP_PROGRESS_FILE`, the way a skill reports from inside Bash.
+pub const PROGRESS: &str = "[progress]";
+pub const PROGRESS_LINE: &str = "Phase 1 of 2";
 
 /// `claude -p --input-format stream-json --output-format stream-json`: announces a session,
 /// then answers each prompt with a tool call, a thought and `Done: <prompt>` as the result.
@@ -66,6 +70,14 @@ pub fn claude() -> ExitCode {
             &mut out,
             &assistant(json!({"type": "tool_use", "name": "Bash", "input": {"command": "true"}})),
         );
+        if text.contains(PROGRESS) {
+            let _ = std::process::Command::new("sh")
+                .args([
+                    "-c",
+                    &format!("echo '{PROGRESS_LINE}' >> \"$MOTHERSHIP_PROGRESS_FILE\""),
+                ])
+                .status();
+        }
         emit(
             &mut out,
             &assistant(json!({"type": "text", "text": "Looking into it."})),

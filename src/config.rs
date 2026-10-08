@@ -1,8 +1,11 @@
 //! Settings, read from the process environment and `<home>/.env` (the environment wins).
 
-use crate::{repos::Repo, review::ReviewBackend, store::Tokens, tunnel::Tunnel};
+use crate::{repos::Repo, review::ReviewBackend, sandbox, store::Tokens, tunnel::Tunnel};
 use anyhow::{Context, Result, anyhow, bail};
-use std::{collections::HashMap, path::PathBuf};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+};
 
 pub struct Config {
     /// State, worktrees, plugins and per-session files live here.
@@ -16,6 +19,8 @@ pub struct Config {
     /// Secrets and settings forwarded into every agent process, resolved from the `AGENT_ENV`
     /// key list so values like `CLAUDE_CODE_OAUTH_TOKEN` can live only in `<home>/.env`.
     pub agent_env: Vec<(String, String)>,
+    /// `SANDBOX_READ` and `SANDBOX_WRITE`, opened to every agent's commands.
+    pub sandbox: sandbox::Paths,
     pub linear: LinearConfig,
     pub zulip: Option<ZulipConfig>,
     pub github: Option<GitHubConfig>,
@@ -152,6 +157,7 @@ impl Config {
                     .map(|list| parse_list(&list))
                     .unwrap_or_default(),
             ),
+            sandbox: sandbox_paths(&vars, &user_home, &home)?,
             linear: LinearConfig {
                 client_id: vars.require("LINEAR_CLIENT_ID")?,
                 client_secret: vars.require("LINEAR_CLIENT_SECRET")?,
@@ -199,6 +205,11 @@ impl Config {
 
     pub fn repo(&self, name: &str) -> Option<&Repo> {
         crate::repos::by_name(&self.repos, name)
+    }
+
+    /// Where each turn's `MOTHERSHIP_PROGRESS_FILE` lives.
+    pub fn progress_dir(&self) -> PathBuf {
+        progress_dir(&self.home)
     }
 
     /// Claude Code plugins installed by dropping a directory into `<home>/plugins`.
@@ -289,9 +300,54 @@ fn parse_list(list: &str) -> Vec<String> {
     keys
 }
 
+/// `SANDBOX_READ` and `SANDBOX_WRITE`, and the progress directory, since tools append to
+/// `MOTHERSHIP_PROGRESS_FILE` from inside Bash's sandbox.
+fn sandbox_paths(vars: &Vars, user_home: &Path, home: &Path) -> Result<sandbox::Paths> {
+    let read = parse_paths(
+        "SANDBOX_READ",
+        vars.get("SANDBOX_READ").as_deref(),
+        user_home,
+    )?;
+    let mut write = parse_paths(
+        "SANDBOX_WRITE",
+        vars.get("SANDBOX_WRITE").as_deref(),
+        user_home,
+    )?;
+    write.push(progress_dir(home));
+    Ok(sandbox::Paths { read, write })
+}
+
+fn progress_dir(home: &Path) -> PathBuf {
+    home.join("progress")
+}
+
+/// A comma-separated path list (`SANDBOX_READ`, `SANDBOX_WRITE`) with `~` standing for the
+/// user's home, since the deny rules need absolute paths. The OS sandbox judges a symlink by
+/// its target, so a symlink's resolved target is listed after it.
+fn parse_paths(key: &str, list: Option<&str>, user_home: &Path) -> Result<Vec<PathBuf>> {
+    let mut paths = Vec::new();
+    for p in parse_list(list.unwrap_or_default()) {
+        let path = match p.strip_prefix('~') {
+            Some("") => user_home.to_path_buf(),
+            Some(rest) if rest.starts_with('/') => user_home.join(&rest[1..]),
+            _ => PathBuf::from(&p),
+        };
+        if path == user_home {
+            // The deny rules are per entry of home, so home itself cannot be an exception;
+            // listing it would silently deny everything instead.
+            bail!("{key} cannot list the home directory itself; name the paths inside it");
+        }
+        let target = std::fs::canonicalize(&path).ok().filter(|t| *t != path);
+        paths.push(path);
+        paths.extend(target);
+    }
+    Ok(paths)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{linear_api_url, parse_list};
+    use super::{linear_api_url, parse_list, parse_paths};
+    use std::path::{Path, PathBuf};
 
     #[test]
     fn parses_trimmed_nonempty_keys() {
@@ -327,5 +383,50 @@ mod tests {
         );
         assert_eq!(linear_api_url(Some("http://mock//".into())), "http://mock");
         assert_eq!(linear_api_url(Some("http://mock".into())), "http://mock");
+    }
+
+    #[test]
+    fn parse_paths_expands_the_user_home() {
+        let home = Path::new("/nonexistent/me");
+        assert_eq!(
+            parse_paths("K", Some("~/.cargo, /nonexistent/tools,~other/x"), home).unwrap(),
+            [
+                PathBuf::from("/nonexistent/me/.cargo"),
+                PathBuf::from("/nonexistent/tools"),
+                PathBuf::from("~other/x"),
+            ]
+        );
+        assert_eq!(parse_paths("K", None, home).unwrap(), [] as [PathBuf; 0]);
+    }
+
+    #[test]
+    fn parse_paths_refuses_the_home_directory_itself() {
+        let home = Path::new("/nonexistent/me");
+        let err = parse_paths("SANDBOX_READ", Some("~/.cargo,~"), home).unwrap_err();
+        assert!(err.to_string().starts_with("SANDBOX_READ"), "{err}");
+        assert!(parse_paths("K", Some("/nonexistent/me"), home).is_err());
+    }
+
+    #[test]
+    fn parse_paths_adds_symlink_targets() {
+        let home = std::env::temp_dir().join(format!("mothership-paths-{}", std::process::id()));
+        std::fs::create_dir_all(home.join("settings/git")).unwrap();
+        std::fs::write(home.join("settings/git/.gitconfig"), "").unwrap();
+        std::os::unix::fs::symlink(
+            home.join("settings/git/.gitconfig"),
+            home.join(".gitconfig"),
+        )
+        .unwrap();
+        // The temporary directory may itself sit behind a symlink (`/var` on macOS).
+        let target = std::fs::canonicalize(home.join("settings/git/.gitconfig")).unwrap();
+        let settings = std::fs::canonicalize(home.join("settings")).unwrap();
+
+        let paths = parse_paths("K", Some("~/.gitconfig,~/settings"), &home).unwrap();
+        let mut expected = vec![home.join(".gitconfig"), target, home.join("settings")];
+        if settings != home.join("settings") {
+            expected.push(settings);
+        }
+        assert_eq!(paths, expected);
+        std::fs::remove_dir_all(&home).unwrap();
     }
 }
