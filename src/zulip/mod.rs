@@ -232,7 +232,7 @@ fn launch(app: &App, key: &str) -> Result<Launch> {
         .iter()
         .map(|r| format!("Edit(/{}/**)", r.path.display()))
         .collect();
-    let mut mcp_configs = vec![app.linear_mcp_config(key)?];
+    let mut mcp_configs = vec![crate::linear::mcp_config(app, key)?];
     mcp_configs.extend(app.cfg.mcp_configs.iter().cloned());
     Ok(Launch {
         settings: sandbox::settings(&app.home_dir, &readable, &read_only),

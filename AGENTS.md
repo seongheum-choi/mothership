@@ -27,7 +27,8 @@ mothership is a long-running service that other people's work depends on, so cha
 | `signature.rs` | Webhook signatures: HMAC-SHA256 hex, constant-time compare, strict hex decode |
 | `session/` | `Surface` trait, per-conversation workers, turn loop |
 | `agent.rs` | Claude Code process and its stream-json protocol |
-| `linear/`, `zulip/` | Surfaces: webhooks, API clients, how updates are shown |
+| `linear/` | Linear surface: `Surface` impl and routes (`mod.rs`), webhook intake (`webhook.rs`), workspace pinning (`pin.rs`), repository and mode choice (`routing.rs`), closed-issue cleanup (`cleanup.rs`), activity rendering (`activity.rs`), OAuth install (`oauth.rs`), GraphQL and token refresh (`api.rs`), Linear MCP config |
+| `zulip/` | Zulip surface: webhooks, API client, how updates are shown |
 | `github.rs` | PR review webhooks that continue Linear sessions |
 | `worktree.rs` | Git worktrees per issue |
 | `sandbox.rs` | Home directory read restrictions |
