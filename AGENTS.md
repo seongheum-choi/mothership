@@ -16,7 +16,7 @@ mothership is a long-running service that other people's work depends on, so cha
 
 ## Layout
 
-One file, one responsibility. A file's logic, everything before `#[cfg(test)]` minus blank and `//` lines, stays at 200 lines or fewer; when it grows past that, split it along responsibilities rather than trimming lines. `scripts/check.sh` enforces this, and its `oversized` list pins files that predate the rule to their current count.
+One file, one responsibility. A file's logic, everything before `#[cfg(test)]` minus blank and `//` lines, stays at 200 lines or fewer; when it grows past that, split it along responsibilities rather than trimming lines. `scripts/check.sh` enforces this.
 
 | Module | Responsibility |
 | --- | --- |
@@ -24,7 +24,7 @@ One file, one responsibility. A file's logic, everything before `#[cfg(test)]` m
 | `app.rs` | Shared state, HTTP router, agent environment |
 | `config/` | Settings: `Config`, its loading and derived paths (`mod.rs`), the environment over `<home>/.env` and list formats (`vars.rs`), per-surface settings (`surfaces.rs`) |
 | `repos/` | Repositories: `Repo` and lookups by name or clone (`mod.rs`), reading and validating `<home>/repos.json` (`load.rs`), which repository a Linear issue belongs to (`select.rs`) |
-| `modes.rs` | `<home>/modes/*.md`, and which mode a Linear issue's labels pick |
+| `modes/` | Working modes: `Mode`, loading `<home>/modes/*.md` and which mode a Linear issue's labels pick (`mod.rs`), the mode file's frontmatter and its YAML subset (`frontmatter.rs`) |
 | `store.rs` | `state.json` and atomic private writes |
 | `signature.rs` | Webhook signatures: HMAC-SHA256 hex, constant-time compare, strict hex decode |
 | `session/` | Conversations: `Surface` trait, updates and the worker `Registry` (`mod.rs`), one conversation's worker and its turn loop (`turn.rs`), agent events turned into surface updates and the progress file tail (`relay.rs`) |
