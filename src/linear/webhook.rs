@@ -64,6 +64,7 @@ pub(super) async fn webhook(
 /// Runs only for webhooks `admits` let through, so issue changes in another workspace never
 /// stop sessions or remove worktrees here.
 async fn handle(app: Arc<App>, p: Value) {
+    app.refresh();
     if let Some(change) = issue_change(&p) {
         on_issue_change(&app, change).await;
         return;

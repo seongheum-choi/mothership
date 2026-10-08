@@ -26,7 +26,7 @@ use guard::{Budget, Deliveries};
 use serde_json::Value;
 use std::{
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, RwLock},
 };
 
 /// A git repository of this instance and the GitHub repository its `origin` points at.
@@ -40,20 +40,14 @@ struct Origin {
     full_name: String,
 }
 
-/// Runtime state of the GitHub surface.
-pub struct GitHub {
-    /// Origins of the git repositories; events from any other repository are ignored.
-    origins: Vec<Origin>,
-    /// Holds `gh-reply`; put first on agents' `PATH`.
-    pub bin_dir: PathBuf,
-    deliveries: Mutex<Deliveries>,
-    budget: Mutex<Budget>,
-}
+/// The origins of the git repositories, replaced whole when the repository list is reloaded.
+#[derive(Debug)]
+pub struct Origins(Vec<Origin>);
 
-impl GitHub {
-    /// Resolves the origins of the git repositories and installs `<home>/gh-reply/gh-reply`. A
-    /// repository whose origin is not `owner/name` is left out; none at all is an error.
-    pub fn new(repos: &[Repo], home: &Path) -> Result<Self> {
+impl Origins {
+    /// Resolves the origins of the git repositories; a repository whose origin is not
+    /// `owner/name` is left out.
+    fn resolve(repos: &[Repo]) -> Self {
         let mut origins = Vec::new();
         for repo in repos.iter().filter(|r| r.git) {
             match reply::origin_of(&repo.path) {
@@ -65,29 +59,17 @@ impl GitHub {
                 Err(e) => tracing::warn!("github feedback off for repo {}: {e:#}", repo.name),
             }
         }
-        if origins.is_empty() {
-            bail!("no git repository has a GitHub origin");
-        }
-        let bin_dir = reply::install(home)?;
-        tracing::info!(
-            "github feedback accepted for {}",
-            origins
-                .iter()
-                .map(|o| o.full_name.as_str())
-                .collect::<Vec<_>>()
-                .join(", ")
-        );
-        Ok(Self {
-            origins,
-            bin_dir,
-            deliveries: Mutex::default(),
-            budget: Mutex::default(),
-        })
+        Self(origins)
+    }
+
+    fn list(&self) -> String {
+        let names: Vec<&str> = self.0.iter().map(|o| o.full_name.as_str()).collect();
+        names.join(", ")
     }
 
     /// Names of the repositories whose origin is `full_name`; usually one.
     fn names(&self, full_name: &str) -> Vec<&str> {
-        self.origins
+        self.0
             .iter()
             .filter(|o| o.full_name.eq_ignore_ascii_case(full_name))
             .map(|o| o.name.as_str())
@@ -95,10 +77,54 @@ impl GitHub {
     }
 
     fn clone_of(&self, full_name: &str) -> Option<&Path> {
-        self.origins
+        self.0
             .iter()
             .find(|o| o.full_name.eq_ignore_ascii_case(full_name))
             .map(|o| o.path.as_path())
+    }
+}
+
+/// Runtime state of the GitHub surface.
+pub struct GitHub {
+    /// Origins of the git repositories; events from any other repository are ignored.
+    origins: RwLock<Arc<Origins>>,
+    /// Holds `gh-reply`; put first on agents' `PATH`.
+    pub bin_dir: PathBuf,
+    deliveries: Mutex<Deliveries>,
+    budget: Mutex<Budget>,
+}
+
+impl GitHub {
+    /// Resolves the origins of the git repositories and installs `<home>/gh-reply/gh-reply`.
+    /// No origin at all is an error.
+    pub fn new(repos: &[Repo], home: &Path) -> Result<Self> {
+        let origins = Origins::resolve(repos);
+        if origins.0.is_empty() {
+            bail!("no git repository has a GitHub origin");
+        }
+        let bin_dir = reply::install(home)?;
+        tracing::info!("github feedback accepted for {}", origins.list());
+        Ok(Self {
+            origins: RwLock::new(Arc::new(origins)),
+            bin_dir,
+            deliveries: Mutex::default(),
+            budget: Mutex::default(),
+        })
+    }
+
+    fn origins(&self) -> Arc<Origins> {
+        self.origins.read().expect("origins poisoned").clone()
+    }
+
+    /// Resolves the origins again for a reloaded repository list.
+    pub fn set_repos(&self, repos: &[Repo]) {
+        let origins = Origins::resolve(repos);
+        if origins.0.is_empty() {
+            tracing::warn!("github feedback: no repository has a GitHub origin any more");
+        } else {
+            tracing::info!("github feedback accepted for {}", origins.list());
+        }
+        *self.origins.write().expect("origins poisoned") = Arc::new(origins);
     }
 }
 
@@ -135,7 +161,8 @@ async fn webhook(State(app): State<Arc<App>>, headers: HeaderMap, body: Bytes) -
     let Some(feedback) = Feedback::parse(header("x-github-event"), &payload) else {
         return StatusCode::OK;
     };
-    if let Err(reason) = feedback.screen(!github.names(&feedback.repo).is_empty(), cfg) {
+    app.refresh();
+    if let Err(reason) = feedback.screen(!github.origins().names(&feedback.repo).is_empty(), cfg) {
         // Who and what kind only: the text is untrusted and may be long.
         tracing::info!(
             "github {} by @{} ({}): {reason}, ignored",
@@ -177,27 +204,22 @@ mod tests {
 
     /// Repositories `app` and `site` (both on `o/r`, say a second clone on another base branch)
     /// and `lib` on `o/lib`.
-    pub(super) fn github() -> GitHub {
+    pub(super) fn origins() -> Origins {
         let origin = |name: &str, full_name: &str| Origin {
             name: name.into(),
             path: PathBuf::from(format!("/src/{name}")),
             full_name: full_name.into(),
         };
-        GitHub {
-            origins: vec![
-                origin("app", "o/r"),
-                origin("site", "o/r"),
-                origin("lib", "o/lib"),
-            ],
-            bin_dir: PathBuf::new(),
-            deliveries: Mutex::default(),
-            budget: Mutex::default(),
-        }
+        Origins(vec![
+            origin("app", "o/r"),
+            origin("site", "o/r"),
+            origin("lib", "o/lib"),
+        ])
     }
 
     #[test]
     fn origins_map_to_repository_names_and_clones() {
-        let gh = github();
+        let gh = origins();
         assert_eq!(gh.names("O/R"), ["app", "site"]);
         assert_eq!(gh.names("o/lib"), ["lib"]);
         let none: [&str; 0] = [];

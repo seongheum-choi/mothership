@@ -238,7 +238,7 @@ fn mentions(text: &str, login: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::github::tests::github;
+    use crate::github::tests::origins;
     use serde_json::json;
 
     #[test]
@@ -289,7 +289,7 @@ mod tests {
 
     fn screen(event: &str, p: &Value, trusted: &[&str]) -> Result<(), &'static str> {
         let f = Feedback::parse(event, p).unwrap();
-        f.screen(!github().names(&f.repo).is_empty(), &cfg(trusted))
+        f.screen(!origins().names(&f.repo).is_empty(), &cfg(trusted))
     }
 
     fn screened(p: &Value, trusted: &[&str]) -> Result<(), &'static str> {

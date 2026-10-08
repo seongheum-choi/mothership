@@ -100,7 +100,7 @@ impl Surface for Linear {
         let repo = rec
             .repo
             .as_deref()
-            .and_then(|name| app.cfg.repo(name))
+            .and_then(|name| app.repo(name))
             .context("the session's repository is not configured")?;
         if rec.mode_pending {
             bail!("the session's mode is not settled yet");
@@ -116,7 +116,7 @@ impl Surface for Linear {
             })
             .transpose()?;
         let (workspace, place) = if repo.git {
-            let (workspace, branch) = self.worktree(app, key, &rec, repo).await?;
+            let (workspace, branch) = self.worktree(app, key, &rec, &repo).await?;
             let place = format!("in a git worktree of `{}` on branch `{branch}`", repo.name);
             (workspace, place)
         } else {

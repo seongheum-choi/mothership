@@ -16,7 +16,7 @@ const NO_VCS_INSTRUCTIONS: &str = "This directory is not a git repository; it is
      other means. Edit files in place. Do not run git, make commits, or open pull requests; \
      say what you changed in your final reply.";
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Repo {
     /// Named by `repo:<name>` labels and `[repo=<name>]` in issue descriptions.
     pub name: String,

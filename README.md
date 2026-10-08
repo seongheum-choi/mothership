@@ -161,6 +161,10 @@ A session picks its mode when it starts, from the labels of the same GraphQL loo
 
 The repository's instructions (the review backend's, `prompt_file`, or a `"git": false` repository's no-commit rule) come after the mode's and still decide how work is delivered, so a mode cannot bring commits or pull requests back into a non-git repository. Mode files say how to work, not how to deliver.
 
+### Reloading settings
+
+Before each Linear, Zulip or GitHub event is routed, mothership compares the modification times of `<home>/repos.json` and `<home>/.env` with the last ones it saw. When either changed, it reads the repository list again (`repos.json`, or `REPO_PATH`/`BASE_BRANCH` without it), so the next session can be routed to a repository added in the meantime, and with GitHub feedback on it resolves the repositories' origins again. A list that no longer loads is logged as a warning (`keeping the current repositories`) and the one in effect stays; the warning repeats only after the file changes again. Turns already running keep the list they started with. Every other `.env` key is read once at startup: when one changes in `.env`, the log names it (not its value) with `restart mothership to apply it`, and the old value stays in effect. A key the process environment sets is not reported, since the environment wins over `.env`.
+
 ## Linear auth
 
 Open `<BASE_URL>/oauth/authorize` to install the app with `actor=app`. It works only while no token is stored, because the endpoint is public. To install again, clear `linear` in `state.json` and restart. Tokens refresh by themselves when Linear rejects them.
