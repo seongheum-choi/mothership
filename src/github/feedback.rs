@@ -135,7 +135,7 @@ impl Feedback {
         if !watched {
             return Err("another repository");
         }
-        if self.association != "OWNER" && !cfg.trusts(&self.author) {
+        if self.association != "OWNER" && !trusts(cfg, &self.author) {
             return Err("untrusted author");
         }
         if !mentions(&self.body, &cfg.mention_login) {
@@ -212,6 +212,13 @@ fn neutralize_closing_tag(text: &str) -> String {
     }
     out.push_str(&text[last..]);
     out
+}
+
+/// Whether `login` is one of `GITHUB_TRUSTED_LOGINS`, in any letter case.
+fn trusts(cfg: &GitHubConfig, login: &str) -> bool {
+    cfg.trusted_logins
+        .iter()
+        .any(|l| l.eq_ignore_ascii_case(login))
 }
 
 /// Whether `text` mentions the GitHub account `login` (`@login`, in any letter case). GitHub
