@@ -21,6 +21,8 @@ use tokio::process::{Child, Command};
 
 pub const LINEAR_SECRET: &str = "linear-secret";
 pub const GITHUB_SECRET: &str = "github-secret";
+/// The agent's GitHub account; feedback must mention it.
+pub const GITHUB_LOGIN: &str = "impala";
 pub const ZULIP_TOKEN: &str = "zulip-token";
 pub const ZULIP_BOT: &str = "bot@zulip.test";
 
@@ -156,6 +158,7 @@ impl Harness {
         }
         if setup.github {
             env.push(("GITHUB_WEBHOOK_SECRET", GITHUB_SECRET.into()));
+            env.push(("GITHUB_MENTION_LOGIN", GITHUB_LOGIN.into()));
         }
         env.extend(setup.env);
 

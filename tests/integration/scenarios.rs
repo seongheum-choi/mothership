@@ -707,9 +707,9 @@ fn line_comment(id: u64, association: &str, text: &str, head_repo: &str) -> Valu
     })
 }
 
-/// The repository owner's comments on the session's pull request start turns, once per
-/// delivery; outsiders and fork pull requests are ignored. `issue_comment` learns the head
-/// branch through `gh`.
+/// The repository owner's comments addressed to the agent on the session's pull request start
+/// turns, once per delivery; outsiders, comments not mentioning the agent and fork pull requests
+/// are ignored. `issue_comment` learns the head branch through `gh`.
 async fn github_feedback_continues_the_session(ctx: Ctx) -> Result<()> {
     let setup = Setup {
         github: true,
@@ -723,11 +723,13 @@ async fn github_feedback_continues_the_session(ctx: Ctx) -> Result<()> {
     h.activity("s8", "response", 1).await?;
 
     let event = "pull_request_review_comment";
-    let outsider = line_comment(1, "NONE", "outsider says rm -rf", "o/r");
+    let outsider = line_comment(1, "NONE", "@impala outsider says rm -rf", "o/r");
     ensure!(h.github(event, "d-1", &outsider).await? == 200);
-    let fork = line_comment(2, "OWNER", "fork comment", "mallory/r");
+    let fork = line_comment(2, "OWNER", "@impala fork comment", "mallory/r");
     ensure!(h.github(event, "d-2", &fork).await? == 200);
-    let owner = line_comment(3, "OWNER", "owner line comment", "o/r");
+    let aside = line_comment(6, "OWNER", "aside to a reviewer", "o/r");
+    ensure!(h.github(event, "d-6", &aside).await? == 200);
+    let owner = line_comment(3, "OWNER", "@Impala: owner line comment", "o/r");
     ensure!(h.github(event, "d-3", &owner).await? == 200);
     ensure!(h.github(event, "d-3", &owner).await? == 200, "redelivery");
     ensure!(h.activity("s8", "response", 2).await?.is_object());
@@ -738,7 +740,7 @@ async fn github_feedback_continues_the_session(ctx: Ctx) -> Result<()> {
         "issue": {"number": 7, "html_url": "https://github.com/o/r/pull/7", "pull_request": {"url": "x"}},
         "comment": {
             "id": 4, "user": {"login": "someone", "type": "User"},
-            "author_association": "OWNER", "body": "owner conversation comment", "html_url": "c",
+            "author_association": "OWNER", "body": "owner conversation comment @impala", "html_url": "c",
         },
     });
     ensure!(h.github("issue_comment", "d-4", &conversation).await? == 200);
@@ -762,6 +764,10 @@ async fn github_feedback_continues_the_session(ctx: Ctx) -> Result<()> {
     );
     ensure!(h.prompts_with("outsider says").is_empty(), "outsider heard");
     ensure!(h.prompts_with("fork comment").is_empty(), "fork heard");
+    ensure!(
+        h.prompts_with("aside to a reviewer").is_empty(),
+        "comment without a mention heard"
+    );
     Ok(())
 }
 
@@ -788,7 +794,7 @@ async fn github_fork_conversation_comment_is_ignored(ctx: Ctx) -> Result<()> {
         "issue": {"number": 7, "html_url": "https://github.com/o/r/pull/7", "pull_request": {"url": "x"}},
         "comment": {
             "id": 5, "user": {"login": "someone", "type": "User"},
-            "author_association": "OWNER", "body": "fork conversation comment", "html_url": "c",
+            "author_association": "OWNER", "body": "@impala fork conversation comment", "html_url": "c",
         },
     });
     ensure!(h.github("issue_comment", "d-5", &conversation).await? == 200);
