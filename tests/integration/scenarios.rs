@@ -1,7 +1,7 @@
 //! The scenarios: each starts its own mothership and drives it through webhooks.
 
 use crate::{
-    fake::{HOLD, RELEASE},
+    fake::{HOLD, PROGRESS, PROGRESS_LINE, RELEASE},
     harness::{Ctx, Harness, Setup, ZULIP_TOKEN, eventually, exited, git},
     mock::{self, ORG},
 };
@@ -24,6 +24,7 @@ macro_rules! scenarios {
 pub const ALL: &[(&str, Scenario)] = scenarios![
     linear_session_gets_a_response,
     linear_agent_is_launched_in_the_sandbox,
+    linear_progress_from_bash_becomes_a_thought,
     linear_mention_leaves_the_issue_state_alone,
     linear_mode_from_labels_shapes_the_agent,
     linear_mode_conflict_or_broken_file_holds_the_turn,
@@ -261,7 +262,8 @@ fn thoughts(h: &Harness, sid: &str) -> Vec<String> {
 }
 
 /// Without a mode, the agent bypasses permission prompts on the configured models, and its
-/// settings deny reading everything in `HOME` but the worktree and the main clone.
+/// settings deny reading everything in `HOME` but the worktree and the main clone, and run
+/// Bash in Claude Code's OS sandbox.
 async fn linear_agent_is_launched_in_the_sandbox(ctx: Ctx) -> Result<()> {
     let h = Harness::start(&ctx, Setup::default()).await?;
     let issue = issue(10, "Fix it.");
@@ -272,10 +274,20 @@ async fn linear_agent_is_launched_in_the_sandbox(ctx: Ctx) -> Result<()> {
     let args = argv(&h.prompt_with("context of SH-10").await?);
     let state = h.home.join(".mothership");
     // `HOME` holds `.mothership` and `src/app`; the worktree is `.mothership/worktrees/SH-10`.
-    let settings = json!({"permissions": {"deny": [
-        deny_dir(&state.join("mcp")),
-        deny_file(&state.join("state.json")),
-    ]}});
+    let settings = json!({
+        "permissions": {"deny": [
+            deny_dir(&state.join("mcp")),
+            deny_file(&state.join("state.json")),
+        ]},
+        "sandbox": {
+            "enabled": true,
+            "allowUnsandboxedCommands": false,
+            "failIfUnavailable": true,
+            "filesystem": {"allowWrite": [state.join("progress")]},
+            "network": {"allowLocalBinding": true},
+            "credentials": {"envVars": [{"name": "CLAUDE_CODE_OAUTH_TOKEN", "mode": "deny"}]},
+        },
+    });
     let system_prompt = flag(&args, "--append-system-prompt")?;
     ensure!(
         system_prompt
@@ -305,6 +317,41 @@ async fn linear_agent_is_launched_in_the_sandbox(ctx: Ctx) -> Result<()> {
         &mcp_config,
     ];
     ensure!(args == expected, "argv {args:#?}\nexpected {expected:#?}");
+    Ok(())
+}
+
+/// A line a shell command appends to `MOTHERSHIP_PROGRESS_FILE` shows up as a thought, and
+/// Bash's sandbox may write and read the progress directory: its file gets no deny rule.
+async fn linear_progress_from_bash_becomes_a_thought(ctx: Ctx) -> Result<()> {
+    let h = Harness::start(&ctx, Setup::default()).await?;
+    let issue = issue(13, "Report as you go.");
+    h.mock.add_issue(&issue);
+    ensure!(h.linear(created("s13", &issue, "first turn")).await? == 200);
+    h.activity("s13", "response", 1).await?;
+    // The second turn's launch sees the progress directory the first one created.
+    let prompt = format!("report {PROGRESS}");
+    ensure!(h.linear(prompted("s13", &issue, &prompt)).await? == 200);
+    h.activity("s13", "response", 2).await?;
+
+    // Progress is read on a timer and once more after the result, so it may trail the response.
+    eventually("progress thought", || {
+        thoughts(&h, "s13")
+            .contains(&PROGRESS_LINE.to_string())
+            .then_some(())
+    })
+    .await?;
+    let args = argv(&h.prompt_with(&prompt).await?);
+    let settings: Value = serde_json::from_str(flag(&args, "--settings")?)?;
+    let progress = h.home.join(".mothership/progress");
+    ensure!(
+        settings["sandbox"]["filesystem"]["allowWrite"] == json!([progress]),
+        "{settings}"
+    );
+    let deny = deny_rules(&args)?;
+    ensure!(
+        !deny.iter().any(|r| r.contains("/progress")),
+        "progress directory denied: {deny:#?}"
+    );
     Ok(())
 }
 

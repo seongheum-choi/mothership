@@ -88,12 +88,8 @@ impl<S: Surface> Turn<'_, S> {
                 app.lock_workspace(&launch.cwd).await
             }
         };
-        let mut progress = ProgressTail::create(
-            app.cfg
-                .home
-                .join("progress")
-                .join(crate::store::file_name(key)),
-        )?;
+        let mut progress =
+            ProgressTail::create(app.cfg.progress_dir().join(crate::store::file_name(key)))?;
         launch.env.push((
             "MOTHERSHIP_PROGRESS_FILE".into(),
             progress.path.display().to_string(),
