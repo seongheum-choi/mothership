@@ -5,10 +5,10 @@ use crate::{
     app::App,
     modes,
     repos::{self, IssueFacts, Ref, Repo},
-    worktree,
+    sessions,
 };
 use serde_json::Value;
-use std::{path::Path, sync::Arc};
+use std::sync::Arc;
 
 /// Why a session cannot start its turn yet.
 pub(super) enum Blocked {
@@ -79,8 +79,7 @@ impl Linear {
         }
         if let Some(workspace) = workspace {
             // A session from before repository routing: it stays where its worktree is.
-            let main_clone = worktree::main_clone(&workspace).await.ok();
-            let Some(repo) = existing_repo(&app.cfg.repos, main_clone.as_deref()) else {
+            let Some(repo) = sessions::workspace_repo(&app.cfg.repos, &workspace).await else {
                 return Err(Blocked::Stuck(format!(
                     "This session's worktree {} belongs to no repository in repos.json. Add \
                      its repository and restart mothership to continue.",
@@ -165,17 +164,6 @@ impl Linear {
         let note = format!("Working in `{name}` ({reason}).");
         self.activity(app, sid, thought(&note), false).await;
     }
-}
-
-/// The repository of a session that has a worktree but predates routing: the one whose main
-/// clone the worktree was cut from, or with a single repository, that one as before.
-pub fn existing_repo<'a>(repos: &'a [Repo], main_clone: Option<&Path>) -> Option<&'a Repo> {
-    main_clone
-        .and_then(|clone| repos::owning(repos, clone))
-        .or(match repos {
-            [only] => Some(only),
-            _ => None,
-        })
 }
 
 /// What routing looks at: the `issue_routing` result (`None` when the lookup failed), with the
@@ -267,24 +255,5 @@ mod tests {
         let facts = issue_facts(None, &issue, None);
         assert_eq!(facts.texts, ["webhook copy"]);
         assert!(facts.lookup_failed);
-    }
-
-    #[test]
-    fn existing_worktree_keeps_its_repository() {
-        let app = Repo::single("/src/app".into(), "main".into());
-        let other = Repo::single("/src/other".into(), "main".into());
-        let two = [app, other];
-        let pick = |repos: &[Repo], clone: Option<&str>| {
-            existing_repo(repos, clone.map(Path::new)).map(|r| r.name.clone())
-        };
-        assert_eq!(pick(&two, Some("/src/other")), Some("other".into()));
-        assert_eq!(pick(&two, Some("/src/gone")), None);
-        assert_eq!(pick(&two, None), None);
-        assert_eq!(
-            pick(&two[..1], None),
-            Some("app".into()),
-            "single repo as before"
-        );
-        assert_eq!(pick(&two[..1], Some("/src/gone")), Some("app".into()));
     }
 }
