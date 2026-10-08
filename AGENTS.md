@@ -27,7 +27,7 @@ mothership is a long-running service that other people's work depends on, so cha
 | `signature.rs` | Webhook signatures: HMAC-SHA256 hex, constant-time compare, strict hex decode |
 | `session/` | `Surface` trait, per-conversation workers, turn loop |
 | `agent.rs` | Claude Code process and its stream-json protocol |
-| `linear/` | Linear surface: `Surface` impl and routes (`mod.rs`), webhook intake (`webhook.rs`), workspace pinning (`pin.rs`), repository and mode choice (`routing.rs`), closed-issue cleanup (`cleanup.rs`), activity rendering (`activity.rs`), OAuth install (`oauth.rs`), GraphQL and token refresh (`api.rs`), Linear MCP config |
+| `linear/` | Linear surface: `Surface` impl and routes (`mod.rs`), webhook intake (`webhook.rs`), workspace pinning (`pin.rs`), repository and mode choice (`routing.rs`), closed-issue cleanup (`cleanup.rs`), activity rendering (`activity.rs`), OAuth install (`oauth.rs`), GraphQL and token refresh (`api.rs`), pull request links on the session (`pr.rs`), Linear MCP config (`mcp.rs`) |
 | `zulip/` | Zulip surface: webhooks, API client, how updates are shown |
 | `github/` | GitHub surface: `GitHub` state and webhook intake (`mod.rs`), what an event says and its prompt (`feedback.rs`), which session it continues (`route.rs`), delivery dedup and hourly prompt cap (`guard.rs`), `gh-reply` and origin resolution (`reply.rs`) |
 | `sessions.rs` | Session lookups shared by surfaces: a pre-routing session's repository, the session that owns a branch |
