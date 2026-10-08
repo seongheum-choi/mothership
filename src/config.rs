@@ -1,7 +1,7 @@
 //! Settings, read from the process environment and `<home>/.env` (the environment wins).
 
 use crate::{repos::Repo, review::ReviewBackend, store::Tokens, tunnel::Tunnel};
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result, anyhow, bail};
 use std::{collections::HashMap, path::PathBuf};
 
 pub struct Config {
@@ -56,19 +56,29 @@ pub struct GitHubConfig {
     /// Logins heard besides the repository owner, such as the owner's own account on an
     /// organisation repository, where GitHub reports it as `MEMBER`.
     pub trusted_logins: Vec<String>,
+    /// The agent's own GitHub account; only feedback that mentions it is heard.
+    pub mention_login: String,
 }
 
 impl GitHubConfig {
-    /// On when `GITHUB_WEBHOOK_SECRET` is set.
-    fn from_vars(vars: &Vars) -> Option<Self> {
-        vars.get("GITHUB_WEBHOOK_SECRET")
-            .map(|webhook_secret| Self {
-                webhook_secret,
-                trusted_logins: vars
-                    .get("GITHUB_TRUSTED_LOGINS")
-                    .map(|list| parse_list(&list))
-                    .unwrap_or_default(),
-            })
+    /// On when `GITHUB_WEBHOOK_SECRET` is set, which then needs `GITHUB_MENTION_LOGIN`.
+    fn from_vars(vars: &Vars) -> Result<Option<Self>> {
+        let Some(webhook_secret) = vars.get("GITHUB_WEBHOOK_SECRET") else {
+            return Ok(None);
+        };
+        let mention_login = vars.require("GITHUB_MENTION_LOGIN")?;
+        let mention_login = mention_login.trim().trim_start_matches('@').to_string();
+        if mention_login.is_empty() {
+            bail!("GITHUB_MENTION_LOGIN is empty");
+        }
+        Ok(Some(Self {
+            webhook_secret,
+            trusted_logins: vars
+                .get("GITHUB_TRUSTED_LOGINS")
+                .map(|list| parse_list(&list))
+                .unwrap_or_default(),
+            mention_login,
+        }))
     }
 
     pub fn trusts(&self, login: &str) -> bool {
@@ -116,7 +126,7 @@ impl Config {
             }),
             None => None,
         };
-        let github = GitHubConfig::from_vars(&vars);
+        let github = GitHubConfig::from_vars(&vars)?;
         let tunnel = vars
             .get("CLOUDFLARE_TOKEN")
             .map(|token| Tunnel::Cloudflare {
