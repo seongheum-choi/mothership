@@ -90,13 +90,14 @@ pub(super) async fn on_issue_change(app: &Arc<App>, change: IssueChange<'_>) {
     let workspaces = app
         .store
         .read(|s| removable_workspaces(&s.sessions, issue_id));
+    let repos = app.repos();
     for (workspace, (sid, recorded)) in workspaces {
         let main_clone = match recorded {
             Some(_) => None,
             None => worktree::main_clone(&workspace).await.ok(),
         };
         let repo = match cleanup_repo(
-            &app.cfg.repos,
+            &repos,
             &app.cfg.worktrees_dir,
             recorded.as_deref(),
             &workspace,

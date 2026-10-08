@@ -2,7 +2,7 @@
 
 use crate::{
     fake::{HOLD, PROGRESS, PROGRESS_LINE, RELEASE},
-    harness::{Ctx, Harness, Setup, ZULIP_TOKEN, eventually, exited, git},
+    harness::{Ctx, Harness, Setup, ZULIP_TOKEN, create_repo, eventually, exited, git},
     mock::{self, ORG},
 };
 use anyhow::{Context, Result, ensure};
@@ -40,6 +40,9 @@ pub const ALL: &[(&str, Scenario)] = scenarios![
     github_fork_conversation_comment_is_ignored,
     zulip_mention_gets_a_reply,
     sigterm_stops_running_agents,
+    reload_routes_to_a_repository_added_between_turns,
+    reload_keeps_the_repositories_when_repos_json_breaks,
+    reload_logs_a_restart_setting_change,
 ];
 
 /// An issue as Linear's API returns it; the webhook carries a subset.
@@ -953,4 +956,91 @@ async fn sigterm_stops_running_agents(ctx: Ctx) -> Result<()> {
     ensure!(body(&response) == "Stopped.", "{response}");
     exited(pid).await?;
     exited(tool).await
+}
+
+/// Writes `repos.json` with the git repositories under `<home>/src` named in `names`.
+fn write_repos(h: &Harness, names: &[&str]) -> Result<()> {
+    let repos: Vec<Value> = names
+        .iter()
+        .map(|name| json!({ "name": name, "path": h.home.join("src").join(name) }))
+        .collect();
+    std::fs::write(
+        h.home.join(".mothership/repos.json"),
+        Value::Array(repos).to_string(),
+    )?;
+    Ok(())
+}
+
+/// A repository added to `repos.json` while running takes the next session, and GitHub feedback
+/// starts hearing its origin.
+async fn reload_routes_to_a_repository_added_between_turns(ctx: Ctx) -> Result<()> {
+    let setup = Setup {
+        repos: vec![("app", "o/app"), ("lib", "o/lib")],
+        github: true,
+        ..Setup::default()
+    };
+    let h = Harness::start(&ctx, setup).await?;
+    create_repo(&h.home.join("src/web"), "o/web")?;
+    write_repos(&h, &["app", "lib", "web"])?;
+
+    let tagged = issue(5, "Restyle it [repo=web]");
+    h.mock.add_issue(&tagged);
+    ensure!(h.linear(created("s5", &tagged, "context of SH-5")).await? == 200);
+    h.activity("s5", "response", 1).await?;
+    let thought = h.activity("s5", "thought", 1).await?;
+    ensure!(
+        body(&thought) == "Working in `web` (`[repo=web]` in the issue).",
+        "{thought}"
+    );
+    let call = h.prompt_with("context of SH-5").await?;
+    let cwd = Path::new(call["cwd"].as_str().context("cwd")?);
+    ensure!(main_clone(cwd)? == h.home.join("src/web").display().to_string());
+    h.logged("settings: repositories reloaded: app, lib, web")
+        .await?;
+    h.logged("github feedback accepted for o/app, o/lib, o/web")
+        .await
+}
+
+/// A `repos.json` that no longer loads is reported, and sessions keep the repositories they had.
+async fn reload_keeps_the_repositories_when_repos_json_breaks(ctx: Ctx) -> Result<()> {
+    let setup = Setup {
+        repos: vec![("app", "o/app"), ("lib", "o/lib")],
+        ..Setup::default()
+    };
+    let h = Harness::start(&ctx, setup).await?;
+    std::fs::write(h.home.join(".mothership/repos.json"), "[{\"name\": ")?;
+
+    let tagged = issue(6, "Speed it up [repo=lib]");
+    h.mock.add_issue(&tagged);
+    ensure!(h.linear(created("s6", &tagged, "context of SH-6")).await? == 200);
+    h.activity("s6", "response", 1).await?;
+    let call = h.prompt_with("context of SH-6").await?;
+    let cwd = Path::new(call["cwd"].as_str().context("cwd")?);
+    ensure!(main_clone(cwd)? == h.home.join("src/lib").display().to_string());
+    h.logged("; keeping the current repositories").await
+}
+
+/// A setting only read at startup, changed in `.env`, is named in the log, not applied, and
+/// its value stays out of the log.
+async fn reload_logs_a_restart_setting_change(ctx: Ctx) -> Result<()> {
+    let h = Harness::start(&ctx, Setup::default()).await?;
+    std::fs::write(
+        h.home.join(".mothership/.env"),
+        "GITHUB_WEBHOOK_SECRET=rotated-secret\n",
+    )?;
+
+    let issue = issue(7, "Fix the thing.");
+    h.mock.add_issue(&issue);
+    ensure!(h.linear(created("s7", &issue, "context of SH-7")).await? == 200);
+    h.activity("s7", "response", 1).await?;
+    h.logged("settings: GITHUB_WEBHOOK_SECRET changed in")
+        .await?;
+    h.logged("restart mothership to apply it").await?;
+    let log = std::fs::read_to_string(h.dir.join("mothership.log"))?;
+    ensure!(!log.contains("rotated-secret"), "the value was logged");
+    ensure!(
+        h.post("/github-webhook", &[], b"{}".to_vec()).await? == 404,
+        "GitHub feedback stays off until a restart"
+    );
+    Ok(())
 }

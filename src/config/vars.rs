@@ -25,6 +25,11 @@ impl Vars {
         Self { file, file_path }
     }
 
+    /// The entries of `<home>/.env` as written, without the environment.
+    pub(super) fn file(&self) -> &HashMap<String, String> {
+        &self.file
+    }
+
     pub(super) fn get(&self, key: &str) -> Option<String> {
         std::env::var(key)
             .ok()

@@ -22,7 +22,7 @@ One file, one responsibility. A file's logic, everything before `#[cfg(test)]` m
 | --- | --- |
 | `main.rs` | Startup |
 | `app.rs` | Shared state, HTTP router, agent environment |
-| `config/` | Settings: `Config`, its loading and derived paths (`mod.rs`), the environment over `<home>/.env` and list formats (`vars.rs`), per-surface settings (`surfaces.rs`) |
+| `config/` | Settings: `Config`, its loading and derived paths (`mod.rs`), the environment over `<home>/.env` and list formats (`vars.rs`), per-surface settings (`surfaces.rs`), the repository list reloaded when `repos.json` or `.env` changes (`reload.rs`) |
 | `repos/` | Repositories: `Repo` and lookups by name or clone (`mod.rs`), reading and validating `<home>/repos.json` (`load.rs`), which repository a Linear issue belongs to (`select.rs`) |
 | `modes/` | Working modes: `Mode`, loading `<home>/modes/*.md` and which mode a Linear issue's labels pick (`mod.rs`), the mode file's frontmatter and its YAML subset (`frontmatter.rs`) |
 | `store.rs` | `state.json` and atomic private writes |

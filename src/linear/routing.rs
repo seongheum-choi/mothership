@@ -66,23 +66,24 @@ impl Linear {
                 .map(|r| (r.repo.clone(), r.workspace.clone()))
                 .unwrap_or_default()
         });
+        let repos = app.repos();
         if let Some(name) = current {
             // Choosing again would leave the old repository's worktree and Claude session under
             // another repository's prompt and sandbox.
-            return match app.cfg.repo(&name) {
+            return match repos::by_name(&repos, &name) {
                 Some(_) => Ok(()),
                 None => Err(Blocked::Stuck(format!(
                     "This session works in `{name}`, which is no longer in repos.json. Add it \
-                     back and restart mothership to continue."
+                     back and reply to continue."
                 ))),
             };
         }
         if let Some(workspace) = workspace {
             // A session from before repository routing: it stays where its worktree is.
-            let Some(repo) = sessions::workspace_repo(&app.cfg.repos, &workspace).await else {
+            let Some(repo) = sessions::workspace_repo(&repos, &workspace).await else {
                 return Err(Blocked::Stuck(format!(
                     "This session's worktree {} belongs to no repository in repos.json. Add \
-                     its repository and restart mothership to continue.",
+                     its repository and reply to continue.",
                     workspace.display()
                 )));
             };
@@ -91,13 +92,13 @@ impl Linear {
             return Ok(());
         }
         let null = Value::Null;
-        let routing = if app.cfg.repos.len() > 1 {
+        let routing = if repos.len() > 1 {
             lookup.get(self, app, sid).await
         } else {
             Some(&null)
         };
         let facts = issue_facts(routing, issue, request);
-        let choice = repos::select(&app.cfg.repos, &facts).map_err(Blocked::Ask)?;
+        let choice = repos::select(&repos, &facts).map_err(Blocked::Ask)?;
         self.settle(app, sid, choice.repo, &choice.reason).await;
         Ok(())
     }
