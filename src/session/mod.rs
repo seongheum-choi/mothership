@@ -2,6 +2,7 @@
 //! conversation runs agent turns back to back, feeds prompts that arrive mid-turn into the
 //! running agent, and reports progress and results through the surface.
 
+pub mod choice;
 mod relay;
 mod turn;
 

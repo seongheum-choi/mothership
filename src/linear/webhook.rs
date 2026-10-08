@@ -6,7 +6,11 @@ use super::{
     pin::admits,
     routing::{Blocked, IssueLookup},
 };
-use crate::{app::App, session::Outcome, session::Surface, store::SessionRec};
+use crate::{
+    app::App,
+    session::{Outcome, Surface, choice},
+    store::SessionRec,
+};
 use axum::{
     body::Bytes,
     extract::State,
@@ -146,11 +150,15 @@ async fn start_turn(
     });
     let linear = &app.linear.surface;
     let mut lookup = IssueLookup::new(issue["id"].as_str().unwrap_or_default());
-    let ready = match linear
-        .choose_repo(app, sid, issue, request, &mut lookup)
-        .await
-    {
-        Ok(()) => linear.choose_mode(app, sid, &mut lookup).await,
+    let directives = choice::record(app, sid, request.unwrap_or_default());
+    let ready = match directives.map_err(Blocked::Stuck) {
+        Ok(()) => match linear
+            .choose_repo(app, sid, issue, request, &mut lookup)
+            .await
+        {
+            Ok(()) => linear.choose_mode(app, sid, &mut lookup).await,
+            blocked => blocked,
+        },
         blocked => blocked,
     };
     if let Err(blocked) = ready {

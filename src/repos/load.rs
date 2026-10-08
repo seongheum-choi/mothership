@@ -1,7 +1,8 @@
 //! Reading and validating `<home>/repos.json`.
 
 use super::Repo;
-use super::select::{same, valid_name};
+use super::select::same;
+use crate::directive::valid_name;
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 use std::path::{Path, PathBuf};

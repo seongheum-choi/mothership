@@ -3,6 +3,7 @@
 mod agent;
 mod app;
 mod config;
+mod directive;
 mod github;
 mod linear;
 mod modes;
