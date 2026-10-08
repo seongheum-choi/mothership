@@ -29,7 +29,8 @@ mothership is a long-running service that other people's work depends on, so cha
 | `agent.rs` | Claude Code process and its stream-json protocol |
 | `linear/` | Linear surface: `Surface` impl and routes (`mod.rs`), webhook intake (`webhook.rs`), workspace pinning (`pin.rs`), repository and mode choice (`routing.rs`), closed-issue cleanup (`cleanup.rs`), activity rendering (`activity.rs`), OAuth install (`oauth.rs`), GraphQL and token refresh (`api.rs`), Linear MCP config |
 | `zulip/` | Zulip surface: webhooks, API client, how updates are shown |
-| `github.rs` | PR review webhooks that continue Linear sessions |
+| `github/` | GitHub surface: `GitHub` state and webhook intake (`mod.rs`), what an event says and its prompt (`feedback.rs`), which session it continues (`route.rs`), delivery dedup and hourly prompt cap (`guard.rs`), `gh-reply` and origin resolution (`reply.rs`) |
+| `sessions.rs` | Session lookups shared by surfaces: a pre-routing session's repository, the session that owns a branch |
 | `worktree.rs` | Git worktrees per issue |
 | `sandbox.rs` | Home directory read restrictions |
 | `tunnel.rs`, `review.rs` | Extension points for ingress and review systems |

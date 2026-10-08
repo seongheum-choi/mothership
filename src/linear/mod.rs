@@ -11,7 +11,6 @@ mod routing;
 mod webhook;
 
 pub use mcp::config as mcp_config;
-pub use routing::existing_repo;
 
 use crate::{
     agent::Launch,
