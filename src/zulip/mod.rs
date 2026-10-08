@@ -51,6 +51,7 @@ async fn webhook(State(app): State<Arc<App>>, Json(p): Json<Value>) -> (StatusCo
 
 async fn handle(app: Arc<App>, p: Value) {
     let Some(zulip) = &app.zulip else { return };
+    app.refresh();
     let message = &p["message"];
     let Some(message_id) = message["id"].as_u64() else {
         return;

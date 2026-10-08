@@ -1,7 +1,13 @@
 //! Shared state and the HTTP surface.
 
 use crate::{
-    config::Config, github::GitHub, linear::Linear, session::Registry, store::Store, zulip::Zulip,
+    config::{Config, Live},
+    github::GitHub,
+    linear::Linear,
+    repos::Repo,
+    session::Registry,
+    store::Store,
+    zulip::Zulip,
 };
 use anyhow::{Context, Result};
 use axum::{Json, Router, extract::State, routing::get};
@@ -14,7 +20,10 @@ use std::{
 };
 
 pub struct App {
+    /// Settings read at startup.
     pub cfg: Config,
+    /// The repository list, reloaded when its files change.
+    live: Live,
     /// The user's home directory, which agents may only read where their work is.
     pub home_dir: PathBuf,
     pub http: reqwest::Client,
@@ -36,14 +45,17 @@ impl App {
         {
             store.update(|s| s.linear = seed.clone());
         }
+        let home_dir = PathBuf::from(std::env::var("HOME").context("HOME is not set")?);
+        let live = Live::load(&cfg.home, &home_dir)?;
         let github = cfg
             .github
             .as_ref()
-            .map(|_| GitHub::new(&cfg.repos, &cfg.home))
+            .map(|_| GitHub::new(&live.repos(), &cfg.home))
             .transpose()
             .context("setting up GitHub feedback")?;
         Ok(Arc::new(Self {
-            home_dir: PathBuf::from(std::env::var("HOME").context("HOME is not set")?),
+            home_dir,
+            live,
             http: reqwest::Client::new(),
             store,
             linear: Arc::new(Registry::new(Linear::default())),
@@ -65,6 +77,25 @@ impl App {
             router = router.merge(crate::github::routes());
         }
         router.with_state(self.clone())
+    }
+
+    /// The repositories in effect now; hold on to the list for a consistent view.
+    pub fn repos(&self) -> Arc<Vec<Repo>> {
+        self.live.repos()
+    }
+
+    pub fn repo(&self, name: &str) -> Option<Repo> {
+        crate::repos::by_name(&self.repos(), name).cloned()
+    }
+
+    /// Picks up changes to `repos.json` and `.env` before an event is routed, so the next turn
+    /// sees them. GitHub origins follow a changed repository list.
+    pub fn refresh(&self) {
+        if let Some(repos) = self.live.refresh()
+            && let Some(github) = &self.github
+        {
+            github.set_repos(&repos);
+        }
     }
 
     pub async fn lock_workspace(&self, path: &Path) -> tokio::sync::OwnedMutexGuard<()> {

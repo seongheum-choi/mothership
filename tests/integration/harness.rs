@@ -417,7 +417,7 @@ pub fn git(dir: &Path, args: &[&str]) -> Result<String> {
 }
 
 /// A clone with one commit on `main`, `origin` on GitHub, and `origin/main` already fetched.
-fn create_repo(path: &Path, origin: &str) -> Result<()> {
+pub fn create_repo(path: &Path, origin: &str) -> Result<()> {
     std::fs::create_dir_all(path)?;
     git(path, &["init", "-q", "-b", "main"])?;
     git(path, &["commit", "-q", "--allow-empty", "-m", "initial"])?;

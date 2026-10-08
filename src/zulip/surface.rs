@@ -20,6 +20,7 @@ fn launch(app: &App, key: &str) -> Result<Launch> {
         .store
         .read(|s| s.sessions.get(key).cloned())
         .context("unknown conversation")?;
+    let repos = app.repos();
     let workspace = app.cfg.home.join("zulip-workspaces").join(file_name(key));
     std::fs::create_dir_all(&workspace)?;
     let system_prompt = format!(
@@ -38,15 +39,13 @@ fn launch(app: &App, key: &str) -> Result<Launch> {
          headings; put a bold line on its own instead. Mention people as @**Full Name**.",
         agent = app.cfg.agent_name,
         location = rec.title,
-        repos = repo_list(&app.cfg.repos),
+        repos = repo_list(&repos),
     );
     let plugin_dirs = app.cfg.plugin_dirs();
     let mut readable = vec![workspace.clone()];
-    readable.extend(app.cfg.repos.iter().map(|r| r.path.clone()));
+    readable.extend(repos.iter().map(|r| r.path.clone()));
     readable.extend(plugin_dirs.iter().cloned());
-    let read_only: Vec<String> = app
-        .cfg
-        .repos
+    let read_only: Vec<String> = repos
         .iter()
         .map(|r| format!("Edit(/{}/**)", r.path.display()))
         .collect();

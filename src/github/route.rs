@@ -40,8 +40,9 @@ pub(super) async fn handle(app: Arc<App>, feedback: Feedback) {
         );
         return;
     }
-    let names = github.names(&feedback.repo);
-    let sid = match sessions::for_branch(&app.store, &app.cfg.repos, &head.branch, &names).await {
+    let origins = github.origins();
+    let names = origins.names(&feedback.repo);
+    let sid = match sessions::for_branch(&app.store, &app.repos(), &head.branch, &names).await {
         Some(Found::Open(sid)) => sid,
         Some(Found::Closed(sid)) => {
             tracing::info!(
@@ -104,7 +105,8 @@ pub(super) async fn handle(app: Arc<App>, feedback: Feedback) {
 
 /// `issue_comment` payloads describe the PR as an issue, without its head.
 async fn fetch_head(github: &GitHub, repo: &str, number: u64) -> Result<Head> {
-    let clone = github
+    let origins = github.origins();
+    let clone = origins
         .clone_of(repo)
         .with_context(|| format!("no repository has origin {repo}"))?;
     let out = tokio::process::Command::new("gh")
@@ -123,7 +125,7 @@ async fn fetch_head(github: &GitHub, repo: &str, number: u64) -> Result<Head> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{github::tests::github, store::SessionRec};
+    use crate::{github::tests::origins, store::SessionRec};
     use std::collections::HashMap;
 
     fn open(found: Option<Found>) -> Option<String> {
@@ -146,7 +148,7 @@ mod tests {
             ("lib".to_string(), rec(Some("Lib"), 5)),
             ("unknown".to_string(), rec(None, 9)),
         ]);
-        let gh = github();
+        let gh = origins();
         let find = |full_name| open(sessions::find(&sessions, "fix-login", &gh.names(full_name)));
         assert_eq!(find("o/r").as_deref(), Some("app"));
         assert_eq!(find("o/lib").as_deref(), Some("lib"), "names ignore case");

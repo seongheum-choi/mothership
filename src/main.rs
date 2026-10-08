@@ -59,8 +59,7 @@ async fn main() -> Result<()> {
         app.cfg.bind,
         if app.zulip.is_some() { "on" } else { "off" },
         if app.github.is_some() { "on" } else { "off" },
-        app.cfg
-            .repos
+        app.repos()
             .iter()
             .map(|r| r.name.as_str())
             .collect::<Vec<_>>()

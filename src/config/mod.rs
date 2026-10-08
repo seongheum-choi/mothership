@@ -1,11 +1,14 @@
-//! Settings, read from the process environment and `<home>/.env` (the environment wins).
+//! Settings, read from the process environment and `<home>/.env` (the environment wins), and
+//! the repository list that is reloaded while running (`reload.rs`).
 
+mod reload;
 mod surfaces;
 mod vars;
 
+pub use reload::Live;
 pub use surfaces::{GitHubConfig, LinearConfig, ZulipConfig};
 
-use crate::{repos::Repo, review::ReviewBackend, sandbox, store::Tokens, tunnel::Tunnel};
+use crate::{review::ReviewBackend, sandbox, store::Tokens, tunnel::Tunnel};
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 use vars::{Vars, parse_list, parse_paths};
@@ -27,8 +30,6 @@ pub struct Config {
     pub linear: LinearConfig,
     pub zulip: Option<ZulipConfig>,
     pub github: Option<GitHubConfig>,
-    /// From `<home>/repos.json`, or the one `REPO_PATH`/`BASE_BRANCH` describe. Never empty.
-    pub repos: Vec<Repo>,
     pub worktrees_dir: PathBuf,
     pub claude: ClaudeConfig,
     /// Extra MCP config files for every session, next to the Linear one.
@@ -53,13 +54,6 @@ impl Config {
         let home = std::env::var("MOTHERSHIP_HOME")
             .map_or_else(|_| user_home.join(".mothership"), PathBuf::from);
         let vars = Vars::load(&home);
-        let repos = match crate::repos::load(&home.join("repos.json"), &user_home)? {
-            Some(repos) => repos,
-            None => vec![Repo::single(
-                PathBuf::from(vars.require("REPO_PATH")?),
-                vars.get("BASE_BRANCH").unwrap_or_else(|| "main".into()),
-            )],
-        };
 
         let extra_prompt = vars
             .get("APPEND_SYSTEM_PROMPT_FILE")
@@ -99,7 +93,6 @@ impl Config {
             linear: LinearConfig::from_vars(&vars, seed_tokens)?,
             zulip,
             github,
-            repos,
             worktrees_dir: vars
                 .get("WORKTREES_DIR")
                 .map_or_else(|| home.join("worktrees"), PathBuf::from),
@@ -132,10 +125,6 @@ impl Config {
             tunnel,
             home,
         })
-    }
-
-    pub fn repo(&self, name: &str) -> Option<&Repo> {
-        crate::repos::by_name(&self.repos, name)
     }
 
     /// Where each turn's `MOTHERSHIP_PROGRESS_FILE` lives.
