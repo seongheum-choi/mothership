@@ -23,6 +23,7 @@ macro_rules! scenarios {
 
 pub const ALL: &[(&str, Scenario)] = scenarios![
     linear_session_gets_a_response,
+    linear_session_links_the_pull_requests_it_mentions,
     linear_agent_is_launched_in_the_sandbox,
     linear_progress_from_bash_becomes_a_thought,
     linear_mention_leaves_the_issue_state_alone,
@@ -216,6 +217,44 @@ async fn linear_session_gets_a_response(ctx: Ctx) -> Result<()> {
     h.activity("s1", "response", 2).await?;
     let updates = h.mock.read(|r| r.issue_updates.clone());
     ensure!(updates.len() == 1, "moved once: {updates:?}");
+    ensure!(
+        h.mock.read(|r| r.session_updates.is_empty()),
+        "no pull request was mentioned, so no external URL update"
+    );
+    Ok(())
+}
+
+/// A pull request URL in a turn's response is added to the session's external URLs once,
+/// without fragment or query; mentioning it again in a later turn adds nothing.
+async fn linear_session_links_the_pull_requests_it_mentions(ctx: Ctx) -> Result<()> {
+    let h = Harness::start(&ctx, Setup::default()).await?;
+    let issue = issue(2, "Open a PR.");
+    h.mock.add_issue(&issue);
+    // The fake agent answers `Done: <prompt>`, so the prompt puts the URL in the response.
+    let context = "Opened https://github.com/acme/app/pull/7#discussion_r1";
+    ensure!(h.linear(created("s2", &issue, context)).await? == 200);
+    h.activity("s2", "response", 1).await?;
+    let update = eventually("agentSessionUpdate", || {
+        h.mock.read(|r| r.session_updates.first().cloned())
+    })
+    .await?;
+    let link = json!({"label": "acme/app#7", "url": "https://github.com/acme/app/pull/7"});
+    ensure!(
+        update == json!({"id": "s2", "input": {"addedExternalUrls": [link]}}),
+        "{update}"
+    );
+    let recorded = eventually("the recorded pull request", || {
+        let sessions = h.sessions().ok()?;
+        (sessions["s2"]["pull_requests"] == json!([link["url"]])).then_some(())
+    })
+    .await;
+    ensure!(recorded.is_ok(), "{:?}", h.sessions());
+
+    let again = "Still https://github.com/acme/app/pull/7?tab=files";
+    ensure!(h.linear(prompted("s2", &issue, again)).await? == 200);
+    h.activity("s2", "response", 2).await?;
+    let updates = h.mock.read(|r| r.session_updates.clone());
+    ensure!(updates.len() == 1, "added once: {updates:?}");
     Ok(())
 }
 

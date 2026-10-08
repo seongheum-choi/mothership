@@ -7,6 +7,7 @@ mod cleanup;
 mod mcp;
 mod oauth;
 mod pin;
+mod pr;
 mod routing;
 mod webhook;
 
@@ -29,8 +30,8 @@ use axum::{
     routing::{get, post},
 };
 use pin::Workspace;
-use serde_json::json;
 use std::{
+    collections::HashMap,
     path::PathBuf,
     sync::{Arc, Mutex},
 };
@@ -41,6 +42,8 @@ pub struct Linear {
     oauth_state: Mutex<Option<String>>,
     /// The one workspace this instance serves; `None` until a token has been checked.
     workspace: Mutex<Option<Workspace>>,
+    /// Pull requests each session's running turn has mentioned so far.
+    turn_prs: Mutex<HashMap<String, Vec<pr::PullRequest>>>,
 }
 
 pub fn routes() -> Router<Arc<App>> {
@@ -175,9 +178,15 @@ impl Surface for Linear {
 
     async fn update(&self, app: &Arc<App>, key: &str, update: Update) {
         let (content, ephemeral) = match update {
-            Update::Working => (thought("Working on it…"), true),
+            Update::Working => {
+                self.start_turn(key);
+                (thought("Working on it…"), true)
+            }
             Update::Noted => (thought("Got it, adding that to the current work."), true),
-            Update::Thought { text, nested } => (thought(&prefixed(&text, nested)), false),
+            Update::Thought { text, nested } => {
+                self.note_pull_requests(key, &text);
+                (thought(&prefixed(&text, nested)), false)
+            }
             Update::Progress(line) => (thought(&line), false),
             Update::Tool {
                 name,
@@ -189,15 +198,9 @@ impl Surface for Linear {
     }
 
     async fn finish(&self, app: &Arc<App>, key: &str, _tickets: Vec<()>, outcome: Outcome) {
-        let content = match outcome {
-            Outcome::Reply(text) => json!({ "type": "response", "body": text }),
-            Outcome::Failed(text) => json!({ "type": "error", "body": text }),
-            Outcome::Stopped(note) => json!({
-                "type": "response",
-                "body": note.as_deref().unwrap_or("Stopped."),
-            }),
-        };
-        self.activity(app, key, content, false).await;
+        self.activity(app, key, activity::outcome(&outcome), false)
+            .await;
+        self.register_pull_requests(app, key, &outcome).await;
     }
 }
 
