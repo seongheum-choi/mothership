@@ -24,6 +24,7 @@ mothership is a long-running service that other people's work depends on, so cha
 | `repos/` | `repos.json`, and which repository a Linear issue belongs to |
 | `modes.rs` | `<home>/modes/*.md`, and which mode a Linear issue's labels pick |
 | `store.rs` | `state.json` and atomic private writes |
+| `signature.rs` | Webhook signatures: HMAC-SHA256 hex, constant-time compare, strict hex decode |
 | `session/` | `Surface` trait, per-conversation workers, turn loop |
 | `agent.rs` | Claude Code process and its stream-json protocol |
 | `linear/`, `zulip/` | Surfaces: webhooks, API clients, how updates are shown |

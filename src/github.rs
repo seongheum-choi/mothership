@@ -16,9 +16,7 @@ use axum::{
     http::{HeaderMap, StatusCode},
     routing::post,
 };
-use hmac::{Hmac, KeyInit, Mac};
 use serde_json::{Value, json};
-use sha2::Sha256;
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     fmt::Write as _,
@@ -266,16 +264,9 @@ async fn webhook(State(app): State<Arc<App>>, headers: HeaderMap, body: Bytes) -
 
 /// `X-Hub-Signature-256` is `sha256=` + hex(HMAC-SHA256(secret, raw body)).
 fn verify(secret: &str, body: &[u8], signature: &str) -> bool {
-    let Some(sig) = signature
+    signature
         .strip_prefix("sha256=")
-        .and_then(crate::store::decode_hex)
-    else {
-        return false;
-    };
-    let mut mac =
-        Hmac::<Sha256>::new_from_slice(secret.as_bytes()).expect("HMAC takes any key length");
-    mac.update(body);
-    mac.verify_slice(&sig).is_ok()
+        .is_some_and(|hex| crate::signature::hmac_sha256_hex_matches(secret, body, hex))
 }
 
 async fn handle(app: Arc<App>, feedback: Feedback) {
