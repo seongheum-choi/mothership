@@ -99,9 +99,37 @@ pub(super) fn parse_paths(key: &str, list: Option<&str>, user_home: &Path) -> Re
     Ok(paths)
 }
 
+/// A comma-separated list of entries directly under the user's home (`SANDBOX_SKIP_DENY`),
+/// `~/` allowed. They are not resolved: touching a macOS privacy-protected folder from a
+/// background process is what this setting exists to avoid.
+pub(super) fn parse_home_entries(
+    key: &str,
+    list: Option<&str>,
+    user_home: &Path,
+) -> Result<Vec<PathBuf>> {
+    parse_list(list.unwrap_or_default())
+        .into_iter()
+        .map(|p| {
+            let path = match p.strip_prefix("~/") {
+                Some(rest) => user_home.join(rest),
+                None => PathBuf::from(&p),
+            };
+            let path: PathBuf = path.components().collect();
+            if path.parent() == Some(user_home) && path.file_name().is_some() {
+                Ok(path)
+            } else {
+                bail!(
+                    "{key} lists {p}, which is not an entry directly under {}",
+                    user_home.display()
+                )
+            }
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{parse_list, parse_paths};
+    use super::{parse_home_entries, parse_list, parse_paths};
     use std::path::{Path, PathBuf};
 
     #[test]
@@ -172,5 +200,35 @@ mod tests {
         }
         assert_eq!(paths, expected);
         std::fs::remove_dir_all(&home).unwrap();
+    }
+
+    #[test]
+    fn parse_home_entries_takes_only_direct_children_of_home() {
+        let home = Path::new("/nonexistent/me");
+        assert_eq!(
+            parse_home_entries("K", Some("~/Documents, /nonexistent/me/Desktop/"), home).unwrap(),
+            [
+                PathBuf::from("/nonexistent/me/Documents"),
+                PathBuf::from("/nonexistent/me/Desktop"),
+            ]
+        );
+        assert_eq!(
+            parse_home_entries("K", None, home).unwrap(),
+            [] as [PathBuf; 0]
+        );
+        for bad in [
+            "~/Documents/work",
+            "~",
+            "~/",
+            "/elsewhere/Documents",
+            "Documents",
+            "~/..",
+        ] {
+            let err = parse_home_entries("SANDBOX_SKIP_DENY", Some(bad), home).unwrap_err();
+            assert!(
+                err.to_string().starts_with("SANDBOX_SKIP_DENY"),
+                "{bad}: {err}"
+            );
+        }
     }
 }

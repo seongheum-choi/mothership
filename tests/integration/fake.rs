@@ -18,6 +18,10 @@ pub const RELEASE: &str = "[release]";
 pub const PROGRESS: &str = "[progress]";
 pub const PROGRESS_LINE: &str = "Phase 1 of 2";
 
+/// With `FAKE_HANG` set, the fake starts a tool and then never announces a session, the way
+/// Claude Code hangs on a macOS privacy dialog nobody can answer.
+pub const HANG: &str = "FAKE_HANG";
+
 /// `claude -p --input-format stream-json --output-format stream-json`: announces a session,
 /// then answers each prompt with a tool call, a thought and `Done: <prompt>` as the result.
 /// Each prompt is recorded with the full argument list.
@@ -29,6 +33,18 @@ pub fn claude() -> ExitCode {
         .map(|w| w[1].clone());
     let pid = std::process::id();
     let cwd = std::env::current_dir().unwrap_or_default();
+    if std::env::var_os(HANG).is_some() {
+        let tool = busy_tool();
+        record(&json!({
+            "tool": "claude",
+            "pid": pid,
+            "args": args,
+            "tool_pid": tool.as_ref().map(std::process::Child::id),
+        }));
+        loop {
+            std::thread::park();
+        }
+    }
     let mut out = std::io::stdout().lock();
     emit(
         &mut out,

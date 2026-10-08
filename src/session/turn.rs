@@ -13,6 +13,10 @@ use anyhow::{Result, bail};
 use std::{sync::Arc, time::Duration};
 use tokio::sync::mpsc;
 
+/// Where an agent that never starts is explained.
+const START_HELP: &str =
+    "https://github.com/seongheum-choi/mothership#agent-does-not-start-macos-privacy-prompts";
+
 pub(super) async fn worker<S: Surface>(
     app: Arc<App>,
     reg: Arc<Registry<S>>,
@@ -106,15 +110,24 @@ impl<S: Surface> Turn<'_, S> {
         agent.send(prompt).await?;
         let mut relay = Relay::default();
         let mut tick = tokio::time::interval(Duration::from_secs(1));
+        // An agent blocked before its first output (a macOS privacy dialog under launchd) would
+        // otherwise hold the session silently forever.
+        let start_timeout = app.cfg.claude.start_timeout;
+        let start_deadline = tokio::time::sleep(start_timeout);
+        tokio::pin!(start_deadline);
+        let mut started = false;
         loop {
             tokio::select! {
                 events = agent.next() => {
                     let Some(events) = events? else { break };
                     for event in events {
                         match event {
-                            Event::Started { session_id } => app.store.update(|s| {
-                                s.sessions.entry(key.to_string()).or_default().claude_session_id = Some(session_id);
-                            }),
+                            Event::Started { session_id } => {
+                                started = true;
+                                app.store.update(|s| {
+                                    s.sessions.entry(key.to_string()).or_default().claude_session_id = Some(session_id);
+                                });
+                            }
                             Event::Result { text, is_error } => {
                                 agent.close_input();
                                 for update in relay.flush_except(&text) {
@@ -145,6 +158,14 @@ impl<S: Surface> Turn<'_, S> {
                         return Ok(());
                     }
                 },
+                () = &mut start_deadline, if !started => {
+                    agent.kill().await;
+                    bail!(
+                        "The agent did not start within {}s (no `system:init` from Claude Code) and was stopped. \
+                         Under launchd on macOS this is usually a privacy dialog nobody can answer: see {START_HELP}",
+                        start_timeout.as_secs()
+                    );
+                }
                 _ = tick.tick() => {
                     for line in progress.read_new() {
                         surface.update(app, key, Update::Progress(line)).await;
