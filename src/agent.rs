@@ -17,13 +17,23 @@ pub struct Launch {
     pub system_prompt: String,
     pub resume: Option<String>,
     pub permission_mode: String,
-    /// Replaces the configured model for this session.
-    pub model: Option<String>,
+    pub models: Models,
+    /// Said as the turn's first thought: the model or effort changed since the last turn.
+    pub note: Option<String>,
     pub mcp_configs: Vec<PathBuf>,
     pub plugin_dirs: Vec<PathBuf>,
     /// Claude Code settings layered over the user's (permission deny rules).
     pub settings: Value,
     pub env: Vec<(String, String)>,
+}
+
+/// `--model`, `--fallback-model` and `--effort` for one turn.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Models {
+    pub model: String,
+    pub fallback: String,
+    /// `None` leaves the flag off, so Claude Code picks.
+    pub effort: Option<String>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -71,10 +81,17 @@ impl Agent {
         ])
         .args([
             "--model",
-            launch.model.as_deref().unwrap_or(&claude.model),
+            &launch.models.model,
             "--fallback-model",
-            &claude.fallback_model,
+            &launch.models.fallback,
         ])
+        .args(
+            launch
+                .models
+                .effort
+                .iter()
+                .flat_map(|e| ["--effort", e.as_str()]),
+        )
         .arg("--settings")
         .arg(launch.settings.to_string())
         .arg("--append-system-prompt")

@@ -48,6 +48,26 @@ pub struct SessionRec {
     pub closed: bool,
     /// Linear: pull request URLs already added to the session's external URLs.
     pub pull_requests: Vec<String>,
+    /// `[model=…]` and `[effort=…]` from the session's messages; `None` follows the mode and
+    /// the instance defaults.
+    pub model: Option<String>,
+    pub effort: Option<String>,
+    /// Set while the model a message chose has not finished a turn: the `model` it replaced,
+    /// which comes back if that turn fails.
+    pub replaced_model: Option<Replaced>,
+    /// The model and effort the latest turn started with.
+    pub launched: Option<Launched>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Default, Debug, PartialEq)]
+pub struct Replaced {
+    pub model: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Default, Debug, PartialEq)]
+pub struct Launched {
+    pub model: String,
+    pub effort: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Default)]

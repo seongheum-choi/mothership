@@ -43,6 +43,11 @@ pub const ALL: &[(&str, Scenario)] = scenarios![
     reload_routes_to_a_repository_added_between_turns,
     reload_keeps_the_repositories_when_repos_json_breaks,
     reload_logs_a_restart_setting_change,
+    model_and_effort_from_the_mention,
+    model_and_effort_from_a_reply_apply_next_turn,
+    unknown_effort_is_refused,
+    instance_effort_applies_without_a_restart,
+    zulip_effort_from_the_message,
 ];
 
 /// An issue as Linear's API returns it; the webhook carries a subset.
@@ -1042,5 +1047,147 @@ async fn reload_logs_a_restart_setting_change(ctx: Ctx) -> Result<()> {
         h.post("/github-webhook", &[], b"{}".to_vec()).await? == 404,
         "GitHub feedback stays off until a restart"
     );
+    Ok(())
+}
+
+/// `[model=…]` and `[effort=…]` in the mention that starts a session shape its first turn, and
+/// its first thought says so.
+async fn model_and_effort_from_the_mention(ctx: Ctx) -> Result<()> {
+    let h = Harness::start(&ctx, Setup::default()).await?;
+    let issue = issue(30, "Fix it.");
+    h.mock.add_issue(&issue);
+    let comment = "@mothership [model=sonnet] [effort=high] take a look";
+    ensure!(
+        h.linear(mentioned("s30", &issue, comment, "context of SH-30"))
+            .await?
+            == 200
+    );
+    h.activity("s30", "response", 1).await?;
+    let args = argv(&h.prompt_with("context of SH-30").await?);
+    ensure!(flag(&args, "--model")? == "sonnet", "{args:#?}");
+    ensure!(flag(&args, "--fallback-model")? == "sonnet", "{args:#?}");
+    ensure!(flag(&args, "--effort")? == "high", "{args:#?}");
+    let thoughts = thoughts(&h, "s30");
+    // The turn's first thought, after the routing one and the ephemeral "Working on it…".
+    let turn = thoughts
+        .iter()
+        .skip_while(|t| *t != "Working on it…")
+        .nth(1);
+    ensure!(
+        turn.map(String::as_str) == Some("Model: sonnet, effort: high (from your message)"),
+        "{thoughts:?}"
+    );
+    Ok(())
+}
+
+/// A reply's `[effort=…]` leaves the running turn alone and applies from the next one, which
+/// still resumes the conversation.
+async fn model_and_effort_from_a_reply_apply_next_turn(ctx: Ctx) -> Result<()> {
+    let h = Harness::start(&ctx, Setup::default()).await?;
+    let (issue, pid, _) = held_session(&h, "s31", 31).await?;
+    let more = format!("[effort=max] then go deeper {RELEASE}");
+    ensure!(h.linear(prompted("s31", &issue, &more)).await? == 200);
+    h.activity("s31", "response", 1).await?;
+    let held = h.prompt_with("then go deeper").await?;
+    ensure!(held["pid"] == pid, "joined the running turn: {held}");
+    ensure!(!argv(&held).contains(&"--effort".to_string()), "{held}");
+    ensure!(thoughts(&h, "s31").iter().all(|t| !t.starts_with("Model:")));
+
+    ensure!(h.linear(prompted("s31", &issue, "and the tests")).await? == 200);
+    h.activity("s31", "response", 2).await?;
+    let next = h.prompt_with("and the tests").await?;
+    let args = argv(&next);
+    ensure!(flag(&args, "--effort")? == "max", "{args:#?}");
+    ensure!(flag(&args, "--model")? == "opus", "{args:#?}");
+    ensure!(next["resume"] == format!("fake-{pid}"), "{next}");
+    let thoughts = thoughts(&h, "s31");
+    ensure!(
+        thoughts
+            .contains(&"Model: opus (instance default), effort: max (from your message)".into()),
+        "{thoughts:?}"
+    );
+    Ok(())
+}
+
+/// An effort level Claude Code does not know is an error, and no turn runs.
+async fn unknown_effort_is_refused(ctx: Ctx) -> Result<()> {
+    let h = Harness::start(&ctx, Setup::default()).await?;
+    let issue = issue(32, "Fix it.");
+    h.mock.add_issue(&issue);
+    let comment = "@mothership [effort=ultra] fix it";
+    ensure!(
+        h.linear(mentioned("s32", &issue, comment, "context of SH-32"))
+            .await?
+            == 200
+    );
+    let error = h.activity("s32", "error", 1).await?;
+    ensure!(
+        body(&error).starts_with("`[effort=ultra]` is not an effort level"),
+        "{error}"
+    );
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    ensure!(h.calls("claude").is_empty(), "{:?}", h.calls("claude"));
+    Ok(())
+}
+
+/// `CLAUDE_EFFORT` changed in `.env` between turns applies to the next turn without a restart,
+/// which says so; it is not reported as needing one.
+async fn instance_effort_applies_without_a_restart(ctx: Ctx) -> Result<()> {
+    let h = Harness::start(&ctx, Setup::default()).await?;
+    let issue = issue(33, "Fix it.");
+    h.mock.add_issue(&issue);
+    ensure!(h.linear(created("s33", &issue, "context of SH-33")).await? == 200);
+    h.activity("s33", "response", 1).await?;
+    let first = argv(&h.prompt_with("context of SH-33").await?);
+    ensure!(!first.contains(&"--effort".to_string()), "{first:#?}");
+
+    std::fs::write(h.home.join(".mothership/.env"), "CLAUDE_EFFORT=high\n")?;
+    ensure!(h.linear(prompted("s33", &issue, "once more")).await? == 200);
+    h.activity("s33", "response", 2).await?;
+    let args = argv(&h.prompt_with("once more").await?);
+    ensure!(flag(&args, "--effort")? == "high", "{args:#?}");
+    let thoughts = thoughts(&h, "s33");
+    ensure!(
+        thoughts.contains(&"Model: opus, effort: high (instance default)".into()),
+        "{thoughts:?}"
+    );
+    let log = std::fs::read_to_string(h.dir.join("mothership.log"))?;
+    ensure!(!log.contains("restart mothership"), "{log}");
+    Ok(())
+}
+
+/// Zulip messages take the same directives.
+async fn zulip_effort_from_the_message(ctx: Ctx) -> Result<()> {
+    let setup = Setup {
+        zulip: true,
+        ..Setup::default()
+    };
+    let h = Harness::start(&ctx, setup).await?;
+    let mention = |id: u64, text: &str| {
+        json!({
+            "token": ZULIP_TOKEN, "trigger": "private_message", "data": text,
+            "message": {
+                "id": id, "type": "private", "display_recipient": [{"id": 3}], "sender_id": 3,
+                "sender_full_name": "Ann", "sender_email": "ann@zulip.test", "content": text,
+            },
+        })
+    };
+    ensure!(h.zulip(&mention(601, "[effort=low] quick one")).await? == 200);
+    let args = argv(&h.prompt_with("quick one").await?);
+    ensure!(flag(&args, "--effort")? == "low", "{args:#?}");
+    ensure!(h.zulip(&mention(602, "[effort=huge] another")).await? == 200);
+    eventually("the refusal", || {
+        h.mock.read(|r| {
+            r.zulip_messages
+                .iter()
+                .any(|m| {
+                    m.get("content")
+                        .is_some_and(|c| c.contains("[effort=huge]"))
+                })
+                .then_some(())
+        })
+    })
+    .await?;
+    ensure!(h.prompts_with("another").is_empty());
     Ok(())
 }

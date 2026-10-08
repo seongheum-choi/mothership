@@ -19,7 +19,7 @@ use crate::{
     modes,
     repos::Repo,
     sandbox,
-    session::{Outcome, Surface, Update},
+    session::{Outcome, Surface, Update, choice},
     store::SessionRec,
     worktree,
 };
@@ -148,6 +148,10 @@ impl Surface for Linear {
         );
         system_prompt.push_str(&work_instructions(mode.as_ref(), &delivery));
 
+        let mode_model = mode
+            .as_ref()
+            .and_then(|m| Some((m.name.as_str(), m.model.clone()?)));
+        let (models, note) = choice::for_turn(app, key, &rec, mode_model);
         let plugin_dirs = app.cfg.plugin_dirs();
         let mut readable = vec![workspace.clone(), repo.path.clone()];
         readable.extend(plugin_dirs.iter().cloned());
@@ -169,7 +173,8 @@ impl Surface for Linear {
                 .as_ref()
                 .and_then(|m| m.permission_mode.clone())
                 .unwrap_or_else(|| "bypassPermissions".into()),
-            model: mode.and_then(|m| m.model),
+            models,
+            note,
             mcp_configs,
             plugin_dirs,
             env: app.agent_env("linear"),
@@ -198,6 +203,7 @@ impl Surface for Linear {
     }
 
     async fn finish(&self, app: &Arc<App>, key: &str, _tickets: Vec<()>, outcome: Outcome) {
+        choice::settle(app, key, &outcome);
         self.activity(app, key, activity::outcome(&outcome), false)
             .await;
         self.register_pull_requests(app, key, &outcome).await;

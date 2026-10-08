@@ -1,7 +1,7 @@
 //! Shared state and the HTTP surface.
 
 use crate::{
-    config::{Config, Live},
+    config::{Config, Live, ModelDefaults},
     github::GitHub,
     linear::Linear,
     repos::Repo,
@@ -22,7 +22,7 @@ use std::{
 pub struct App {
     /// Settings read at startup.
     pub cfg: Config,
-    /// The repository list, reloaded when its files change.
+    /// The repository list and model defaults, reloaded when their files change.
     live: Live,
     /// The user's home directory, which agents may only read where their work is.
     pub home_dir: PathBuf,
@@ -98,6 +98,12 @@ impl App {
         }
     }
 
+    /// The instance's model defaults as `.env` says now, read again for every turn.
+    pub fn models(&self) -> ModelDefaults {
+        self.refresh();
+        self.live.models()
+    }
+
     pub async fn lock_workspace(&self, path: &Path) -> tokio::sync::OwnedMutexGuard<()> {
         let lock = self
             .workspace_locks
@@ -161,5 +167,11 @@ impl App {
 }
 
 async fn status(State(app): State<Arc<App>>) -> Json<Value> {
-    Json(json!({ "status": if app.busy() { "busy" } else { "idle" } }))
+    let models = app.models();
+    Json(json!({
+        "status": if app.busy() { "busy" } else { "idle" },
+        "model": models.model,
+        "fallback_model": models.fallback_model,
+        "effort": models.effort,
+    }))
 }

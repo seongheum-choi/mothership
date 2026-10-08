@@ -76,6 +76,7 @@ Settings come from the process environment or `<home>/.env`, and the environment
 | `BASE_BRANCH` | `main` | Ignored when `repos.json` exists |
 | `WORKTREES_DIR` | `<home>/worktrees` | |
 | `CLAUDE_BIN`, `CLAUDE_MODEL`, `CLAUDE_FALLBACK_MODEL` | `claude`, `opus`, `sonnet` | On macOS with the native installer, point `CLAUDE_BIN` at `~/.local/share/claude/ClaudeCode.app/Contents/MacOS/claude`; launched through `~/.local/bin/claude`, privacy prompts name a version number ("2.1.x") that changes with every update |
+| `CLAUDE_EFFORT` | | Claude Code `--effort` for every turn: `low`, `medium`, `high`, `xhigh` or `max`; unset (or anything else, which is warned about) leaves the flag off. Like `CLAUDE_MODEL` and `CLAUDE_FALLBACK_MODEL`, it applies from the next turn without a restart; see [Model and effort](#model-and-effort) |
 | `CHAT_PERMISSION_MODE` | `auto` | Issue sessions always use `bypassPermissions` |
 | `MCP_CONFIGS` | | Comma-separated extra MCP config files, for every repository |
 | `REVIEW_BACKEND` | `github` | |
@@ -164,6 +165,14 @@ The repository's instructions (the review backend's, `prompt_file`, or a `"git":
 ### Reloading settings
 
 Before each Linear, Zulip or GitHub event is routed, mothership compares the modification times of `<home>/repos.json` and `<home>/.env` with the last ones it saw. When either changed, it reads the repository list again (`repos.json`, or `REPO_PATH`/`BASE_BRANCH` without it), so the next session can be routed to a repository added in the meantime, and with GitHub feedback on it resolves the repositories' origins again. A list that no longer loads is logged as a warning (`keeping the current repositories`) and the one in effect stays; the warning repeats only after the file changes again. Turns already running keep the list they started with. Every other `.env` key is read once at startup: when one changes in `.env`, the log names it (not its value) with `restart mothership to apply it`, and the old value stays in effect. A key the process environment sets is not reported, since the environment wins over `.env`.
+
+### Model and effort
+
+Each turn's `--model` comes from the first of: a session's `[model=…]`, its mode's `model`, `CLAUDE_MODEL`. Its `--effort` comes from a session's `[effort=…]`, then `CLAUDE_EFFORT`; with neither, no `--effort` is passed. Each field is decided on its own, so `[model=sonnet]` keeps the effort as it was. `--fallback-model` is always `CLAUDE_FALLBACK_MODEL`.
+
+Write `[model=sonnet]`, `[effort=high]`, or both, anywhere in the @mention that starts a Linear session, in a reply to it, or in a Zulip message; `[model=default]` and `[effort=default]` drop the session's choice again. One in the starting mention applies to the first turn; one in a reply that joins a running turn applies from the next turn, which still resumes the same conversation. An effort other than the five levels is answered with an error and runs no turn. A model name is passed to Claude Code as written: if the turn on it fails, the error shows in the session and the session goes back to the model it had.
+
+`CLAUDE_MODEL`, `CLAUDE_FALLBACK_MODEL` and `CLAUDE_EFFORT` are read from `.env` again before every turn, so a change applies to the next turn without a restart. `GET /status` shows the defaults in effect as `model`, `fallback_model` and `effort`. When a turn's model or effort differs from the session's previous turn, or a message sets one on its first turn, the turn's first thought says so, e.g. `Model: sonnet, effort: high (from your message)` or `Model: opus, effort: max (instance default)`.
 
 ## Linear auth
 

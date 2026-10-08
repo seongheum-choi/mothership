@@ -6,7 +6,7 @@ use crate::{
     app::App,
     repos::Repo,
     sandbox,
-    session::{Outcome, Surface, Update},
+    session::{Outcome, Surface, Update, choice},
     store::file_name,
 };
 use anyhow::{Context, Result};
@@ -51,13 +51,15 @@ fn launch(app: &App, key: &str) -> Result<Launch> {
         .collect();
     let mut mcp_configs = vec![crate::linear::mcp_config(app, key)?];
     mcp_configs.extend(app.cfg.mcp_configs.iter().cloned());
+    let (models, note) = choice::for_turn(app, key, &rec, None);
     Ok(Launch {
         settings: sandbox::settings(&app.home_dir, &readable, &read_only, &app.cfg.sandbox),
         cwd: workspace,
         system_prompt,
         resume: rec.claude_session_id,
         permission_mode: app.cfg.claude.chat_permission_mode.clone(),
-        model: None,
+        models,
+        note,
         mcp_configs,
         plugin_dirs,
         env: app.agent_env("zulip"),
@@ -101,6 +103,7 @@ impl Surface for Zulip {
     }
 
     async fn finish(&self, app: &Arc<App>, key: &str, tickets: Vec<Ticket>, outcome: Outcome) {
+        choice::settle(app, key, &outcome);
         let Some(dest) = tickets.last().map(|t| t.dest.clone()) else {
             return;
         };

@@ -1,8 +1,9 @@
 //! Settings that change without a restart: the repository list, re-read from `<home>/repos.json`
-//! (or `REPO_PATH`/`BASE_BRANCH`) when that file or `<home>/.env` has a new modification time.
-//! Any other `.env` key is read once at startup, so a change to it is only logged.
+//! (or `REPO_PATH`/`BASE_BRANCH`) when that file or `<home>/.env` has a new modification time,
+//! and the model defaults from `.env`. Any other `.env` key is read once at startup, so a change
+//! to it is only logged.
 
-use super::vars::Vars;
+use super::{model::ModelDefaults, vars::Vars};
 use crate::repos::Repo;
 use anyhow::Result;
 use std::{
@@ -13,7 +14,13 @@ use std::{
 };
 
 /// The `.env` keys a reload applies; every other key needs a restart.
-const HOT_KEYS: &[&str] = &["REPO_PATH", "BASE_BRANCH"];
+const HOT_KEYS: &[&str] = &[
+    "REPO_PATH",
+    "BASE_BRANCH",
+    "CLAUDE_MODEL",
+    "CLAUDE_FALLBACK_MODEL",
+    "CLAUDE_EFFORT",
+];
 
 /// Modification times of `repos.json` and `.env`; `None` for a missing file.
 #[derive(Clone, Copy, Default, PartialEq)]
@@ -42,11 +49,13 @@ struct Seen {
     env: HashMap<String, String>,
 }
 
-/// The repository list in effect, replaced whole so a turn keeps the one it started with.
+/// The repository list in effect, replaced whole so a turn keeps the one it started with, and
+/// the model defaults.
 pub struct Live {
     home: PathBuf,
     user_home: PathBuf,
     repos: RwLock<Arc<Vec<Repo>>>,
+    models: RwLock<ModelDefaults>,
     seen: Mutex<Seen>,
 }
 
@@ -60,6 +69,7 @@ impl Live {
             home: home.to_path_buf(),
             user_home: user_home.to_path_buf(),
             repos: RwLock::new(Arc::new(repos)),
+            models: RwLock::new(ModelDefaults::from_vars(&vars)),
             seen: Mutex::new(Seen {
                 stamps,
                 env: vars.file().clone(),
@@ -69,6 +79,10 @@ impl Live {
 
     pub fn repos(&self) -> Arc<Vec<Repo>> {
         self.repos.read().expect("repository list poisoned").clone()
+    }
+
+    pub fn models(&self) -> ModelDefaults {
+        self.models.read().expect("model defaults poisoned").clone()
     }
 
     /// Reloads when `repos.json` or `.env` changed since the last look, and returns the new
@@ -90,6 +104,13 @@ impl Live {
             );
         }
         seen.env.clone_from(vars.file());
+        let models = ModelDefaults::from_vars(&vars);
+        let mut current = self.models.write().expect("model defaults poisoned");
+        if *current != models {
+            tracing::info!("settings: model defaults now {models:?}");
+            *current = models;
+        }
+        drop(current);
         let repos = match load_repos(&vars, &self.home, &self.user_home) {
             Ok(repos) => repos,
             Err(e) => {
@@ -175,7 +196,12 @@ mod tests {
     #[test]
     fn changed_keys_leaves_out_hot_and_overridden_keys() {
         let old = env(&[("REPO_PATH", "/a"), ("BIND", "a")]);
-        let new = env(&[("REPO_PATH", "/b"), ("BASE_BRANCH", "dev"), ("BIND", "b")]);
+        let new = env(&[
+            ("REPO_PATH", "/b"),
+            ("BASE_BRANCH", "dev"),
+            ("CLAUDE_EFFORT", "max"),
+            ("BIND", "b"),
+        ]);
         assert_eq!(changed_keys(&old, &new, |k| k == "BIND"), [] as [String; 0]);
         assert_eq!(changed_keys(&old, &old, |_| false), [] as [String; 0]);
     }
