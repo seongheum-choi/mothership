@@ -155,21 +155,8 @@ fn known(repos: &[Repo]) -> String {
     format!("Repositories: {}.", names.join(", "))
 }
 
-/// The name in the first `[repo=<name>]` of `text` that could be a repository name, so a
-/// placeholder like `[repo=<name>]` in prose is passed over.
 fn directive(text: &str) -> Option<&str> {
-    text.match_indices("[repo=").find_map(|(i, tag)| {
-        let rest = &text[i + tag.len()..];
-        let name = rest[..rest.find(']')?].trim();
-        valid_name(name).then_some(name)
-    })
-}
-
-pub(super) fn valid_name(name: &str) -> bool {
-    !name.is_empty()
-        && name
-            .chars()
-            .all(|c| c.is_alphanumeric() || matches!(c, '-' | '_' | '.'))
+    crate::directive::first(text, "repo")
 }
 
 fn strip_prefix_ignore_case<'a>(text: &'a str, prefix: &str) -> Option<&'a str> {
@@ -205,16 +192,6 @@ mod tests {
         let choice = select(std::slice::from_ref(&repo), &facts).unwrap();
         assert_eq!(choice.repo, &repo);
         assert_eq!(choice.reason, "the only configured repository");
-    }
-
-    #[test]
-    fn finds_directive() {
-        assert_eq!(directive("Fix it.\n[repo= vault ]"), Some("vault"));
-        assert_eq!(directive("[repo=]"), None);
-        assert_eq!(directive("add `[repo=<name>]` or `[repo=…]`"), None);
-        assert_eq!(directive("`[repo=<name>]`, here: [repo=app]"), Some("app"));
-        assert_eq!(directive("[repo=open"), None);
-        assert_eq!(directive("no directive"), None);
     }
 
     fn entity(name: &str, aliases: &[&str]) -> Ref {

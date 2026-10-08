@@ -5,7 +5,7 @@ mod api;
 mod conversation;
 mod surface;
 
-use crate::{app::App, signature};
+use crate::{app::App, session::choice, signature};
 use api::{Client, Destination};
 use axum::{Json, Router, extract::State, http::StatusCode, routing::post};
 use conversation::{conversation, strip_mention, topic_context};
@@ -83,23 +83,34 @@ async fn handle(app: Arc<App>, p: Value) {
             Err(e) => tracing::warn!("zulip topic context failed: {e:#}"),
         }
     }
+    let text = strip_mention(
+        p["data"]
+            .as_str()
+            .or(message["content"].as_str())
+            .unwrap_or_default(),
+    );
     let _ = write!(
         prompt,
-        "From {} ({}):\n{}",
+        "From {} ({}):\n{text}",
         message["sender_full_name"].as_str().unwrap_or_default(),
         message["sender_email"].as_str().unwrap_or_default(),
-        strip_mention(
-            p["data"]
-                .as_str()
-                .or(message["content"].as_str())
-                .unwrap_or_default()
-        )
     );
     app.store.update(|s| {
         let rec = s.sessions.entry(key.clone()).or_default();
         rec.title = location;
         rec.cursor = Some(message_id);
     });
+    if let Err(problem) = choice::record(&app, &key, text) {
+        tracing::warn!("[{key}] {problem}");
+        let refused = async {
+            client.post_message(&dest, &problem).await?;
+            client.react(message_id, RECEIVED, false).await
+        };
+        if let Err(e) = refused.await {
+            tracing::warn!("[{key}] zulip refusal failed: {e:#}");
+        }
+        return;
+    }
     zulip.submit(&app, &key, prompt, Ticket { message_id, dest });
 }
 

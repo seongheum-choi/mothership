@@ -15,8 +15,8 @@ pub(super) enum Blocked {
     /// Nothing on the issue decides the repository, or its labels pick several modes; the
     /// question for the requester.
     Ask(String),
-    /// Something only mothership's files can fix: the session's repository is not configured,
-    /// or a mode file does not parse.
+    /// Something only mothership's files can fix (the session's repository is not configured,
+    /// or a mode file does not parse), or a message's `[effort=…]` is not a level.
     Stuck(String),
 }
 

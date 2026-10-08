@@ -88,6 +88,13 @@ impl<S: Surface> Turn<'_, S> {
                 app.lock_workspace(&launch.cwd).await
             }
         };
+        if let Some(text) = launch.note.take() {
+            let note = Update::Thought {
+                text,
+                nested: false,
+            };
+            surface.update(app, key, note).await;
+        }
         let mut progress =
             ProgressTail::create(app.cfg.progress_dir().join(crate::store::file_name(key)))?;
         launch.env.push((

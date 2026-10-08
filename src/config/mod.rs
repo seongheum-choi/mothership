@@ -1,10 +1,12 @@
 //! Settings, read from the process environment and `<home>/.env` (the environment wins), and
-//! the repository list that is reloaded while running (`reload.rs`).
+//! the repository list and model defaults that are reloaded while running (`reload.rs`).
 
+mod model;
 mod reload;
 mod surfaces;
 mod vars;
 
+pub use model::{EFFORTS, ModelDefaults};
 pub use reload::Live;
 pub use surfaces::{GitHubConfig, LinearConfig, ZulipConfig};
 
@@ -40,10 +42,9 @@ pub struct Config {
     pub tunnel: Option<Tunnel>,
 }
 
+/// The CLI fixed at startup; its model settings are [`ModelDefaults`], reloaded with `.env`.
 pub struct ClaudeConfig {
     pub bin: String,
-    pub model: String,
-    pub fallback_model: String,
     /// Permission mode for chat sessions; issue sessions always bypass prompts.
     pub chat_permission_mode: String,
 }
@@ -98,10 +99,6 @@ impl Config {
                 .map_or_else(|| home.join("worktrees"), PathBuf::from),
             claude: ClaudeConfig {
                 bin: vars.get("CLAUDE_BIN").unwrap_or_else(|| "claude".into()),
-                model: vars.get("CLAUDE_MODEL").unwrap_or_else(|| "opus".into()),
-                fallback_model: vars
-                    .get("CLAUDE_FALLBACK_MODEL")
-                    .unwrap_or_else(|| "sonnet".into()),
                 chat_permission_mode: vars
                     .get("CHAT_PERMISSION_MODE")
                     .unwrap_or_else(|| "auto".into()),
