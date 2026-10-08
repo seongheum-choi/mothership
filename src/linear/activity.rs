@@ -1,5 +1,6 @@
 //! How agent output reads in a Linear session: thoughts, actions and the todo checklist.
 
+use crate::session::Outcome;
 use serde_json::{Value, json};
 
 pub(super) fn thought(body: &str) -> Value {
@@ -52,6 +53,18 @@ pub(super) fn tool_activity(name: &str, input: &Value) -> (Value, bool) {
         json!({ "type": "action", "action": name, "parameter": parameter }),
         true,
     )
+}
+
+/// How a turn ends: the reply or stop note as a response, a failure as an error.
+pub(super) fn outcome(outcome: &Outcome) -> Value {
+    match outcome {
+        Outcome::Reply(text) => json!({ "type": "response", "body": text }),
+        Outcome::Failed(text) => json!({ "type": "error", "body": text }),
+        Outcome::Stopped(note) => json!({
+            "type": "response",
+            "body": note.as_deref().unwrap_or("Stopped."),
+        }),
+    }
 }
 
 #[cfg(test)]

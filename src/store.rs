@@ -46,6 +46,8 @@ pub struct SessionRec {
     /// Linear: the issue was closed and the session's worktree cleaned up, so GitHub feedback
     /// no longer starts turns. A new Linear prompt reopens it.
     pub closed: bool,
+    /// Linear: pull request URLs already added to the session's external URLs.
+    pub pull_requests: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, Default)]

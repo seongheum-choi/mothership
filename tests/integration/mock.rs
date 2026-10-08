@@ -28,6 +28,8 @@ pub struct Recorded {
     pub issues: HashMap<String, Value>,
     /// `agentActivityCreate` inputs.
     pub activities: Vec<Value>,
+    /// `agentSessionUpdate` variables.
+    pub session_updates: Vec<Value>,
     /// `issueUpdate` variables.
     pub issue_updates: Vec<Value>,
     /// `/oauth/token` forms.
@@ -113,6 +115,9 @@ async fn graphql(
     } else if query.contains("agentActivityCreate") {
         recorded.activities.push(variables["input"].clone());
         json!({"agentActivityCreate": {"success": true}})
+    } else if query.contains("agentSessionUpdate") {
+        recorded.session_updates.push(variables.clone());
+        json!({"agentSessionUpdate": {"success": true}})
     } else if query.contains("issueUpdate") {
         recorded.issue_updates.push(variables.clone());
         json!({"issueUpdate": {"success": true}})
