@@ -1,66 +1,19 @@
-//! Linear API: webhook signatures, OAuth tokens, GraphQL.
+//! Linear GraphQL with the stored OAuth token, refreshed when it expires, and the issue
+//! queries and mutations sessions make.
 
-use super::Linear;
+use super::{
+    Linear,
+    pin::{VIEWER_ORGANIZATION, Workspace},
+};
 use crate::{app::App, store::Tokens};
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-/// `Linear-Signature` is hex(HMAC-SHA256(secret, raw body)). A missing `webhookTimestamp`,
-/// or one more than a minute off, is treated as a replay.
-pub fn verify(secret: &str, body: &[u8], signature: &str, now_ms: u64) -> bool {
-    if !crate::signature::hmac_sha256_hex_matches(secret, body, signature) {
-        return false;
-    }
-    serde_json::from_slice::<Value>(body)
-        .ok()
-        .and_then(|v| v["webhookTimestamp"].as_u64())
-        .is_some_and(|ts| now_ms.abs_diff(ts) <= 60_000)
-}
-
 #[derive(Deserialize)]
 struct TokenResponse {
     access_token: String,
     refresh_token: Option<String>,
-}
-
-/// The workspace (Linear organization) an OAuth token belongs to.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Workspace {
-    pub id: String,
-    pub url_key: String,
-    pub name: String,
-}
-
-const VIEWER_ORGANIZATION: &str = "query { viewer { organization { id urlKey name } } }";
-
-impl Workspace {
-    fn from_viewer(data: &Value) -> Result<Self> {
-        let org = &data["viewer"]["organization"];
-        let field = |k: &str| {
-            org[k]
-                .as_str()
-                .map(String::from)
-                .with_context(|| format!("viewer.organization.{k} missing"))
-        };
-        Ok(Self {
-            id: field("id")?,
-            url_key: field("urlKey")?,
-            name: field("name")?,
-        })
-    }
-
-    /// `LINEAR_WORKSPACE` names the workspace by ID or by URL key (`linear.app/<urlKey>`),
-    /// the latter case-insensitively since Linear lowercases it.
-    pub fn is(&self, setting: &str) -> bool {
-        self.id == setting || self.url_key.eq_ignore_ascii_case(setting)
-    }
-}
-
-impl std::fmt::Display for Workspace {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{} ({}, {})", self.name, self.url_key, self.id)
-    }
 }
 
 /// One GraphQL request with `token`; `None` when Linear rejects the token.
@@ -91,7 +44,7 @@ async fn request(app: &App, token: &str, query: &str, variables: Value) -> Resul
 }
 
 /// The workspace `token` belongs to, without refreshing it.
-pub async fn workspace_of(app: &App, token: &str) -> Result<Workspace> {
+pub(super) async fn workspace_of(app: &App, token: &str) -> Result<Workspace> {
     let data = request(app, token, VIEWER_ORGANIZATION, json!({}))
         .await?
         .context("Linear rejected the token")?;
@@ -100,7 +53,7 @@ pub async fn workspace_of(app: &App, token: &str) -> Result<Workspace> {
 
 impl Linear {
     /// GraphQL call that refreshes the OAuth token once on an auth failure (tokens expire after 24h).
-    pub async fn graphql(&self, app: &App, query: &str, variables: Value) -> Result<Value> {
+    pub(super) async fn graphql(&self, app: &App, query: &str, variables: Value) -> Result<Value> {
         let token = app.store.read(|s| s.linear.access_token.clone());
         if let Some(data) = request(app, &token, query, variables.clone()).await? {
             return Ok(data);
@@ -112,8 +65,15 @@ impl Linear {
             .context("Linear GraphQL: token rejected right after a refresh")
     }
 
+    /// Looks up the stored token's workspace and pins it. Errors when it is not the
+    /// configured `LINEAR_WORKSPACE`.
+    pub async fn pin_current(&self, app: &App) -> Result<()> {
+        let ws = self.current_workspace(app).await?;
+        self.pin(app, ws)
+    }
+
     /// The workspace of the stored token, refreshing the token if it has expired.
-    pub async fn current_workspace(&self, app: &App) -> Result<Workspace> {
+    async fn current_workspace(&self, app: &App) -> Result<Workspace> {
         let data = self.graphql(app, VIEWER_ORGANIZATION, json!({})).await?;
         Workspace::from_viewer(&data)
     }
@@ -152,20 +112,7 @@ impl Linear {
         Ok(())
     }
 
-    pub async fn exchange_code(&self, app: &App, code: &str) -> Result<Tokens> {
-        let redirect_uri = format!("{}/callback", app.cfg.base_url);
-        self.token_request(
-            app,
-            &[
-                ("grant_type", "authorization_code"),
-                ("code", code),
-                ("redirect_uri", &redirect_uri),
-            ],
-        )
-        .await
-    }
-
-    async fn token_request(&self, app: &App, params: &[(&str, &str)]) -> Result<Tokens> {
+    pub(super) async fn token_request(&self, app: &App, params: &[(&str, &str)]) -> Result<Tokens> {
         let mut form = vec![
             ("client_id", app.cfg.linear.client_id.as_str()),
             ("client_secret", app.cfg.linear.client_secret.as_str()),
@@ -203,7 +150,7 @@ impl Linear {
 
     /// The issue's description, project, team and labels: what repository routing looks at.
     /// Webhook payloads carry none of the last three.
-    pub async fn issue_routing(&self, app: &App, issue_id: &str) -> Result<Value> {
+    pub(super) async fn issue_routing(&self, app: &App, issue_id: &str) -> Result<Value> {
         let data = self
             .graphql(
                 app,
@@ -217,7 +164,7 @@ impl Linear {
     }
 
     /// Linear's suggested git branch name for the issue ("Copy git branch name").
-    pub async fn branch_name(&self, app: &App, issue_id: &str) -> Result<String> {
+    pub(super) async fn branch_name(&self, app: &App, issue_id: &str) -> Result<String> {
         let data = self
             .graphql(
                 app,
@@ -232,7 +179,7 @@ impl Linear {
     }
 
     /// Moves a not-yet-started issue to its team's first `started` state.
-    pub async fn start_issue(&self, app: &App, issue_id: &str) -> Result<()> {
+    pub(super) async fn start_issue(&self, app: &App, issue_id: &str) -> Result<()> {
         let data = self
             .graphql(
                 app,
@@ -280,30 +227,6 @@ fn started_state(issue: &Value) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn signature() {
-        let body = br#"{"webhookTimestamp":1000000}"#;
-        // python3 -c 'import hmac,hashlib;print(hmac.new(b"s",b"{\"webhookTimestamp\":1000000}",hashlib.sha256).hexdigest())'
-        let sig = "2645a623818ff5efc2f7f75075285d3e6f4ef1825d34f77912c56416571211b4";
-        assert!(verify("s", body, sig, 1_030_000));
-        assert!(!verify("s", body, sig, 1_070_000), "stale timestamp");
-        assert!(!verify("t", body, sig, 1_030_000), "wrong secret");
-        assert!(!verify("s", body, "zz", 1_030_000), "not hex");
-    }
-
-    #[test]
-    fn workspace_matches_id_or_url_key() {
-        let data =
-            json!({"viewer":{"organization":{"id":"org-1","urlKey":"alean","name":"ALEAN"}}});
-        let ws = Workspace::from_viewer(&data).unwrap();
-        assert!(ws.is("org-1"));
-        assert!(ws.is("alean"));
-        assert!(ws.is("ALEAN"), "URL key is case-insensitive");
-        assert!(!ws.is("ORG-1"), "IDs are compared exactly");
-        assert!(!ws.is("personal"));
-        assert!(Workspace::from_viewer(&json!({"viewer":null})).is_err());
-    }
 
     fn issue(state: &str) -> Value {
         json!({
