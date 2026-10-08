@@ -158,6 +158,7 @@ impl Surface for Linear {
                 &app.home_dir,
                 &readable,
                 mode.as_ref().map_or(&[], |m| &m.deny),
+                &app.cfg.sandbox,
             ),
             cwd: workspace,
             system_prompt,

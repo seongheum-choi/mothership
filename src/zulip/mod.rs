@@ -235,7 +235,7 @@ fn launch(app: &App, key: &str) -> Result<Launch> {
     let mut mcp_configs = vec![crate::linear::mcp_config(app, key)?];
     mcp_configs.extend(app.cfg.mcp_configs.iter().cloned());
     Ok(Launch {
-        settings: sandbox::settings(&app.home_dir, &readable, &read_only),
+        settings: sandbox::settings(&app.home_dir, &readable, &read_only, &app.cfg.sandbox),
         cwd: workspace,
         system_prompt,
         resume: rec.claude_session_id,

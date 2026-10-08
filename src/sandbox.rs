@@ -3,16 +3,49 @@
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
-/// Claude Code settings that deny reads of every home entry not on the way to `allowed`.
+/// Home paths every agent's commands need besides its own workspace: toolchains, package
+/// caches, git config.
+pub struct Paths {
+    /// `SANDBOX_READ`: left out of the deny rules, so files work as well as directories.
+    pub read: Vec<PathBuf>,
+    /// `SANDBOX_WRITE` and the progress directory: writable from Bash on top of the working
+    /// directory, and readable like `read`.
+    pub write: Vec<PathBuf>,
+}
+
+/// Claude Code settings that deny reads of every home entry not on the way to `allowed`,
+/// `paths.read` or `paths.write`, and run Bash in Claude Code's OS sandbox.
 ///
 /// For each directory from `home` down to an allowed path, siblings that lead nowhere
-/// allowed get a `Read` deny rule; an allowed path's own subtree stays open. Claude Code
-/// applies these rules under `bypassPermissions` too, and checks path arguments of
-/// reading shell commands (`cat`, `cp`, ...) against them.
-pub fn settings(home: &Path, allowed: &[PathBuf], extra_deny: &[String]) -> Value {
-    let mut deny = home_deny_rules(home, allowed);
+/// allowed get a `Read` deny rule; an allowed path's own subtree stays open. The rules stop
+/// the Read tool, and the sandbox (Seatbelt on macOS, bubblewrap on Linux) folds them into
+/// its filesystem policy, so they bind every process Bash starts as well, not only the
+/// reading commands Claude Code recognises. Writes from Bash are limited to the working
+/// directory and `paths.write`. Without a sandbox the session fails instead of running
+/// unconfined, and the OAuth token is kept out of Bash's environment.
+pub fn settings(home: &Path, allowed: &[PathBuf], extra_deny: &[String], paths: &Paths) -> Value {
+    let allowed: Vec<PathBuf> = allowed
+        .iter()
+        .chain(&paths.read)
+        .chain(&paths.write)
+        .cloned()
+        .collect();
+    let mut deny = home_deny_rules(home, &allowed);
     deny.extend_from_slice(extra_deny);
-    json!({ "permissions": { "deny": deny } })
+    json!({
+        "permissions": { "deny": deny },
+        "sandbox": {
+            "enabled": true,
+            "allowUnsandboxedCommands": false,
+            "failIfUnavailable": true,
+            "filesystem": { "allowWrite": paths.write },
+            // Local servers are how agents run and probe what they build; no outside port is involved.
+            "network": { "allowLocalBinding": true },
+            "credentials": {
+                "envVars": [{ "name": "CLAUDE_CODE_OAUTH_TOKEN", "mode": "deny" }],
+            },
+        },
+    })
 }
 
 fn home_deny_rules(home: &Path, allowed: &[PathBuf]) -> Vec<String> {
@@ -92,6 +125,14 @@ mod tests {
                 format!("Read(/{h}/.ssh/**)"),
                 format!("Read(/{h}/notes/**)"),
                 format!("Read(/{h}/work/**)"),
+            ]
+        );
+        assert_eq!(
+            home_deny_rules(&home, &[home.join("work/repo"), home.join(".netrc")]),
+            vec![
+                format!("Read(/{h}/.ssh/**)"),
+                format!("Read(/{h}/notes/**)"),
+                format!("Read(/{h}/work/other/**)"),
             ]
         );
         std::fs::remove_dir_all(&home).unwrap();
