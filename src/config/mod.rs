@@ -12,8 +12,11 @@ pub use surfaces::{GitHubConfig, LinearConfig, ZulipConfig};
 
 use crate::{review::ReviewBackend, sandbox, store::Tokens, tunnel::Tunnel};
 use anyhow::{Context, Result};
-use std::path::{Path, PathBuf};
-use vars::{Vars, parse_list, parse_paths};
+use std::{
+    path::{Path, PathBuf},
+    time::Duration,
+};
+use vars::{Vars, parse_home_entries, parse_list, parse_paths};
 
 pub struct Config {
     /// State, worktrees, plugins and per-session files live here.
@@ -27,7 +30,7 @@ pub struct Config {
     /// Secrets and settings forwarded into every agent process, resolved from the `AGENT_ENV`
     /// key list so values like `CLAUDE_CODE_OAUTH_TOKEN` can live only in `<home>/.env`.
     pub agent_env: Vec<(String, String)>,
-    /// `SANDBOX_READ` and `SANDBOX_WRITE`, opened to every agent's commands.
+    /// `SANDBOX_READ`, `SANDBOX_WRITE` and `SANDBOX_SKIP_DENY`, opened to every agent's commands.
     pub sandbox: sandbox::Paths,
     pub linear: LinearConfig,
     pub zulip: Option<ZulipConfig>,
@@ -47,6 +50,9 @@ pub struct ClaudeConfig {
     pub bin: String,
     /// Permission mode for chat sessions; issue sessions always bypass prompts.
     pub chat_permission_mode: String,
+    /// `AGENT_START_TIMEOUT`: how long an agent may run without announcing its session
+    /// before it is killed.
+    pub start_timeout: Duration,
 }
 
 impl Config {
@@ -102,6 +108,7 @@ impl Config {
                 chat_permission_mode: vars
                     .get("CHAT_PERMISSION_MODE")
                     .unwrap_or_else(|| "auto".into()),
+                start_timeout: start_timeout(&vars)?,
             },
             mcp_configs: vars
                 .get("MCP_CONFIGS")
@@ -158,7 +165,28 @@ fn sandbox_paths(vars: &Vars, user_home: &Path, home: &Path) -> Result<sandbox::
         user_home,
     )?;
     write.push(progress_dir(home));
-    Ok(sandbox::Paths { read, write })
+    let skip_deny = parse_home_entries(
+        "SANDBOX_SKIP_DENY",
+        vars.get("SANDBOX_SKIP_DENY").as_deref(),
+        user_home,
+    )?;
+    Ok(sandbox::Paths {
+        read,
+        write,
+        skip_deny,
+    })
+}
+
+fn start_timeout(vars: &Vars) -> Result<Duration> {
+    let Some(value) = vars.get("AGENT_START_TIMEOUT") else {
+        return Ok(Duration::from_secs(120));
+    };
+    match value.parse::<u64>() {
+        Ok(secs) if secs > 0 => Ok(Duration::from_secs(secs)),
+        _ => {
+            anyhow::bail!("AGENT_START_TIMEOUT must be a positive number of seconds, not {value:?}")
+        }
+    }
 }
 
 fn progress_dir(home: &Path) -> PathBuf {

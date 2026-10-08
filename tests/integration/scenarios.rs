@@ -1,7 +1,7 @@
 //! The scenarios: each starts its own mothership and drives it through webhooks.
 
 use crate::{
-    fake::{HOLD, PROGRESS, PROGRESS_LINE, RELEASE},
+    fake::{HANG, HOLD, PROGRESS, PROGRESS_LINE, RELEASE},
     harness::{Ctx, Harness, Setup, ZULIP_TOKEN, create_repo, eventually, exited, git},
     mock::{self, ORG},
 };
@@ -36,6 +36,7 @@ pub const ALL: &[(&str, Scenario)] = scenarios![
     linear_routes_between_two_repositories,
     linear_prompt_joins_the_running_turn,
     linear_stop_kills_the_agent,
+    linear_agent_that_never_starts_is_stopped,
     github_feedback_continues_the_session,
     github_fork_conversation_comment_is_ignored,
     zulip_mention_gets_a_reply,
@@ -778,6 +779,37 @@ async fn linear_stop_kills_the_agent(ctx: Ctx) -> Result<()> {
     ensure!(body(&response) == "Stopped.", "{response}");
     exited(pid).await?;
     exited(tool).await
+}
+
+/// An agent that announces no session within `AGENT_START_TIMEOUT` is killed with the tool it
+/// runs, and the session gets an error that points at the README's macOS privacy section.
+async fn linear_agent_that_never_starts_is_stopped(ctx: Ctx) -> Result<()> {
+    let env = vec![("AGENT_START_TIMEOUT", "1".into()), (HANG, "1".into())];
+    let h = Harness::start(
+        &ctx,
+        Setup {
+            env,
+            ..Setup::default()
+        },
+    )
+    .await?;
+    let issue = issue(23, "Hang.");
+    h.mock.add_issue(&issue);
+    ensure!(h.linear(created("s23", &issue, "context of SH-23")).await? == 200);
+
+    let error = h.activity("s23", "error", 1).await?;
+    ensure!(
+        body(&error).starts_with("The agent did not start within 1s")
+            && body(&error).contains("#agent-does-not-start-macos-privacy-prompts"),
+        "{error}"
+    );
+    let call = h
+        .calls("claude")
+        .first()
+        .cloned()
+        .context("fake agent call")?;
+    exited(call["pid"].as_u64().context("fake agent pid")?).await?;
+    exited(call["tool_pid"].as_u64().context("fake tool pid")?).await
 }
 
 fn pull_request(head_repo: &str) -> Value {
