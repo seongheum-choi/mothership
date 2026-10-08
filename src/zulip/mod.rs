@@ -9,6 +9,7 @@ use crate::{
     repos::Repo,
     sandbox,
     session::{Outcome, Surface, Update},
+    signature,
     store::file_name,
 };
 use anyhow::{Context, Result};
@@ -45,7 +46,7 @@ async fn webhook(State(app): State<Arc<App>>, Json(p): Json<Value>) -> (StatusCo
         return (StatusCode::NOT_FOUND, Json(json!({})));
     };
     let token = p["token"].as_str().unwrap_or_default();
-    if !constant_time_eq(token.as_bytes(), cfg.webhook_token.as_bytes()) {
+    if !signature::constant_time_eq(token.as_bytes(), cfg.webhook_token.as_bytes()) {
         return (StatusCode::UNAUTHORIZED, Json(json!({})));
     }
     let trigger = p["trigger"].as_str().unwrap_or_default();
@@ -194,12 +195,6 @@ fn strip_mention(text: &str) -> &str {
         return text.trim();
     };
     rest.find("**").map_or(text, |end| &rest[end + 2..]).trim()
-}
-
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    !b.is_empty()
-        && a.len() == b.len()
-        && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
 fn launch(app: &App, key: &str) -> Result<Launch> {
@@ -386,10 +381,5 @@ mod tests {
             "<zulip_topic_context>\n<message author=\"B\" id=\"3\">\nnew\n</message>\n</zulip_topic_context>\n\n"
         );
         assert!(topic_context(&messages, 4, None, "bot@x").contains("author=\"you\""));
-        assert!(
-            constant_time_eq(b"tok", b"tok")
-                && !constant_time_eq(b"tok", b"tox")
-                && !constant_time_eq(b"", b"")
-        );
     }
 }
