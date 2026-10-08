@@ -1,10 +1,10 @@
 //! What closing, deleting or unassigning an issue ends: its running sessions, and once closed,
 //! its worktrees.
 
-use super::routing::existing_repo;
 use crate::{
     app::App,
     repos::{self, Repo},
+    sessions::existing_repo,
     store::SessionRec,
     worktree,
 };

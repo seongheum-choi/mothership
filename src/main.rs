@@ -10,6 +10,7 @@ mod repos;
 mod review;
 mod sandbox;
 mod session;
+mod sessions;
 mod signature;
 mod store;
 mod tunnel;
