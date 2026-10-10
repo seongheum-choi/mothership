@@ -6,7 +6,7 @@ mod reload;
 mod surfaces;
 mod vars;
 
-pub use model::{EFFORTS, ModelDefaults};
+pub use model::{EFFORTS, ModelDefaults, ModelFields, check_effort};
 pub use reload::Live;
 pub use surfaces::{GitHubConfig, LinearConfig, ZulipConfig};
 

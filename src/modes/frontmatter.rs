@@ -2,6 +2,7 @@
 //! the subset of YAML they need, with comments, quotes and a byte order mark.
 
 use super::Mode;
+use crate::config::check_effort;
 use anyhow::{Result, bail};
 
 /// Permission modes Claude Code accepts for `--permission-mode`.
@@ -36,7 +37,15 @@ pub(super) fn parse(name: &str, text: &str) -> Result<Mode> {
         match key {
             "labels" => mode.labels = value.into_list(),
             "deny" => mode.deny = value.into_list(),
-            "model" => mode.model = Some(scalar(value)?),
+            "model" => mode.models.model = Some(scalar(value)?),
+            "fallback_model" => mode.models.fallback_model = Some(scalar(value)?),
+            "effort" => {
+                let effort = scalar(value)?;
+                if let Err(problem) = check_effort(&effort) {
+                    bail!("frontmatter line {line}: {problem}");
+                }
+                mode.models.effort = Some(effort);
+            }
             "permission_mode" => {
                 let pm = scalar(value)?;
                 if !PERMISSION_MODES.contains(&pm.as_str()) {
@@ -49,7 +58,7 @@ pub(super) fn parse(name: &str, text: &str) -> Result<Mode> {
             }
             other => bail!(
                 "frontmatter line {line}: unknown key `{other}` (known: labels, model, \
-                 permission_mode, deny)"
+                 fallback_model, effort, permission_mode, deny)"
             ),
         }
     }
@@ -201,6 +210,7 @@ fn unquote(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::ModelFields;
 
     #[test]
     fn parses_frontmatter_and_body() {
@@ -208,6 +218,8 @@ mod tests {
                     # comment\n\
                     labels: [Research, \"deep dive\"]\n\
                     model: 'opus'\n\
+                    fallback_model: sonnet\n\
+                    effort: medium\n\
                     permission_mode: plan\n\
                     deny:\n  - Edit\n  - Bash(git push:*)\n\
                     ---\n\nLook, do not touch.\n";
@@ -217,11 +229,20 @@ mod tests {
             Mode {
                 name: "research".into(),
                 labels: vec!["Research".into(), "deep dive".into()],
-                model: Some("opus".into()),
+                models: ModelFields {
+                    model: Some("opus".into()),
+                    fallback_model: Some("sonnet".into()),
+                    effort: Some("medium".into()),
+                },
                 permission_mode: Some("plan".into()),
                 deny: vec!["Edit".into(), "Bash(git push:*)".into()],
                 instructions: "Look, do not touch.".into(),
             }
+        );
+        let err = parse("research", "---\neffort: ultra\n---\n").unwrap_err();
+        assert!(
+            format!("{err:#}").contains("`ultra` is not an effort level"),
+            "{err:#}"
         );
     }
 
@@ -229,7 +250,7 @@ mod tests {
     fn frontmatter_is_optional() {
         let mode = parse("plain", "Just instructions.\n---\nmore").unwrap();
         assert_eq!(mode.instructions, "Just instructions.\n---\nmore");
-        assert!(mode.labels.is_empty() && mode.model.is_none());
+        assert!(mode.labels.is_empty() && mode.models == ModelFields::default());
 
         let mode = parse("empty", "---\r\n---\r\nBody").unwrap();
         assert_eq!(mode.instructions, "Body");
@@ -266,7 +287,7 @@ mod tests {
                     ---\n";
         let mode = parse("m", text).unwrap();
         assert_eq!(mode.labels, ["Research"]);
-        assert_eq!(mode.model.as_deref(), Some("opus"));
+        assert_eq!(mode.models.model.as_deref(), Some("opus"));
         assert_eq!(mode.deny, ["Edit", "Bash(echo #1)", "Bash(echo a#b)"]);
         assert_eq!(strip_comment("model: don't # x"), "model: don't ");
     }
