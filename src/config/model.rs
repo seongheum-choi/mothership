@@ -6,6 +6,27 @@ use super::vars::Vars;
 /// The levels Claude Code's `--effort` takes.
 pub const EFFORTS: &[&str] = &["low", "medium", "high", "xhigh", "max"];
 
+/// What one scope sets: a mode file, a repository in `repos.json`, or an issue's labels. A
+/// `None` field leaves that field to a wider scope, down to the instance defaults.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ModelFields {
+    pub model: Option<String>,
+    pub fallback_model: Option<String>,
+    /// One of `EFFORTS`, checked where the scope is read so a bad value is named there.
+    pub effort: Option<String>,
+}
+
+/// The problem to report when `effort` is not one of `EFFORTS`.
+pub fn check_effort(effort: &str) -> Result<(), String> {
+    if EFFORTS.contains(&effort) {
+        return Ok(());
+    }
+    Err(format!(
+        "`{effort}` is not an effort level; use one of {}",
+        EFFORTS.join(", ")
+    ))
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct ModelDefaults {
     pub model: String,

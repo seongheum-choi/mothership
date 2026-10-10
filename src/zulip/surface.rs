@@ -49,7 +49,7 @@ fn launch(app: &App, key: &str) -> Result<Launch> {
         .collect();
     let mut mcp_configs = vec![crate::linear::mcp_config(app, key)?];
     mcp_configs.extend(app.cfg.mcp_configs.iter().cloned());
-    let (models, note) = choice::for_turn(app, key, &rec, None);
+    let (models, note) = choice::for_turn(app, key, &rec, &choice::Scopes::default());
     let runner = app.runner();
     Ok(Launch {
         runner,

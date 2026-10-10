@@ -57,6 +57,8 @@ pub const ALL: &[(&str, Scenario)] = scenarios![
     codex_runner_answers_with_thoughts_and_a_response,
     codex_runner_resumes_the_thread_with_a_prompt_from_mid_turn,
     claude_usage_limit_moves_turns_to_codex_until_it_resets,
+    repo_and_mode_models_apply_per_field,
+    model_labels_beat_the_mode_and_bad_ones_are_ignored,
 ];
 
 /// An issue as Linear's API returns it; the webhook carries a subset.
@@ -1570,5 +1572,101 @@ async fn claude_usage_limit_moves_turns_to_codex_until_it_resets(ctx: Ctx) -> Re
         "{back}"
     );
     ensure!(h.status().await?["claude_limited_until"].is_null());
+    Ok(())
+}
+
+/// A repository's `model`, `fallback_model` and `effort` in `repos.json` apply to its sessions,
+/// and a mode's `model` beats them field by field.
+async fn repo_and_mode_models_apply_per_field(ctx: Ctx) -> Result<()> {
+    let h = Harness::start(&ctx, Setup::default()).await?;
+    std::fs::write(
+        h.home.join(".mothership/repos.json"),
+        json!([{
+            "name": "app",
+            "path": h.home.join("src").join("app"),
+            "model": "haiku",
+            "fallback_model": "haiku",
+            "effort": "low",
+        }])
+        .to_string(),
+    )?;
+    let issue = issue(41, "Tidy up.");
+    h.mock.add_issue(&issue);
+    ensure!(h.linear(created("s41", &issue, "context of SH-41")).await? == 200);
+    h.activity("s41", "response", 1).await?;
+    let args = argv(&h.prompt_with("context of SH-41").await?);
+    ensure!(flag(&args, "--model")? == "haiku", "{args:#?}");
+    ensure!(flag(&args, "--fallback-model")? == "haiku", "{args:#?}");
+    ensure!(flag(&args, "--effort")? == "low", "{args:#?}");
+    let said = thoughts(&h, "s41");
+    ensure!(
+        said.contains(&"Model: haiku, fallback: haiku, effort: low (repo `app`)".into()),
+        "{said:?}"
+    );
+
+    let modes = h.home.join(".mothership/modes");
+    std::fs::create_dir_all(&modes)?;
+    std::fs::write(
+        modes.join("research.md"),
+        "---\nlabels: [Research]\nmodel: sonnet\n---\nAnswer; change nothing.\n",
+    )?;
+    let issue = labelled(42, "Why is it slow?", &["research"]);
+    h.mock.add_issue(&issue);
+    ensure!(h.linear(created("s42", &issue, "context of SH-42")).await? == 200);
+    h.activity("s42", "response", 1).await?;
+    let args = argv(&h.prompt_with("context of SH-42").await?);
+    ensure!(flag(&args, "--model")? == "sonnet", "{args:#?}");
+    ensure!(flag(&args, "--fallback-model")? == "haiku", "{args:#?}");
+    ensure!(flag(&args, "--effort")? == "low", "{args:#?}");
+    let said = thoughts(&h, "s42");
+    ensure!(
+        said.contains(
+            &"Model: sonnet (mode `research`), fallback: haiku (repo `app`), \
+              effort: low (repo `app`)"
+                .into()
+        ),
+        "{said:?}"
+    );
+    Ok(())
+}
+
+/// An issue's `model:`/`effort:` label beats its mode, and a label that names no level is
+/// ignored with the field falling through to the mode.
+async fn model_labels_beat_the_mode_and_bad_ones_are_ignored(ctx: Ctx) -> Result<()> {
+    let h = Harness::start(&ctx, Setup::default()).await?;
+    let modes = h.home.join(".mothership/modes");
+    std::fs::create_dir_all(&modes)?;
+    std::fs::write(
+        modes.join("research.md"),
+        "---\nlabels: [Research]\nmodel: haiku\neffort: low\n---\nAnswer; change nothing.\n",
+    )?;
+
+    let issue = labelled(51, "Why?", &["research", "Model:sonnet", "effort:max"]);
+    h.mock.add_issue(&issue);
+    ensure!(h.linear(created("s51", &issue, "context of SH-51")).await? == 200);
+    h.activity("s51", "response", 1).await?;
+    let args = argv(&h.prompt_with("context of SH-51").await?);
+    ensure!(flag(&args, "--model")? == "sonnet", "{args:#?}");
+    ensure!(flag(&args, "--effort")? == "max", "{args:#?}");
+    let said = thoughts(&h, "s51");
+    ensure!(
+        said.contains(
+            &"Model: sonnet (label `Model:sonnet`), effort: max (label `effort:max`)".into()
+        ),
+        "{said:?}"
+    );
+
+    let issue = labelled(52, "Why else?", &["research", "effort:ultra"]);
+    h.mock.add_issue(&issue);
+    ensure!(h.linear(created("s52", &issue, "context of SH-52")).await? == 200);
+    h.activity("s52", "response", 1).await?;
+    let args = argv(&h.prompt_with("context of SH-52").await?);
+    ensure!(flag(&args, "--model")? == "haiku", "{args:#?}");
+    ensure!(flag(&args, "--effort")? == "low", "{args:#?}");
+    let log = std::fs::read_to_string(h.dir.join("mothership.log"))?;
+    ensure!(
+        log.contains("label `effort:ultra` ignored: `ultra` is not an effort level"),
+        "{log}"
+    );
     Ok(())
 }

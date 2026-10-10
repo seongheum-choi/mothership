@@ -111,10 +111,11 @@ impl Surface for Linear {
         );
         system_prompt.push_str(&work_instructions(mode.as_ref(), &delivery));
 
-        let mode_model = mode
-            .as_ref()
-            .and_then(|m| Some((m.name.as_str(), m.model.clone()?)));
-        let (models, note) = choice::for_turn(app, key, &rec, mode_model);
+        let scopes = choice::Scopes {
+            mode: mode.as_ref().map(|m| (m.name.as_str(), &m.models)),
+            repo: Some((repo.name.as_str(), &repo.models)),
+        };
+        let (models, note) = choice::for_turn(app, key, &rec, &scopes);
         let plugin_dirs = app.cfg.plugin_dirs();
         let mut readable = vec![repo.path.clone()];
         readable.extend(plugin_dirs.iter().cloned());

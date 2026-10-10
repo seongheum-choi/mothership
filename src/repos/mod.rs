@@ -8,6 +8,7 @@ mod select;
 pub use load::load;
 pub use select::{IssueFacts, Ref, select};
 
+use crate::config::ModelFields;
 use select::same;
 use std::path::{Path, PathBuf};
 
@@ -37,6 +38,9 @@ pub struct Repo {
     pub mcp_configs: Vec<PathBuf>,
     /// False for a plain directory: no worktrees, one turn at a time, no commits.
     pub git: bool,
+    /// `model`, `fallback_model` and `effort` for sessions in this repository, each beating
+    /// the instance default and beaten by the session's mode.
+    pub models: ModelFields,
 }
 
 impl Repo {
@@ -55,6 +59,7 @@ impl Repo {
             prompt: None,
             mcp_configs: Vec::new(),
             git: true,
+            models: ModelFields::default(),
         }
     }
 

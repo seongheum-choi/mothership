@@ -5,6 +5,7 @@ use crate::{
     app::App,
     modes,
     repos::{self, IssueFacts, Ref, Repo},
+    session::choice,
 };
 use serde_json::Value;
 use std::sync::Arc;
@@ -96,8 +97,10 @@ impl Linear {
         Ok(())
     }
 
-    /// Settles the session's mode from the issue's labels, once, at its start. Until it is
-    /// settled no turn runs, so a conflict or a broken mode file never falls back to the default.
+    /// Settles the session's mode and its `model:`/`effort:` labels from the issue's labels,
+    /// once, at its start. Until the mode is settled no turn runs, so a conflict or a broken
+    /// mode file never falls back to the default. With no mode files nothing looks the labels
+    /// up, so the model labels are not read either.
     pub(super) async fn choose_mode(
         &self,
         app: &Arc<App>,
@@ -115,8 +118,8 @@ impl Linear {
                 "A mode file is broken: {e:#}. Fix it and reply to start."
             ))
         })?;
-        let choice = if all.is_empty() {
-            None
+        let (choice, picked) = if all.is_empty() {
+            (None, choice::labels::Picked::default())
         } else {
             let Some(issue) = lookup.get(self, app, sid).await else {
                 return Err(Blocked::Stuck(
@@ -129,15 +132,21 @@ impl Linear {
                 .into_iter()
                 .map(|l| l.name)
                 .collect();
-            modes::select(&all, &labels).map_err(Blocked::Ask)?
+            let choice = modes::select(&all, &labels).map_err(Blocked::Ask)?;
+            (choice, choice::labels::select(sid, &labels))
         };
         let name = choice.as_ref().map(|c| c.mode.name.clone());
         app.store.update(|s| {
             if let Some(rec) = s.sessions.get_mut(sid) {
                 rec.mode.clone_from(&name);
+                rec.label_model.clone_from(&picked.model);
+                rec.label_effort.clone_from(&picked.effort);
                 rec.mode_pending = false;
             }
         });
+        if picked != choice::labels::Picked::default() {
+            tracing::info!("[{sid}] model labels: {picked:?}");
+        }
         if let Some(c) = choice {
             tracing::info!("[{sid}] mode {} (label {})", c.mode.name, c.label);
             let note = format!("Mode: `{}` (label `{}`).", c.mode.name, c.label);
