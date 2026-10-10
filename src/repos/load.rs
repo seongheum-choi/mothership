@@ -3,6 +3,7 @@
 use super::Repo;
 use super::disk::check_on_disk;
 use super::select::same;
+use crate::config::{ModelFields, check_effort};
 use crate::directive::valid_name;
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
@@ -24,12 +25,30 @@ struct Entry {
     prompt_file: Option<String>,
     #[serde(default)]
     mcp_configs: Vec<String>,
+    model: Option<String>,
+    fallback_model: Option<String>,
+    effort: Option<String>,
     #[serde(default = "default_git")]
     git: bool,
 }
 
 fn default_git() -> bool {
     true
+}
+
+/// A repository's model fields, with the effort checked here so `repos.json` names the bad
+/// value rather than a turn failing later.
+fn model_fields(name: &str, entry: &Entry) -> Result<ModelFields> {
+    if let Some(effort) = &entry.effort
+        && let Err(problem) = check_effort(effort)
+    {
+        bail!("repo {name:?} effort: {problem}");
+    }
+    Ok(ModelFields {
+        model: entry.model.clone(),
+        fallback_model: entry.fallback_model.clone(),
+        effort: entry.effort.clone(),
+    })
 }
 
 /// Reads `path`, or returns `None` when it does not exist.
@@ -125,6 +144,7 @@ pub(super) fn parse(text: &str, user_home: &Path) -> Result<(Vec<Repo>, Vec<Opti
                 .map(|p| resolve("prompt_file", p))
                 .transpose()?,
         );
+        let models = model_fields(&name, &entry)?;
         repos.push(Repo {
             path,
             base_branch: entry.base_branch.unwrap_or_else(|| "main".into()),
@@ -139,6 +159,7 @@ pub(super) fn parse(text: &str, user_home: &Path) -> Result<(Vec<Repo>, Vec<Opti
                 .collect::<Result<_>>()?,
             git: entry.git,
             name,
+            models,
         });
     }
     no_overlap(repos.iter().map(|r| (r, r.path.clone())))?;
@@ -204,6 +225,37 @@ mod tests {
         assert_eq!(repos[2].path, PathBuf::from("/Users/me/vault"));
         assert!(!repos[2].git);
         assert_eq!(prompts, [Some(PathBuf::from("/Users/me/p.md")), None, None]);
+        assert_eq!(repos[0].models, ModelFields::default());
+    }
+
+    #[test]
+    fn reads_model_fields_and_checks_the_effort() {
+        let (repos, _) = parse(
+            r#"[{"name": "app", "path": "/src/app", "model": "sonnet",
+                 "fallback_model": "haiku", "effort": "high"}]"#,
+            &home(),
+        )
+        .unwrap();
+        assert_eq!(
+            repos[0].models,
+            ModelFields {
+                model: Some("sonnet".into()),
+                fallback_model: Some("haiku".into()),
+                effort: Some("high".into()),
+            }
+        );
+        let err = format!(
+            "{:#}",
+            parse(
+                r#"[{"name": "app", "path": "/src/app", "effort": "ultra"}]"#,
+                &home()
+            )
+            .unwrap_err()
+        );
+        assert!(
+            err.contains(r#"repo "app" effort: `ultra` is not an effort level"#),
+            "{err}"
+        );
     }
 
     #[test]

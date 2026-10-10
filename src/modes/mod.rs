@@ -3,6 +3,7 @@
 
 mod frontmatter;
 
+use crate::config::ModelFields;
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 
@@ -12,8 +13,9 @@ pub struct Mode {
     pub name: String,
     /// Linear label names that turn this mode on, compared case-insensitively.
     pub labels: Vec<String>,
-    /// Replaces `CLAUDE_MODEL`.
-    pub model: Option<String>,
+    /// `model`, `fallback_model` and `effort` for every turn of a session in this mode, each
+    /// beating the repository's value and the instance default.
+    pub models: ModelFields,
     /// Replaces the issue sessions' `bypassPermissions`.
     #[expect(
         clippy::struct_field_names,
