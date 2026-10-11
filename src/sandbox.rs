@@ -1,4 +1,5 @@
-//! Keeps agents out of the rest of the home directory (SSH keys, cloud credentials, notes).
+//! Keeps agents out of the rest of the home directory (SSH keys, cloud credentials, notes) and
+//! from editing what later sessions run with in `MOTHERSHIP_HOME`.
 
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
@@ -18,8 +19,10 @@ pub struct Paths {
     pub skip_deny: Vec<PathBuf>,
 }
 
-/// Claude Code settings that deny reads of every home entry not on the way to `allowed`,
-/// `paths.read`, `paths.write` or `paths.skip_deny`, and run Bash in Claude Code's OS sandbox.
+/// Claude Code settings that deny reads of every home entry not on the way to `workspace`,
+/// `readable`, `paths.read`, `paths.write` or `paths.skip_deny`, deny edits of everything in
+/// `state` (`MOTHERSHIP_HOME`) but `workspace` and `paths.write`, and run Bash
+/// in Claude Code's OS sandbox.
 ///
 /// For each directory from `home` down to an allowed path, siblings that lead nowhere
 /// allowed get a `Read` deny rule; an allowed path's own subtree stays open. The rules stop
@@ -28,15 +31,30 @@ pub struct Paths {
 /// reading commands Claude Code recognises. Writes from Bash are limited to the working
 /// directory and `paths.write`. Without a sandbox the session fails instead of running
 /// unconfined, and the OAuth token is kept out of Bash's environment.
-pub fn settings(home: &Path, allowed: &[PathBuf], extra_deny: &[String], paths: &Paths) -> Value {
-    let allowed: Vec<PathBuf> = allowed
+///
+/// The `Edit` rules, which Claude Code applies to every file-editing tool, keep an agent from
+/// changing what later sessions run with: `.env`, `repos.json`, `modes/`, `plugins/` and other
+/// sessions' worktrees. Bash's writes are already confined by the sandbox.
+pub fn settings(
+    home: &Path,
+    state: &Path,
+    workspace: &Path,
+    readable: &[PathBuf],
+    extra_deny: &[String],
+    paths: &Paths,
+) -> Value {
+    let writable: Vec<PathBuf> = std::iter::once(workspace.to_path_buf())
+        .chain(paths.write.iter().cloned())
+        .collect();
+    let allowed: Vec<PathBuf> = writable
         .iter()
+        .chain(readable)
         .chain(&paths.read)
-        .chain(&paths.write)
         .chain(&paths.skip_deny)
         .cloned()
         .collect();
-    let mut deny = home_deny_rules(home, &allowed);
+    let mut deny = deny_rules(home, &allowed, READ);
+    deny.extend(deny_rules(state, &writable, EDIT));
     deny.extend_from_slice(extra_deny);
     json!({
         "permissions": { "deny": deny },
@@ -54,10 +72,16 @@ pub fn settings(home: &Path, allowed: &[PathBuf], extra_deny: &[String], paths: 
     })
 }
 
-fn home_deny_rules(home: &Path, allowed: &[PathBuf]) -> Vec<String> {
+const READ: &str = "Read";
+/// Claude Code checks file edits against `Edit` rules only; a `Write` or `NotebookEdit` rule is
+/// never consulted and warns at startup.
+const EDIT: &str = "Edit";
+
+/// `tool` rules for every entry under `root` that is not on the way to `allowed`.
+fn deny_rules(root: &Path, allowed: &[PathBuf], tool: &str) -> Vec<String> {
     let targets: Vec<Vec<String>> = allowed
         .iter()
-        .filter_map(|p| p.strip_prefix(home).ok())
+        .filter_map(|p| p.strip_prefix(root).ok())
         .map(|rel| {
             rel.iter()
                 .map(|s| s.to_string_lossy().into_owned())
@@ -65,13 +89,13 @@ fn home_deny_rules(home: &Path, allowed: &[PathBuf]) -> Vec<String> {
         })
         .filter(|segments| !segments.is_empty())
         .collect();
-    // With nothing allowed inside home, every entry of home is denied.
+    // With nothing allowed inside root, every entry of root is denied.
     let mut deny = Vec::new();
-    walk(home, &targets, &mut deny);
+    walk(root, &targets, tool, &mut deny);
     deny
 }
 
-fn walk(dir: &Path, targets: &[Vec<String>], deny: &mut Vec<String>) {
+fn walk(dir: &Path, targets: &[Vec<String>], tool: &str, deny: &mut Vec<String>) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };
@@ -89,14 +113,14 @@ fn walk(dir: &Path, targets: &[Vec<String>], deny: &mut Vec<String>) {
             .collect();
         if below.is_empty() {
             // Claude Code permission patterns take absolute paths with a leading `//`.
-            let rule = if path.is_dir() {
-                format!("Read(/{}/**)", path.display())
+            let pattern = if path.is_dir() {
+                format!("/{}/**", path.display())
             } else {
-                format!("Read(/{})", path.display())
+                format!("/{}", path.display())
             };
-            deny.push(rule);
+            deny.push(format!("{tool}({pattern})"));
         } else if !below.iter().any(Vec::is_empty) {
-            walk(&path, &below, deny);
+            walk(&path, &below, tool, deny);
         }
     }
 }
@@ -113,7 +137,7 @@ mod tests {
         }
         std::fs::write(home.join(".netrc"), "").unwrap();
 
-        let rules = home_deny_rules(&home, &[home.join("work/repo")]);
+        let rules = deny_rules(&home, &[home.join("work/repo")], READ);
         let h = home.display();
         assert_eq!(
             rules,
@@ -125,7 +149,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            home_deny_rules(&home, &[PathBuf::from("/elsewhere")]),
+            deny_rules(&home, &[PathBuf::from("/elsewhere")], READ),
             vec![
                 format!("Read(/{h}/.netrc)"),
                 format!("Read(/{h}/.ssh/**)"),
@@ -134,12 +158,16 @@ mod tests {
             ]
         );
         assert_eq!(
-            home_deny_rules(&home, &[home.join("work/repo"), home.join(".netrc")]),
+            deny_rules(&home, &[home.join("work/repo"), home.join(".netrc")], READ),
             vec![
                 format!("Read(/{h}/.ssh/**)"),
                 format!("Read(/{h}/notes/**)"),
                 format!("Read(/{h}/work/other/**)"),
             ]
+        );
+        assert_eq!(
+            deny_rules(&home.join("work"), &[home.join("work/repo")], EDIT),
+            vec![format!("Edit(/{h}/work/other/**)")]
         );
         std::fs::remove_dir_all(&home).unwrap();
     }
