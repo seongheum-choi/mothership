@@ -16,9 +16,10 @@ pub(super) async fn start_turn(
     request: Option<&str>,
 ) {
     let field = |k: &str| issue[k].as_str().unwrap_or_default().to_string();
-    app.store.update(|s| {
+    let opening = app.store.update(|s| {
         let rec = s.sessions.entry(sid.to_string()).or_default();
-        if rec.issue_id.is_empty() {
+        let opening = rec.issue_id.is_empty();
+        if opening {
             *rec = SessionRec {
                 issue_id: field("id"),
                 identifier: field("identifier"),
@@ -30,10 +31,15 @@ pub(super) async fn start_turn(
         }
         rec.prompted_at = crate::store::now_secs();
         rec.closed = false;
+        opening
     });
     let linear = &app.linear.surface;
     let mut lookup = IssueLookup::new(issue["id"].as_str().unwrap_or_default());
     let directives = choice::record(app, sid, request.unwrap_or_default());
+    // A refused directive comes back corrected in a new reply, so keeping the refused one too
+    // would give the agent the request twice. The opening prompt is kept all the same: Linear's
+    // issue context comes only with it.
+    let keep = opening || directives.is_ok();
     let ready = match directives.map_err(Blocked::Stuck) {
         Ok(()) => match linear
             .choose_repo(app, sid, issue, request, &mut lookup)
@@ -45,11 +51,13 @@ pub(super) async fn start_turn(
         blocked => blocked,
     };
     if let Err(blocked) = ready {
-        app.store.update(|s| {
-            if let Some(rec) = s.sessions.get_mut(sid) {
-                hold(&mut rec.pending_prompt, prompt);
-            }
-        });
+        if keep {
+            app.store.update(|s| {
+                if let Some(rec) = s.sessions.get_mut(sid) {
+                    hold(&mut rec.pending_prompt, prompt);
+                }
+            });
+        }
         let content = match blocked {
             Blocked::Ask(question) => {
                 tracing::info!("[{sid}] waiting: {question}");
@@ -76,7 +84,8 @@ pub(super) async fn start_turn(
 }
 
 /// Adds `prompt` to what a session that cannot start yet keeps for its first turn: Linear's
-/// issue context, then every reply in order, including those that did not settle anything.
+/// issue context, then every reply in order, including those that did not settle anything,
+/// except replies whose directives were refused.
 fn hold(pending: &mut Option<String>, prompt: String) {
     *pending = Some(match pending.take() {
         Some(held) => format!("{held}\n\n{prompt}"),
