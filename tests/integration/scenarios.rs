@@ -34,6 +34,7 @@ pub const ALL: &[(&str, Scenario)] = scenarios![
     linear_refuses_other_workspaces_and_bad_signatures,
     linear_token_is_refreshed_at_startup,
     linear_routes_between_two_repositories,
+    linear_refused_reply_is_not_kept,
     linear_prompt_joins_the_running_turn,
     linear_stop_kills_the_agent,
     linear_agent_that_never_starts_is_stopped,
@@ -770,6 +771,39 @@ async fn linear_routes_between_two_repositories(ctx: Ctx) -> Result<()> {
     );
     let cwd = Path::new(call["cwd"].as_str().context("cwd")?);
     ensure!(main_clone(cwd)? == h.home.join("src/app").display().to_string());
+    Ok(())
+}
+
+/// A reply whose directive is refused while the session waits for its repository is not kept,
+/// so the corrected reply that starts the work reaches the agent once.
+async fn linear_refused_reply_is_not_kept(ctx: Ctx) -> Result<()> {
+    let setup = Setup {
+        repos: vec![("app", "o/app"), ("lib", "o/lib")],
+        ..Setup::default()
+    };
+    let h = Harness::start(&ctx, setup).await?;
+    let issue = issue(33, "No hint here.");
+    h.mock.add_issue(&issue);
+    ensure!(h.linear(created("s33", &issue, "context of SH-33")).await? == 200);
+    h.activity("s33", "elicitation", 1).await?;
+
+    let refused = "[effort=ultra] [repo=app] it is the login page";
+    ensure!(h.linear(prompted("s33", &issue, refused)).await? == 200);
+    let error = h.activity("s33", "error", 1).await?;
+    ensure!(
+        body(&error).starts_with("`[effort=ultra]` is not an effort level"),
+        "{error}"
+    );
+
+    let corrected = "[effort=high] [repo=app] it is the login page";
+    ensure!(h.linear(prompted("s33", &issue, corrected)).await? == 200);
+    let call = h.prompt_with(corrected).await?;
+    let prompt = call["prompt"].as_str().unwrap_or_default();
+    ensure!(
+        prompt == format!("context of SH-33\n\n{corrected}"),
+        "{prompt:?}"
+    );
+    ensure!(flag(&argv(&call), "--effort")? == "high", "{call}");
     Ok(())
 }
 
