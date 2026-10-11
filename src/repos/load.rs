@@ -40,8 +40,9 @@ pub fn load(path: &Path, user_home: &Path) -> Result<Option<Vec<Repo>>> {
     };
     let (mut repos, prompt_files) =
         parse(&text, user_home).with_context(|| format!("in {}", path.display()))?;
+    let mut resolved = Vec::new();
     for (repo, prompt_file) in repos.iter_mut().zip(prompt_files) {
-        check_on_disk(repo).with_context(|| format!("in {}", path.display()))?;
+        resolved.push(check_on_disk(repo).with_context(|| format!("in {}", path.display()))?);
         if let Some(file) = prompt_file {
             repo.prompt = Some(std::fs::read_to_string(&file).with_context(|| {
                 format!(
@@ -53,12 +54,16 @@ pub fn load(path: &Path, user_home: &Path) -> Result<Option<Vec<Repo>>> {
             })?);
         }
     }
+    // `parse` compares paths as written; one clone reached through a symlink, or as `/tmp`
+    // and `/private/tmp`, only shows up resolved.
+    no_overlap(repos.iter().map(|r| r.name.as_str()).zip(resolved))
+        .with_context(|| format!("in {}", path.display()))?;
     Ok(Some(repos))
 }
 
-/// What `parse` cannot see: the directory exists, is a git repository when it says so, and
-/// every MCP config file is there.
-fn check_on_disk(repo: &Repo) -> Result<()> {
+/// What `parse` cannot see: the directory exists, is the top of a git repository when it says
+/// so, and every MCP config file is there. Returns the directory with symlinks resolved.
+fn check_on_disk(repo: &Repo) -> Result<PathBuf> {
     let name = &repo.name;
     if !repo.path.is_dir() {
         bail!(
@@ -66,17 +71,33 @@ fn check_on_disk(repo: &Repo) -> Result<()> {
             repo.path.display()
         );
     }
+    let resolved = std::fs::canonicalize(&repo.path)
+        .with_context(|| format!("repo {name:?} path {}", repo.path.display()))?;
     if repo.git {
-        let inside = std::process::Command::new("git")
+        let mut git = std::process::Command::new("git");
+        // A pre-commit hook exports these; they would answer for another repository.
+        for var in [
+            "GIT_DIR",
+            "GIT_WORK_TREE",
+            "GIT_COMMON_DIR",
+            "GIT_INDEX_FILE",
+        ] {
+            git.env_remove(var);
+        }
+        let top = git
             .arg("-C")
             .arg(&repo.path)
-            .args(["rev-parse", "--git-dir"])
+            .args(["rev-parse", "--show-toplevel"])
             .output()
             .context("running git")?;
-        if !inside.status.success() {
+        // A subdirectory of a clone, or anything under a `$HOME` kept in git, is inside a
+        // repository too, but worktrees are cut from the clone's top.
+        let top = String::from_utf8_lossy(&top.stdout);
+        let top = top.trim_end_matches('\n');
+        if top.is_empty() || std::fs::canonicalize(top).ok().as_ref() != Some(&resolved) {
             bail!(
-                "repo {name:?} path {} is not a git repository; set \"git\": false to work \
-                 in it directly",
+                "repo {name:?} path {} is not the top of a git repository; point it at the \
+                 clone's top directory, or set \"git\": false to work in it directly",
                 repo.path.display()
             );
         }
@@ -86,6 +107,24 @@ fn check_on_disk(repo: &Repo) -> Result<()> {
             "repo {name:?} mcp_configs file {} does not exist",
             missing.display()
         );
+    }
+    Ok(resolved)
+}
+
+/// Fails when one repository's path is, or lies inside, another's.
+fn no_overlap<'a>(paths: impl IntoIterator<Item = (&'a str, PathBuf)>) -> Result<()> {
+    let paths: Vec<_> = paths.into_iter().collect();
+    for (i, (name, path)) in paths.iter().enumerate() {
+        if let Some((other, other_path)) = paths[..i]
+            .iter()
+            .find(|(_, p)| p.starts_with(path) || path.starts_with(p))
+        {
+            bail!(
+                "repo {name:?} path {} overlaps repo {other:?} path {}",
+                path.display(),
+                other_path.display()
+            );
+        }
     }
     Ok(())
 }
@@ -116,17 +155,6 @@ pub(super) fn parse(text: &str, user_home: &Path) -> Result<(Vec<Repo>, Vec<Opti
             bail!("repo {name:?} has a base_branch but \"git\": false; remove one of them");
         }
         let path = resolve("path", &entry.path)?;
-        if let Some(other) = repos
-            .iter()
-            .find(|r| r.path.starts_with(&path) || path.starts_with(&r.path))
-        {
-            bail!(
-                "repo {name:?} path {} overlaps repo {:?} path {}",
-                path.display(),
-                other.name,
-                other.path.display()
-            );
-        }
         prompt_files.push(
             entry
                 .prompt_file
@@ -150,6 +178,7 @@ pub(super) fn parse(text: &str, user_home: &Path) -> Result<(Vec<Repo>, Vec<Opti
             name,
         });
     }
+    no_overlap(repos.iter().map(|r| (r.name.as_str(), r.path.clone())))?;
     for (kind, field) in [
         ("label", (|r: &Repo| &r.labels) as fn(&Repo) -> &Vec<String>),
         ("Linear team", |r| &r.linear_teams),
@@ -224,6 +253,92 @@ mod tests {
             "/notes/vault",
             "sandbox rules are built from this text"
         );
+    }
+
+    /// Writes `json` (with `{dir}` replaced by a fresh directory) to that directory's
+    /// `repos.json` and loads it.
+    fn load_in(test: &str, setup: impl Fn(&Path), json: &str) -> Result<Option<Vec<Repo>>> {
+        let dir =
+            std::env::temp_dir().join(format!("mothership-load-{test}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        setup(&dir);
+        let file = dir.join("repos.json");
+        std::fs::write(&file, json.replace("{dir}", dir.to_str().unwrap())).unwrap();
+        let loaded = load(&file, &home());
+        std::fs::remove_dir_all(&dir).unwrap();
+        loaded
+    }
+
+    fn git_init(dir: &Path) {
+        let ok = std::process::Command::new("git")
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
+            .env_remove("GIT_INDEX_FILE")
+            .args(["init", "-q"])
+            .arg(dir)
+            .status()
+            .unwrap()
+            .success();
+        assert!(ok, "git init");
+    }
+
+    #[test]
+    fn resolved_paths_must_not_overlap() {
+        let link = |dir: &Path| {
+            std::fs::create_dir(dir.join("real")).unwrap();
+            std::os::unix::fs::symlink(dir.join("real"), dir.join("link")).unwrap();
+        };
+        let error = load_in(
+            "overlap",
+            link,
+            r#"[{"name": "a", "path": "{dir}/real", "git": false},
+                {"name": "b", "path": "{dir}/link", "git": false}]"#,
+        )
+        .unwrap_err();
+        let error = format!("{error:#}");
+        assert!(
+            error.contains(r#"repo "b" path"#) && error.contains(r#"overlaps repo "a""#),
+            "{error}"
+        );
+        let repos = load_in(
+            "apart",
+            |dir| {
+                link(dir);
+                std::fs::create_dir(dir.join("other")).unwrap();
+            },
+            r#"[{"name": "a", "path": "{dir}/link", "git": false},
+                {"name": "b", "path": "{dir}/other", "git": false}]"#,
+        )
+        .unwrap()
+        .unwrap();
+        assert!(
+            repos[0].path.ends_with("link"),
+            "the path is kept as written"
+        );
+    }
+
+    #[test]
+    fn git_repos_must_be_the_top_of_a_clone() {
+        let clone = |dir: &Path| {
+            git_init(&dir.join("clone"));
+            std::fs::create_dir(dir.join("clone/sub")).unwrap();
+        };
+        let at = |test: &str, path: &str| {
+            load_in(
+                test,
+                clone,
+                &format!(r#"[{{"name": "a", "path": "{{dir}}/{path}"}}]"#),
+            )
+        };
+        assert!(at("top", "clone").unwrap().is_some());
+        let error = format!("{:#}", at("sub", "clone/sub").unwrap_err());
+        assert!(
+            error.contains("is not the top of a git repository"),
+            "{error}"
+        );
+        let error = format!("{:#}", at("plain", "").unwrap_err());
+        assert!(error.contains("not the top"), "outside any clone: {error}");
     }
 
     #[test]
