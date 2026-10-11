@@ -18,7 +18,6 @@ use crate::{
     app::App,
     modes,
     repos::Repo,
-    sandbox,
     session::{Outcome, Surface, Update, choice},
     store::SessionRec,
     worktree,
@@ -153,18 +152,17 @@ impl Surface for Linear {
             .and_then(|m| Some((m.name.as_str(), m.model.clone()?)));
         let (models, note) = choice::for_turn(app, key, &rec, mode_model);
         let plugin_dirs = app.cfg.plugin_dirs();
-        let mut readable = vec![workspace.clone(), repo.path.clone()];
+        let mut readable = vec![repo.path.clone()];
         readable.extend(plugin_dirs.iter().cloned());
         readable.extend(app.github.as_ref().map(|g| g.bin_dir.clone()));
         let mut mcp_configs = vec![mcp::config(app, key)?];
         mcp_configs.extend(app.cfg.mcp_configs.iter().cloned());
         mcp_configs.extend(repo.mcp_configs.iter().cloned());
         Ok(Launch {
-            settings: sandbox::settings(
-                &app.home_dir,
+            settings: app.agent_settings(
+                &workspace,
                 &readable,
                 mode.as_ref().map_or(&[], |m| &m.deny),
-                &app.cfg.sandbox,
             ),
             cwd: workspace,
             system_prompt,
