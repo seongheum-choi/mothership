@@ -43,9 +43,10 @@ impl Linear {
     }
 }
 
-/// The branch a session was last on, to cut its worktree again on: closing the issue or
-/// deleting the directory removes a worktree, never its branch, and the session may have moved
-/// off Linear's suggested name (a stacked branch).
+/// The branch the session's worktree was first cut on, to cut it again on: closing the issue or
+/// deleting the directory removes a worktree, never its branch. A branch the agent moved to
+/// later, such as a stacked one, is not recorded, since cutting that one again would start the
+/// session from the wrong base.
 fn recorded_branch(rec: &SessionRec) -> Option<&str> {
     rec.branch.as_deref().filter(|b| !b.is_empty())
 }
@@ -60,8 +61,8 @@ mod tests {
         assert_eq!(recorded_branch(&rec), None, "first turn: ask Linear");
         rec.branch = Some(String::new());
         assert_eq!(recorded_branch(&rec), None);
-        rec.branch = Some("sh-7-stacked".into());
+        rec.branch = Some("nate/sh-7".into());
         rec.workspace = Some(PathBuf::from("/gone/SH-7"));
-        assert_eq!(recorded_branch(&rec), Some("sh-7-stacked"));
+        assert_eq!(recorded_branch(&rec), Some("nate/sh-7"));
     }
 }
