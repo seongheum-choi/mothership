@@ -705,8 +705,9 @@ async fn linear_token_is_refreshed_at_startup(ctx: Ctx) -> Result<()> {
     Ok(())
 }
 
-/// With two repositories, `[repo=…]` in the issue picks one; without it the session asks, and
-/// the reply both picks one and runs the first prompt that was kept.
+/// With two repositories, `[repo=…]` in the issue picks one; without it the session asks,
+/// keeps replies that do not pick one, and the reply that does runs the first prompt with all
+/// of them.
 async fn linear_routes_between_two_repositories(ctx: Ctx) -> Result<()> {
     let setup = Setup {
         repos: vec![("app", "o/app"), ("lib", "o/lib")],
@@ -740,6 +741,12 @@ async fn linear_routes_between_two_repositories(ctx: Ctx) -> Result<()> {
         "{question}"
     );
     ensure!(
+        h.linear(prompted("s4", &untagged, "It is the login page."))
+            .await?
+            == 200
+    );
+    h.activity("s4", "elicitation", 2).await?;
+    ensure!(
         h.prompts_with("context of SH-4").is_empty(),
         "no turn before routing"
     );
@@ -758,7 +765,7 @@ async fn linear_routes_between_two_repositories(ctx: Ctx) -> Result<()> {
     let call = h.prompt_with("[repo=app] please").await?;
     let prompt = call["prompt"].as_str().unwrap_or_default();
     ensure!(
-        prompt == "context of SH-4\n\n[repo=app] please",
+        prompt == "context of SH-4\n\nIt is the login page.\n\n[repo=app] please",
         "{prompt:?}"
     );
     let cwd = Path::new(call["cwd"].as_str().context("cwd")?);

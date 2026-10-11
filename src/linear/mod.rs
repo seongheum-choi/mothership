@@ -9,7 +9,9 @@ mod oauth;
 mod pin;
 mod pr;
 mod routing;
+mod start;
 mod webhook;
+mod worktree;
 
 pub use mcp::config as mcp_config;
 
@@ -17,10 +19,7 @@ use crate::{
     agent::Launch,
     app::App,
     modes,
-    repos::Repo,
     session::{Outcome, Surface, Update, choice},
-    store::SessionRec,
-    worktree,
 };
 use activity::{prefixed, thought, tool_activity};
 use anyhow::{Context, Result, bail};
@@ -31,7 +30,6 @@ use axum::{
 use pin::Workspace;
 use std::{
     collections::HashMap,
-    path::PathBuf,
     sync::{Arc, Mutex},
 };
 
@@ -51,41 +49,6 @@ pub fn routes() -> Router<Arc<App>> {
         .route("/webhook", post(webhook::webhook)) // legacy path some Linear apps are configured with
         .route("/oauth/authorize", get(oauth::authorize))
         .route("/callback", get(oauth::callback))
-}
-
-impl Linear {
-    /// The issue's worktree of a git repository and the branch it is on, created on the
-    /// first turn and remembered after that.
-    async fn worktree(
-        &self,
-        app: &App,
-        key: &str,
-        rec: &SessionRec,
-        repo: &Repo,
-    ) -> Result<(PathBuf, String)> {
-        if let (Some(w), Some(b)) = (&rec.workspace, &rec.branch)
-            && w.exists()
-        {
-            return Ok((w.clone(), b.clone()));
-        }
-        let branch = match self.branch_name(app, &rec.issue_id).await {
-            Ok(b) => b,
-            Err(e) => {
-                tracing::warn!("[{key}] branchName lookup failed ({e:#}), using identifier");
-                rec.identifier.to_lowercase()
-            }
-        };
-        let dir = app.cfg.worktrees_dir.join(&rec.identifier);
-        let workspace = worktree::ensure(&repo.path, &dir, &branch, &repo.base_branch).await?;
-        let branch = worktree::current_branch(&workspace).await.unwrap_or(branch);
-        app.store.update(|s| {
-            if let Some(r) = s.sessions.get_mut(key) {
-                r.workspace = Some(workspace.clone());
-                r.branch = Some(branch.clone());
-            }
-        });
-        Ok((workspace, branch))
-    }
 }
 
 impl Surface for Linear {
@@ -223,6 +186,7 @@ fn work_instructions(mode: Option<&modes::Mode>, delivery: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::repos::Repo;
 
     #[test]
     fn delivery_instructions_come_after_the_mode() {

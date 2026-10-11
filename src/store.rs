@@ -36,7 +36,8 @@ pub struct SessionRec {
     pub workspace: Option<PathBuf>,
     pub branch: Option<String>,
     pub claude_session_id: Option<String>,
-    /// Linear: the first prompt of a session still waiting to be told its repository.
+    /// Linear: the first prompt and every reply since, kept while the session waits for its
+    /// repository, mode or a corrected directive; run together once it can start.
     pub pending_prompt: Option<String>,
     /// Zulip: id of the newest topic message the agent has already seen.
     pub cursor: Option<u64>,

@@ -95,7 +95,7 @@ State (Linear tokens, and each conversation's repository, workspace and Claude s
 
 ### Repositories
 
-`<home>/repos.json` lists the repositories one mothership works on. Without it, `REPO_PATH` and `BASE_BRANCH` describe a single repository, named after its directory. One mothership serves one Linear workspace, so each instance (each `MOTHERSHIP_HOME`) has its own `repos.json`. The file is read at startup, and a mistake in it stops startup: overlapping or nested paths, a `git` entry whose path is not a git repository, a missing `prompt_file` or `mcp_configs` file.
+`<home>/repos.json` lists the repositories one mothership works on. Without it, `REPO_PATH` and `BASE_BRANCH` describe a single repository, named after its directory. One mothership serves one Linear workspace, so each instance (each `MOTHERSHIP_HOME`) has its own `repos.json`. The file is read at startup, and a mistake in it stops startup: overlapping or nested paths, a `git` entry whose path is not the top of a git repository, a missing `prompt_file` or `mcp_configs` file.
 
 ```json
 [
@@ -130,11 +130,13 @@ A Linear session picks its repository when it starts and keeps it for every late
 3. The issue's project
 4. The issue's team
 
+A directive inside backticks or a fenced code block is quoted, not given, and is ignored; this holds for `[model=…]` and `[effort=…]` too.
+
 With a single repository none of this is read: every session works there, as before `repos.json`.
 
-The project, team and labels come from a GraphQL lookup, because webhook payloads carry none of them. The session's first thought names the repository and the rule. If no rule decides, a `[repo=…]` or `repo:` label names an unknown repository, the lookup fails, or one rule points at two repositories, the session asks and waits. A reply carrying `[repo=<name>]` starts the work, with the issue context it was created with; it is read before the description, so it also corrects a wrong `[repo=…]` there.
+The project, team and labels come from a GraphQL lookup, because webhook payloads carry none of them. The session's first thought names the repository and the rule. If no rule decides, a `[repo=…]` or `repo:` label names an unknown repository, the lookup fails, or one rule points at two repositories, the session asks and waits. Replies that do not settle it are kept. A reply carrying `[repo=<name>]` starts the work, with the issue context it was created with and every reply kept until then; it is read before the description, so it also corrects a wrong `[repo=…]` there.
 
-A session that started before `repos.json` keeps the repository its worktree was cut from. A session whose repository has been removed from `repos.json` stops with an error instead of starting over somewhere else.
+A session that started before `repos.json` keeps the repository its worktree was cut from; if that worktree is gone, it is routed like a new session and its worktree is cut again on the branch it was on. A session whose repository has been removed from `repos.json` stops with an error instead of starting over somewhere else.
 
 ### Modes
 

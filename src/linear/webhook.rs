@@ -4,19 +4,18 @@
 use super::{
     cleanup::{issue_change, on_issue_change},
     pin::admits,
-    routing::{Blocked, IssueLookup},
+    start::start_turn,
 };
 use crate::{
     app::App,
-    session::{Outcome, Surface, choice},
-    store::SessionRec,
+    session::{Outcome, Surface},
 };
 use axum::{
     body::Bytes,
     extract::State,
     http::{HeaderMap, StatusCode},
 };
-use serde_json::{Value, json};
+use serde_json::Value;
 use std::sync::Arc;
 
 /// `Linear-Signature` is hex(HMAC-SHA256(secret, raw body)). A missing `webhookTimestamp`,
@@ -123,76 +122,6 @@ async fn handle(app: Arc<App>, p: Value) {
     start_turn(&app, sid, issue, prompt, request).await;
 }
 
-/// Records the session, settles its repository and mode, then runs the prompt, or keeps it
-/// until a reply settles whatever is missing.
-async fn start_turn(
-    app: &Arc<App>,
-    sid: &str,
-    issue: &Value,
-    prompt: String,
-    request: Option<&str>,
-) {
-    let field = |k: &str| issue[k].as_str().unwrap_or_default().to_string();
-    app.store.update(|s| {
-        let rec = s.sessions.entry(sid.to_string()).or_default();
-        if rec.issue_id.is_empty() {
-            *rec = SessionRec {
-                issue_id: field("id"),
-                identifier: field("identifier"),
-                title: field("title"),
-                url: field("url"),
-                mode_pending: true,
-                ..std::mem::take(rec)
-            };
-        }
-        rec.prompted_at = crate::store::now_secs();
-        rec.closed = false;
-    });
-    let linear = &app.linear.surface;
-    let mut lookup = IssueLookup::new(issue["id"].as_str().unwrap_or_default());
-    let directives = choice::record(app, sid, request.unwrap_or_default());
-    let ready = match directives.map_err(Blocked::Stuck) {
-        Ok(()) => match linear
-            .choose_repo(app, sid, issue, request, &mut lookup)
-            .await
-        {
-            Ok(()) => linear.choose_mode(app, sid, &mut lookup).await,
-            blocked => blocked,
-        },
-        blocked => blocked,
-    };
-    if let Err(blocked) = ready {
-        // Keep Linear's issue context for the turn that runs once the session can start.
-        app.store.update(|s| {
-            if let Some(rec) = s.sessions.get_mut(sid) {
-                rec.pending_prompt.get_or_insert(prompt);
-            }
-        });
-        let content = match blocked {
-            Blocked::Ask(question) => {
-                tracing::info!("[{sid}] waiting: {question}");
-                json!({ "type": "elicitation", "body": question })
-            }
-            Blocked::Stuck(problem) => {
-                tracing::warn!("[{sid}] cannot start: {problem}");
-                json!({ "type": "error", "body": problem })
-            }
-        };
-        linear.activity(app, sid, content, false).await;
-        return;
-    }
-    let pending = app.store.update(|s| {
-        s.sessions
-            .get_mut(sid)
-            .and_then(|rec| rec.pending_prompt.take())
-    });
-    let prompt = match pending {
-        Some(first) => format!("{first}\n\n{prompt}"),
-        None => prompt,
-    };
-    app.linear.submit(app, sid, prompt, ());
-}
-
 /// Linear's own `promptContext` (issue, comments, guidance) when present, else a minimal one.
 fn initial_prompt(p: &Value) -> String {
     if let Some(ctx) = p["promptContext"].as_str() {
@@ -223,6 +152,7 @@ fn mention_request(p: &Value) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn signature() {
