@@ -301,6 +301,15 @@ fn deny_file(path: &Path) -> String {
     format!("Read(/{})", path.display())
 }
 
+/// The rule that keeps every file-editing tool out of a directory or a file.
+fn deny_edit_dir(path: &Path) -> String {
+    format!("Edit(/{}/**)", path.display())
+}
+
+fn deny_edit_file(path: &Path) -> String {
+    format!("Edit(/{})", path.display())
+}
+
 fn thoughts(h: &Harness, sid: &str) -> Vec<String> {
     h.activities(sid)
         .iter()
@@ -310,8 +319,9 @@ fn thoughts(h: &Harness, sid: &str) -> Vec<String> {
 }
 
 /// Without a mode, the agent bypasses permission prompts on the configured models, and its
-/// settings deny reading everything in `HOME` but the worktree and the main clone, and run
-/// Bash in Claude Code's OS sandbox.
+/// settings deny reading everything in `HOME` but the worktree and the main clone, deny
+/// editing everything in `MOTHERSHIP_HOME` but the worktree, and run Bash in Claude Code's
+/// OS sandbox.
 async fn linear_agent_is_launched_in_the_sandbox(ctx: Ctx) -> Result<()> {
     let h = Harness::start(&ctx, Setup::default()).await?;
     let issue = issue(10, "Fix it.");
@@ -322,11 +332,14 @@ async fn linear_agent_is_launched_in_the_sandbox(ctx: Ctx) -> Result<()> {
     let args = argv(&h.prompt_with("context of SH-10").await?);
     let state = h.home.join(".mothership");
     // `HOME` holds `.mothership` and `src/app`; the worktree is `.mothership/worktrees/SH-10`.
+    let mut deny = vec![
+        deny_dir(&state.join("mcp")),
+        deny_file(&state.join("state.json")),
+    ];
+    deny.push(deny_edit_dir(&state.join("mcp")));
+    deny.push(deny_edit_file(&state.join("state.json")));
     let settings = json!({
-        "permissions": {"deny": [
-            deny_dir(&state.join("mcp")),
-            deny_file(&state.join("state.json")),
-        ]},
+        "permissions": {"deny": deny},
         "sandbox": {
             "enabled": true,
             "allowUnsandboxedCommands": false,
@@ -473,13 +486,15 @@ async fn linear_mode_from_labels_shapes_the_agent(ctx: Ctx) -> Result<()> {
     ensure!(flag(&args, "--fallback-model")? == "sonnet", "{args:#?}");
     let state = h.home.join(".mothership");
     let deny = deny_rules(&args)?;
-    let expected = [
+    let mut expected = vec![
         deny_dir(&state.join("mcp")),
         deny_dir(&state.join("modes")),
         deny_file(&state.join("state.json")),
-        "Edit".to_string(),
-        "Bash(git push:*)".to_string(),
     ];
+    expected.push(deny_edit_dir(&state.join("mcp")));
+    expected.push(deny_edit_dir(&state.join("modes")));
+    expected.push(deny_edit_file(&state.join("state.json")));
+    expected.extend(["Edit".to_string(), "Bash(git push:*)".to_string()]);
     ensure!(deny == expected, "deny {deny:#?}\nexpected {expected:#?}");
     let system_prompt = flag(&args, "--append-system-prompt")?;
     ensure!(

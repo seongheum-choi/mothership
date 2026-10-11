@@ -5,12 +5,11 @@ use crate::{
     agent::Launch,
     app::App,
     repos::Repo,
-    sandbox,
     session::{Outcome, Surface, Update, choice},
     store::file_name,
 };
 use anyhow::{Context, Result};
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
 
 /// Zulip rejects longer messages (limit 10000).
 const MAX_REPLY: usize = 9_500;
@@ -42,8 +41,7 @@ fn launch(app: &App, key: &str) -> Result<Launch> {
         repos = repo_list(&repos),
     );
     let plugin_dirs = app.cfg.plugin_dirs();
-    let mut readable = vec![workspace.clone()];
-    readable.extend(repos.iter().map(|r| r.path.clone()));
+    let mut readable: Vec<PathBuf> = repos.iter().map(|r| r.path.clone()).collect();
     readable.extend(plugin_dirs.iter().cloned());
     let read_only: Vec<String> = repos
         .iter()
@@ -53,7 +51,7 @@ fn launch(app: &App, key: &str) -> Result<Launch> {
     mcp_configs.extend(app.cfg.mcp_configs.iter().cloned());
     let (models, note) = choice::for_turn(app, key, &rec, None);
     Ok(Launch {
-        settings: sandbox::settings(&app.home_dir, &readable, &read_only, &app.cfg.sandbox),
+        settings: app.agent_settings(&workspace, &readable, &read_only),
         cwd: workspace,
         system_prompt,
         resume: rec.claude_session_id,

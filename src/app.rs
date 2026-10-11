@@ -5,6 +5,7 @@ use crate::{
     github::GitHub,
     linear::Linear,
     repos::Repo,
+    sandbox,
     session::Registry,
     store::Store,
     zulip::Zulip,
@@ -138,6 +139,18 @@ impl App {
             ));
         }
         env
+    }
+
+    /// The `--settings` for an agent working in `workspace`: see [`sandbox::settings`].
+    pub fn agent_settings(&self, workspace: &Path, readable: &[PathBuf], deny: &[String]) -> Value {
+        sandbox::settings(
+            &self.home_dir,
+            &self.cfg.home,
+            workspace,
+            readable,
+            deny,
+            &self.cfg.sandbox,
+        )
     }
 
     fn busy(&self) -> bool {
