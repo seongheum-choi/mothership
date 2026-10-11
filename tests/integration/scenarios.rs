@@ -750,6 +750,11 @@ async fn linear_routes_between_two_repositories(ctx: Ctx) -> Result<()> {
             == 200
     );
     h.activity("s4", "response", 1).await?;
+    let thought = h.activity("s4", "thought", 1).await?;
+    ensure!(
+        body(&thought) == "Working in `app` (`[repo=app]` in your message).",
+        "{thought}"
+    );
     let call = h.prompt_with("[repo=app] please").await?;
     let prompt = call["prompt"].as_str().unwrap_or_default();
     ensure!(
