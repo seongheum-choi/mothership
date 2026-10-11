@@ -23,14 +23,14 @@ One file, one responsibility. A file's logic, everything before `#[cfg(test)]` m
 | `main.rs` | Startup |
 | `app.rs` | Shared state, HTTP router, agent environment |
 | `config/` | Settings: `Config`, its loading and derived paths (`mod.rs`), the environment over `<home>/.env` and list formats (`vars.rs`), per-surface settings (`surfaces.rs`), the model, fallback and effort defaults (`model.rs`), the repository list and model defaults reloaded when `repos.json` or `.env` changes (`reload.rs`) |
-| `repos/` | Repositories: `Repo` and lookups by name or clone (`mod.rs`), reading and validating `<home>/repos.json` (`load.rs`), which repository a Linear issue belongs to (`select.rs`) |
+| `repos/` | Repositories: `Repo` and lookups by name or clone (`mod.rs`), reading and validating `<home>/repos.json` (`load.rs`), each entry's directory, clone and files on disk (`disk.rs`), which repository a Linear issue belongs to (`select.rs`) |
 | `modes/` | Working modes: `Mode`, loading `<home>/modes/*.md` and which mode a Linear issue's labels pick (`mod.rs`), the mode file's frontmatter and its YAML subset (`frontmatter.rs`) |
 | `directive.rs` | `[key=value]` directives in issue text and messages |
 | `store.rs` | `state.json` and atomic private writes |
 | `signature.rs` | Webhook signatures: HMAC-SHA256 hex, constant-time compare, strict hex decode |
 | `session/` | Conversations: `Surface` trait, updates and the worker `Registry` (`mod.rs`), one conversation's worker and its turn loop (`turn.rs`), a turn's model and effort from directives, mode and defaults (`choice.rs`), agent events turned into surface updates and the progress file tail (`relay.rs`) |
 | `agent.rs` | Claude Code process and its stream-json protocol |
-| `linear/` | Linear surface: `Surface` impl and routes (`mod.rs`), webhook intake (`webhook.rs`), workspace pinning (`pin.rs`), repository and mode choice (`routing.rs`), closed-issue cleanup (`cleanup.rs`), activity rendering (`activity.rs`), OAuth install (`oauth.rs`), GraphQL and token refresh (`api.rs`), pull request links on the session (`pr.rs`), Linear MCP config (`mcp.rs`) |
+| `linear/` | Linear surface: `Surface` impl and routes (`mod.rs`), webhook intake (`webhook.rs`), starting or holding a turn (`start.rs`), workspace pinning (`pin.rs`), repository and mode choice (`routing.rs`), the issue's worktree (`worktree.rs`), closed-issue cleanup (`cleanup.rs`), activity rendering (`activity.rs`), OAuth install (`oauth.rs`), GraphQL and token refresh (`api.rs`), pull request links on the session (`pr.rs`), Linear MCP config (`mcp.rs`) |
 | `zulip/` | Zulip surface: webhook intake and the `Ticket` (`mod.rs`), conversation keys, topic context and mention stripping (`conversation.rs`), agent launch and posting the answer (`surface.rs`), REST client (`api.rs`) |
 | `github/` | GitHub surface: `GitHub` state and webhook intake (`mod.rs`), what an event says and its prompt (`feedback.rs`), which session it continues (`route.rs`), delivery dedup and hourly prompt cap (`guard.rs`), `gh-reply` and origin resolution (`reply.rs`) |
 | `sessions.rs` | Session lookups shared by surfaces: a pre-routing session's repository, the session that owns a branch |
