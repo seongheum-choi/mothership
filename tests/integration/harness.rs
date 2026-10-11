@@ -395,9 +395,25 @@ fn signal(which: &str, pid: u32) -> Result<()> {
     Ok(())
 }
 
+/// Repository locations a pre-commit hook exports; inherited, they point git at the outer
+/// repository instead of `dir`.
+const GIT_LOCATION_VARS: [&str; 7] = [
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_INDEX_FILE",
+    "GIT_PREFIX",
+    "GIT_COMMON_DIR",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+];
+
 /// Runs git with no user or system configuration, so local signing or hooks stay out.
 pub fn git(dir: &Path, args: &[&str]) -> Result<String> {
-    let out = std::process::Command::new("git")
+    let mut cmd = std::process::Command::new("git");
+    for var in GIT_LOCATION_VARS {
+        cmd.env_remove(var);
+    }
+    let out = cmd
         .arg("-C")
         .arg(dir)
         .args(["-c", "user.name=Test", "-c", "user.email=test@example.com"])
