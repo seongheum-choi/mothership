@@ -19,8 +19,11 @@ impl Ref {
 /// What an issue says about where it belongs.
 #[derive(Default)]
 pub struct IssueFacts {
-    /// Text searched for `[repo=<name>]`: the issue description and the prompt.
-    pub texts: Vec<String>,
+    /// The @mention or reply that started this turn, searched for `[repo=<name>]` first so a
+    /// reply corrects a wrong one in the description.
+    pub request: Option<String>,
+    /// The issue description, searched for `[repo=<name>]` next.
+    pub description: Option<String>,
     pub labels: Vec<Ref>,
     pub project: Option<Ref>,
     pub team: Option<Ref>,
@@ -35,8 +38,8 @@ pub struct Choice<'a> {
     pub reason: String,
 }
 
-/// Picks the repository for an issue: a `[repo=<name>]` directive (the first text that has
-/// one wins), then labels, then the project, then the team. With a single repository there is
+/// Picks the repository for an issue: a `[repo=<name>]` directive (the request's before the
+/// description's), then labels, then the project, then the team. With a single repository there is
 /// nothing to choose, and the issue is not read at all. The error is a question for the
 /// person who started the session.
 pub fn select<'a>(repos: &'a [Repo], facts: &IssueFacts) -> Result<Choice<'a>, String> {
@@ -47,11 +50,16 @@ pub fn select<'a>(repos: &'a [Repo], facts: &IssueFacts) -> Result<Choice<'a>, S
         });
     }
     let reply = "Reply with `[repo=<name>]` to choose one.";
-    if let Some(name) = facts.texts.iter().find_map(|t| directive(t)) {
+    let in_request = facts.request.as_deref().and_then(directive);
+    let found = in_request.map(|name| (name, "your message")).or_else(|| {
+        let name = facts.description.as_deref().and_then(directive)?;
+        Some((name, "the issue"))
+    });
+    if let Some((name, source)) = found {
         return by_name(repos, name)
             .map(|repo| Choice {
                 repo,
-                reason: format!("`[repo={name}]` in the issue"),
+                reason: format!("`[repo={name}]` in {source}"),
             })
             .ok_or_else(|| {
                 format!(
@@ -184,7 +192,7 @@ mod tests {
         // An issue about routing may well mention another repository; one repository means
         // there is nothing to route, as before repos.json.
         let facts = IssueFacts {
-            texts: vec!["Explain `[repo=other]`".into()],
+            description: Some("Explain [repo=other]".into()),
             labels: labels(&["repo:other"]),
             lookup_failed: true,
             ..IssueFacts::default()
@@ -215,7 +223,7 @@ mod tests {
         // Directive beats labels, labels beat project, project beats team.
         assert_eq!(
             pick(IssueFacts {
-                texts: vec!["Fix it. [repo=vault]".into()],
+                description: Some("Fix it. [repo=vault]".into()),
                 labels: labels(&["backend"]),
                 ..IssueFacts::default()
             }),
@@ -264,11 +272,12 @@ mod tests {
         );
         assert_eq!(
             pick(IssueFacts {
-                texts: vec!["[repo=app]".into(), "Fix it. [repo=nope]".into()],
+                request: Some("[repo=app]".into()),
+                description: Some("Fix it. [repo=nope]".into()),
                 ..IssueFacts::default()
             }),
-            Ok(("app", "`[repo=app]` in the issue".into())),
-            "a reply corrects the description"
+            Ok(("app", "`[repo=app]` in your message".into())),
+            "a reply corrects the description, and says so"
         );
         // Two labels for the same repository are not a conflict.
         assert_eq!(
@@ -287,7 +296,7 @@ mod tests {
         assert!(ask(IssueFacts::default()).contains("`repo:<name>` label"));
         assert!(
             ask(IssueFacts {
-                texts: vec!["[repo=nope]".into()],
+                request: Some("[repo=nope]".into()),
                 ..IssueFacts::default()
             })
             .contains("`[repo=nope]` names no repository I know. Reply with `[repo=<name>]`")

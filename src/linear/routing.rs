@@ -168,19 +168,14 @@ impl Linear {
 }
 
 /// What routing looks at: the `issue_routing` result (`None` when the lookup failed), with the
-/// webhook's description when the lookup has none. The request (the @mention or reply) comes
-/// first, so a reply's `[repo=…]` corrects a wrong one in the description.
+/// webhook's description when the lookup has none, and the request (the @mention or reply).
 fn issue_facts(routing: Option<&Value>, issue: &Value, request: Option<&str>) -> IssueFacts {
     let mut facts = routing.map(routing_facts).unwrap_or_default();
     facts.lookup_failed = routing.is_none();
-    if facts.texts.is_empty()
-        && let Some(description) = issue["description"].as_str()
-    {
-        facts.texts.push(description.to_string());
+    if facts.description.is_none() {
+        facts.description = issue["description"].as_str().map(String::from);
     }
-    if let Some(request) = request {
-        facts.texts.insert(0, request.to_string());
-    }
+    facts.request = request.map(String::from);
     facts
 }
 
@@ -196,11 +191,8 @@ fn routing_facts(issue: &Value) -> IssueFacts {
         })
     };
     IssueFacts {
-        texts: issue["description"]
-            .as_str()
-            .map(String::from)
-            .into_iter()
-            .collect(),
+        request: None,
+        description: issue["description"].as_str().map(String::from),
         labels: issue["labels"]["nodes"]
             .as_array()
             .into_iter()
@@ -227,7 +219,7 @@ mod tests {
             "labels": {"nodes": [{"id": "l1", "name": "backend"}]},
         });
         let facts = routing_facts(&issue);
-        assert_eq!(facts.texts, ["Do it [repo=app]"]);
+        assert_eq!(facts.description.as_deref(), Some("Do it [repo=app]"));
         let project = facts.project.unwrap();
         assert_eq!(
             (project.name.as_str(), project.aliases),
@@ -241,20 +233,22 @@ mod tests {
         assert_eq!(facts.labels[0].aliases, ["l1"]);
 
         let none = routing_facts(&json!({"project": null, "labels": {"nodes": []}}));
-        assert!(none.texts.is_empty() && none.labels.is_empty() && none.project.is_none());
+        assert!(none.description.is_none() && none.labels.is_empty() && none.project.is_none());
         assert!(routing_facts(&Value::Null).team.is_none());
     }
 
     #[test]
-    fn request_is_searched_before_the_description() {
+    fn request_is_kept_apart_from_the_description() {
         let issue = json!({"description": "webhook copy"});
         let looked_up = json!({"description": "Fix it [repo=nope]"});
         let facts = issue_facts(Some(&looked_up), &issue, Some("[repo=app]"));
-        assert_eq!(facts.texts, ["[repo=app]", "Fix it [repo=nope]"]);
+        assert_eq!(facts.request.as_deref(), Some("[repo=app]"));
+        assert_eq!(facts.description.as_deref(), Some("Fix it [repo=nope]"));
         assert!(!facts.lookup_failed);
 
         let facts = issue_facts(None, &issue, None);
-        assert_eq!(facts.texts, ["webhook copy"]);
+        assert_eq!(facts.request, None);
+        assert_eq!(facts.description.as_deref(), Some("webhook copy"));
         assert!(facts.lookup_failed);
     }
 }
