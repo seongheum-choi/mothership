@@ -8,7 +8,7 @@ use crate::{
     sessions,
 };
 use serde_json::Value;
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
 
 /// Why a session cannot start its turn yet.
 pub(super) enum Blocked {
@@ -78,7 +78,7 @@ impl Linear {
                 ))),
             };
         }
-        if let Some(workspace) = workspace {
+        if let Some(workspace) = standing_worktree(workspace) {
             // A session from before repository routing: it stays where its worktree is.
             let Some(repo) = sessions::workspace_repo(&repos, &workspace).await else {
                 return Err(Blocked::Stuck(format!(
@@ -167,6 +167,13 @@ impl Linear {
     }
 }
 
+/// The worktree a session from before repository routing still stands in. One that is gone
+/// says nothing about its repository, so the session is routed like a new one, and its
+/// worktree is cut again on its recorded branch.
+fn standing_worktree(workspace: Option<PathBuf>) -> Option<PathBuf> {
+    workspace.filter(|w| w.exists())
+}
+
 /// What routing looks at: the `issue_routing` result (`None` when the lookup failed), with the
 /// webhook's description when the lookup has none, and the request (the @mention or reply).
 fn issue_facts(routing: Option<&Value>, issue: &Value, request: Option<&str>) -> IssueFacts {
@@ -235,6 +242,17 @@ mod tests {
         let none = routing_facts(&json!({"project": null, "labels": {"nodes": []}}));
         assert!(none.description.is_none() && none.labels.is_empty() && none.project.is_none());
         assert!(routing_facts(&Value::Null).team.is_none());
+    }
+
+    #[test]
+    fn a_missing_worktree_does_not_pin_the_repository() {
+        let here = std::env::current_dir().unwrap();
+        assert_eq!(standing_worktree(Some(here.clone())), Some(here));
+        assert_eq!(
+            standing_worktree(Some(PathBuf::from("/nonexistent/worktrees/SH-1"))),
+            None
+        );
+        assert_eq!(standing_worktree(None), None);
     }
 
     #[test]

@@ -1,6 +1,7 @@
 //! The repositories one mothership works on (`<home>/repos.json`), and which one a Linear
 //! issue belongs to.
 
+mod disk;
 mod load;
 mod select;
 
