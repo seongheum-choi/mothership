@@ -40,6 +40,19 @@ pub async fn branch_repo<'a>(repos: &'a [Repo], branch: &str) -> Option<&'a Repo
     }
 }
 
+/// The repository of a session that recorded none, as Linear settles it: the one its worktree
+/// was cut from, or once that worktree is gone, the one that has its branch.
+async fn pre_routing_repo<'a>(repos: &'a [Repo], rec: &SessionRec) -> Option<&'a Repo> {
+    if let Some(workspace) = rec.workspace.as_deref().filter(|w| w.exists()) {
+        return workspace_repo(repos, workspace).await;
+    }
+    let from_branch = match rec.branch.as_deref().filter(|b| !b.is_empty()) {
+        Some(branch) => branch_repo(repos, branch).await,
+        None => None,
+    };
+    from_branch.or(existing_repo(repos, None))
+}
+
 /// Records that `sid` was just prompted, so it wins over older sessions on its branch.
 pub fn mark_prompted(store: &Store, sid: &str) {
     store.update(|s| {
@@ -58,7 +71,7 @@ pub enum Found {
 }
 
 /// The session that owns `branch` in one of `names` (repository names); see [`find`]. A
-/// pre-routing session's repository is worked out from its worktree, and recorded for the
+/// pre-routing session's repository is worked out from its worktree or branch, and recorded for the
 /// session found, as Linear does on its next turn; the turn the caller starts needs it.
 pub async fn for_branch(
     store: &Store,
@@ -78,12 +91,8 @@ pub async fn for_branch(
             .collect()
     });
     for (_, rec) in &mut candidates {
-        if rec.repo.is_none()
-            && let Some(workspace) = &rec.workspace
-        {
-            rec.repo = workspace_repo(repos, workspace)
-                .await
-                .map(|r| r.name.clone());
+        if rec.repo.is_none() {
+            rec.repo = pre_routing_repo(repos, rec).await.map(|r| r.name.clone());
         }
     }
     let found = find(
