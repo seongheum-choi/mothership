@@ -30,7 +30,7 @@ pub async fn ensure(repo: &Path, dir: &Path, branch: &str, base: &str) -> Result
         bail!("{} exists but is not a git worktree", dir.display());
     }
     let path = dir.to_str().context("worktree path is not UTF-8")?;
-    if has_ref(repo, &format!("refs/heads/{branch}")).await {
+    if has_branch(repo, branch).await {
         git(repo, &["worktree", "add", path, branch]).await?;
     } else if has_ref(repo, &format!("refs/remotes/origin/{branch}")).await {
         git(
