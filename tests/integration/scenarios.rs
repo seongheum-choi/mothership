@@ -1,7 +1,7 @@
 //! The scenarios: each starts its own mothership and drives it through webhooks.
 
 use crate::{
-    fake::{HANG, HOLD, PROGRESS, PROGRESS_LINE, RELEASE},
+    fake::{CODEX_RELEASE, CODEX_SCRIPT, HANG, HOLD, PROGRESS, PROGRESS_LINE, RELEASE},
     harness::{Ctx, Harness, Setup, ZULIP_TOKEN, create_repo, eventually, exited, git},
     mock::{self, ORG},
 };
@@ -52,6 +52,8 @@ pub const ALL: &[(&str, Scenario)] = scenarios![
     unknown_effort_is_refused,
     instance_effort_applies_without_a_restart,
     zulip_effort_from_the_message,
+    codex_runner_answers_with_thoughts_and_a_response,
+    codex_runner_resumes_the_thread_with_a_prompt_from_mid_turn,
 ];
 
 /// An issue as Linear's API returns it; the webhook carries a subset.
@@ -1374,5 +1376,117 @@ async fn zulip_effort_from_the_message(ctx: Ctx) -> Result<()> {
     })
     .await?;
     ensure!(h.prompts_with("another").is_empty());
+    Ok(())
+}
+
+/// What the fake codex plays back: a reasoning summary, a shell command and the answer.
+const CODEX_TURN: &str = r#"{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_0","type":"reasoning","text":"Looking into it."}}
+{"type":"item.started","item":{"id":"item_1","type":"command_execution","command":"ls","aggregated_output":"","exit_code":null,"status":"in_progress"}}
+{"type":"item.completed","item":{"id":"item_1","type":"command_execution","command":"ls","aggregated_output":"","exit_code":0,"status":"completed"}}
+{"type":"item.completed","item":{"id":"item_2","type":"agent_message","text":"Done: {prompt}"}}
+{"type":"turn.completed","usage":{"input_tokens":10,"cached_input_tokens":0,"output_tokens":5,"reasoning_output_tokens":2}}
+"#;
+
+/// An instance whose `.env` says `AGENT_RUNNER=codex`, with the fake codex's script in place.
+async fn codex_harness(ctx: &Ctx) -> Result<Harness> {
+    let h = Harness::start(ctx, Setup::default()).await?;
+    std::fs::write(h.dir.join(CODEX_SCRIPT), CODEX_TURN)?;
+    std::fs::write(h.home.join(".mothership/.env"), "AGENT_RUNNER=codex\n")?;
+    Ok(h)
+}
+
+/// With `AGENT_RUNNER=codex` in `.env`, a turn runs `codex exec --json` in the worktree with the
+/// prompt on stdin; its reasoning becomes a thought, its command an action and its last message
+/// the response. `/status` names the runner.
+async fn codex_runner_answers_with_thoughts_and_a_response(ctx: Ctx) -> Result<()> {
+    let h = codex_harness(&ctx).await?;
+    ensure!(h.status().await?["runner"] == "codex");
+    let issue = issue(40, "Fix it.");
+    h.mock.add_issue(&issue);
+    ensure!(h.linear(created("s40", &issue, "context of SH-40")).await? == 200);
+
+    let response = h.activity("s40", "response", 1).await?;
+    ensure!(body(&response) == "Done: context of SH-40", "{response}");
+    let thoughts = thoughts(&h, "s40");
+    ensure!(
+        thoughts.contains(&"Looking into it.".into()),
+        "{thoughts:?}"
+    );
+    ensure!(
+        h.activities("s40")
+            .iter()
+            .any(|a| a["type"] == "action" && a["action"] == "Bash" && a["parameter"] == "ls"),
+        "command shown as an action"
+    );
+    let call = h.prompt_with("context of SH-40").await?;
+    ensure!(
+        call["tool"] == "codex" && call["resume"].is_null(),
+        "{call}"
+    );
+    ensure!(h.calls("claude").is_empty(), "{:?}", h.calls("claude"));
+    let args = argv(&call);
+    let cwd = h.home.join(".mothership/worktrees/SH-40");
+    ensure!(
+        args[..2] == ["exec", "--json"] && args.last().is_some_and(|a| a == "-"),
+        "{args:#?}"
+    );
+    ensure!(
+        flag(&args, "--cd")? == cwd.display().to_string(),
+        "{args:#?}"
+    );
+    ensure!(flag(&args, "--sandbox")? == "workspace-write", "{args:#?}");
+    ensure!(
+        args.iter()
+            .any(|a| a.starts_with("developer_instructions=") && a.contains("SH-40")),
+        "{args:#?}"
+    );
+    ensure!(
+        !args.contains(&"-m".to_string()),
+        "the Claude default model is not passed to Codex: {args:#?}"
+    );
+    let sessions = h.sessions()?;
+    ensure!(
+        sessions["s40"]["agent_session_id"] == format!("thread-{}", call["pid"])
+            && sessions["s40"]["agent_runner"] == "codex",
+        "{sessions}"
+    );
+    Ok(())
+}
+
+/// `codex exec` takes no input after its prompt, so a reply that arrives mid-turn waits for the
+/// turn to end and then starts the next one, which resumes the first turn's thread.
+async fn codex_runner_resumes_the_thread_with_a_prompt_from_mid_turn(ctx: Ctx) -> Result<()> {
+    let h = codex_harness(&ctx).await?;
+    let issue = issue(41, "Hold on.");
+    h.mock.add_issue(&issue);
+    let context = format!("context of SH-41 {HOLD}");
+    ensure!(h.linear(created("s41", &issue, &context)).await? == 200);
+    let first = h.prompt_with(&context).await?;
+    ensure!(h.linear(prompted("s41", &issue, "and the tests")).await? == 200);
+    // The reply is queued shortly after it is logged.
+    h.logged(r#"[s41] linear "prompted""#).await?;
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    ensure!(
+        h.prompts_with("and the tests").is_empty(),
+        "nothing reaches the running codex"
+    );
+    std::fs::write(h.dir.join(CODEX_RELEASE), "")?;
+
+    let response = h.activity("s41", "response", 1).await?;
+    ensure!(body(&response) == format!("Done: {context}"), "{response}");
+    let second = h.prompt_with("and the tests").await?;
+    let thread = format!("thread-{}", first["pid"]);
+    ensure!(second["resume"] == thread, "{second}");
+    ensure!(flag(&argv(&second), "resume")? == thread);
+    ensure!(second["pid"] != first["pid"], "a new process");
+    let response = h.activity("s41", "response", 2).await?;
+    ensure!(body(&response) == "Done: and the tests", "{response}");
+    ensure!(
+        thoughts(&h, "s41")
+            .iter()
+            .all(|t| t != "Got it, adding that to the current work."),
+        "not noted as joining the running turn"
+    );
     Ok(())
 }

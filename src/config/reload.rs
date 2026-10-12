@@ -1,10 +1,10 @@
 //! Settings that change without a restart: the repository list, re-read from `<home>/repos.json`
 //! (or `REPO_PATH`/`BASE_BRANCH`) when that file or `<home>/.env` has a new modification time,
-//! and the model defaults from `.env`. Any other `.env` key is read once at startup, so a change
+//! and the runner and model defaults from `.env`. Any other `.env` key is read once at startup, so a change
 //! to it is only logged.
 
 use super::{model::ModelDefaults, vars::Vars};
-use crate::repos::Repo;
+use crate::{agent::Runner, repos::Repo};
 use anyhow::Result;
 use std::{
     collections::HashMap,
@@ -17,6 +17,7 @@ use std::{
 const HOT_KEYS: &[&str] = &[
     "REPO_PATH",
     "BASE_BRANCH",
+    "AGENT_RUNNER",
     "CLAUDE_MODEL",
     "CLAUDE_FALLBACK_MODEL",
     "CLAUDE_EFFORT",
@@ -49,12 +50,13 @@ struct Seen {
     env: HashMap<String, String>,
 }
 
-/// The repository list in effect, replaced whole so a turn keeps the one it started with, and
-/// the model defaults.
+/// The repository list in effect, replaced whole so a turn keeps the one it started with, the
+/// runner and the model defaults.
 pub struct Live {
     home: PathBuf,
     user_home: PathBuf,
     repos: RwLock<Arc<Vec<Repo>>>,
+    runner: RwLock<Runner>,
     models: RwLock<ModelDefaults>,
     seen: Mutex<Seen>,
 }
@@ -69,6 +71,7 @@ impl Live {
             home: home.to_path_buf(),
             user_home: user_home.to_path_buf(),
             repos: RwLock::new(Arc::new(repos)),
+            runner: RwLock::new(runner(&vars)),
             models: RwLock::new(ModelDefaults::from_vars(&vars)),
             seen: Mutex::new(Seen {
                 stamps,
@@ -79,6 +82,10 @@ impl Live {
 
     pub fn repos(&self) -> Arc<Vec<Repo>> {
         self.repos.read().expect("repository list poisoned").clone()
+    }
+
+    pub fn runner(&self) -> Runner {
+        *self.runner.read().expect("runner poisoned")
     }
 
     pub fn models(&self) -> ModelDefaults {
@@ -104,6 +111,13 @@ impl Live {
             );
         }
         seen.env.clone_from(vars.file());
+        let runner = runner(&vars);
+        let mut current = self.runner.write().expect("runner poisoned");
+        if *current != runner {
+            tracing::info!("settings: runner now {runner}");
+            *current = runner;
+        }
+        drop(current);
         let models = ModelDefaults::from_vars(&vars);
         let mut current = self.models.write().expect("model defaults poisoned");
         if *current != models {
@@ -133,6 +147,17 @@ impl Live {
         );
         Some(current.clone())
     }
+}
+
+/// `AGENT_RUNNER`; anything but `claude` or `codex` is warned about and runs Claude Code.
+fn runner(vars: &Vars) -> Runner {
+    let Some(value) = vars.get("AGENT_RUNNER") else {
+        return Runner::default();
+    };
+    value.parse().unwrap_or_else(|e| {
+        tracing::warn!("settings: AGENT_RUNNER: {e}; running claude");
+        Runner::default()
+    })
 }
 
 /// From `<home>/repos.json`, or the one `REPO_PATH`/`BASE_BRANCH` describe. Never empty.

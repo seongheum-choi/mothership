@@ -14,12 +14,12 @@ Licensed under the [Apache License 2.0](LICENSE).
 | GitHub | A review, review comment or PR comment on a branch a Linear session works on | That session's worktree | The Linear session continues; the agent answers on GitHub with `gh` |
 | Zulip | @mention in a channel, or a direct message to the outgoing-webhook bot | `<home>/zulip-workspaces/<thread>`; every repository is read-only | :eyes: on receipt, then the reply and :check: |
 
-- **One conversation, one worker:** turns run back to back, and each one resumes the same Claude session (`--resume`).
+- **One conversation, one worker:** turns run back to back, and each one resumes the same Claude session (`--resume`), or Codex thread.
 - **Prompts during a turn:** a prompt that arrives while the agent works goes straight into the running process (`--input-format stream-json`), and Claude folds it into the current turn. Input closes at the turn's result, so anything later starts the next turn.
 - **PR feedback:** `POST /github-webhook` takes the GitHub App's `pull_request_review` (submitted, with text), `pull_request_review_comment` (created) and `issue_comment` (created, on a PR) events, checked against `X-Hub-Signature-256`. Only comments and reviews whose `author_association` is `OWNER`, or whose author is in `GITHUB_TRUSTED_LOGINS`, are heard, only when their text mentions the agent's GitHub account (`@<GITHUB_MENTION_LOGIN>`, in any letter case), and only on same-repository PRs in the origins of the git repositories in `repos.json`; a repeated `X-GitHub-Delivery` id is answered 200 and dropped. The PR's head branch picks the newest Linear session recorded on that branch, or on the branch it is stacked on (`en-593-3` → `en-593`). That session gets the author, file and lines, URLs and the text quoted in a `<github_comment>` block as a prompt, and posts its results in Linear as usual. The agent replies with `gh-reply` (installed in its own `<home>/gh-reply` directory and put first on agents' `PATH`; it refuses an empty reply), which appends `<!-- mothership -->`; text with that marker is dropped, as are comments by bots (`type: Bot`) and feedback on branches no session knows. A session that gets 10 GitHub prompts within an hour is stopped and told so in Linear, and further GitHub feedback for it waits for the hour to pass. `issue_comment` events carry no branch, so the server looks the PR up with `gh api`. With `GITHUB_WEBHOOK_SECRET` set, startup fails when no git repository has a GitHub origin or `<home>/gh-reply` cannot be written.
 - **Pull request links:** when a Linear turn ends, every GitHub pull request URL (`https://github.com/<owner>/<repo>/pull/<n>`) in its final response or interim thoughts, with fragment and query dropped, is added to the session's external URLs (`agentSessionUpdate` `addedExternalUrls`, labelled `<owner>/<repo>#<n>`), so the session shows the link and Linear can tie the session to the pull request once it is synced. Tool inputs are not searched, since they name pull requests the agent reads as often as ones it opens. Each URL is sent once per session and recorded in `state.json`; a failed update is logged, does not affect the turn, and is retried at the next turn that mentions the URL.
 - **Stop:** a Linear stop signal kills the agent's whole process group.
-- **Start watchdog:** an agent that announces no session (`system:init`) within `AGENT_START_TIMEOUT` is killed with its process tree, and the turn fails with an error that links [the macOS privacy section](#agent-does-not-start-macos-privacy-prompts), so a hang shows up in minutes rather than as a silent session.
+- **Start watchdog:** an agent that announces no session (`system:init`, or Codex's `thread.started`) within `AGENT_START_TIMEOUT` is killed with its process tree, and the turn fails with an error that links [the macOS privacy section](#agent-does-not-start-macos-privacy-prompts), so a hang shows up in minutes rather than as a silent session.
 - **Closed issues:** when an issue moves to a completed or canceled state or is deleted, its running sessions stop and its worktree under `WORKTREES_DIR` is removed from the session's own repository, ignored files such as `.env` or `build/` included; the branch stays, and a worktree with uncommitted changes is kept with a warning. A worktree that an open session of another issue records (a stacked branch) or that a new prompt reopened meanwhile stays. A non-git repository's directory is never removed. GitHub feedback on a closed session's PR is logged and ignored until the session is prompted again in Linear. When the app is unassigned or undelegated, running sessions stop with a note and the worktree stays. This needs the Linear app's `Issue` data-change and app notification webhooks.
 - **Worktrees:** a new branch is cut from `origin/<BASE_BRANCH>` with no upstream, so a bare `git push` never targets the base branch. An existing local or remote branch is continued, and an existing checkout is reused. Only one agent runs per worktree at a time.
 - **Home directory:** agents may read only their workspace, their repository's main clone (every repository's, in Zulip), and plugin directories. Every other entry under `$HOME` gets a `Read` deny rule, except the paths in `SANDBOX_READ`, `SANDBOX_WRITE` and `SANDBOX_SKIP_DENY` and the progress directory. Claude Code applies deny rules under `bypassPermissions` too. An `Edit` deny rule, which Claude Code applies to every file-editing tool, covers every entry of `MOTHERSHIP_HOME` except the session's own workspace, the progress directory and `SANDBOX_WRITE`, so an agent cannot change `.env`, `repos.json`, `modes/`, `plugins/` or another session's worktree for later sessions.
@@ -42,7 +42,7 @@ Agents run as `claude -p --input-format stream-json --output-format stream-json`
 | A chat or tracker (Slack, GitHub issues) | Implement `session::Surface` and add its routes in `app.rs` |
 | A tunnel (ngrok, ...) | A `tunnel::Tunnel` variant and its command |
 | A review system (Gerrit) | A `review::ReviewBackend` variant |
-| An agent runtime (Codex) | A runner that turns its output into `agent::Event`s |
+| An agent runtime | An `agent::Runner` variant and a module in `src/agent/` that builds its command line and turns its output into `agent::Event`s |
 | Skills for every session | Drop a Claude Code plugin directory into `<home>/plugins/`; it loads on the next turn |
 | A working mode picked by Linear labels | A [`<home>/modes/<name>.md`](#modes) file |
 
@@ -78,6 +78,8 @@ Settings come from the process environment or `<home>/.env`, and the environment
 | `AGENT_START_TIMEOUT` | `120` | Seconds an agent may run without announcing its session before it is killed and the turn fails |
 | `BASE_BRANCH` | `main` | Ignored when `repos.json` exists |
 | `WORKTREES_DIR` | `<home>/worktrees` | |
+| `AGENT_RUNNER` | `claude` | `claude` or [`codex`](#codex); anything else is warned about and runs Claude Code. Read again before every turn, so a change applies to the next turn without a restart |
+| `CODEX_BIN` | `codex` | The Codex CLI, for `AGENT_RUNNER=codex` |
 | `CLAUDE_BIN`, `CLAUDE_MODEL`, `CLAUDE_FALLBACK_MODEL` | `claude`, `opus`, `sonnet` | On macOS with the native installer, point `CLAUDE_BIN` at `~/.local/share/claude/ClaudeCode.app/Contents/MacOS/claude`; launched through `~/.local/bin/claude`, privacy prompts name a version number ("2.1.x") that changes with every update |
 | `CLAUDE_EFFORT` | | Claude Code `--effort` for every turn: `low`, `medium`, `high`, `xhigh` or `max`; unset (or anything else, which is warned about) leaves the flag off. Like `CLAUDE_MODEL` and `CLAUDE_FALLBACK_MODEL`, it applies from the next turn without a restart; see [Model and effort](#model-and-effort) |
 | `CHAT_PERMISSION_MODE` | `auto` | Issue sessions always use `bypassPermissions` |
@@ -91,7 +93,7 @@ Settings come from the process environment or `<home>/.env`, and the environment
 | `CLOUDFLARE_TOKEN`, `CLOUDFLARED_BIN` | | Supervise a remotely-managed Cloudflare tunnel |
 | `LINEAR_ACCESS_TOKEN`, `LINEAR_REFRESH_TOKEN` | | Seed tokens, used only while `state.json` has none |
 
-State (Linear tokens, and each conversation's repository, workspace and Claude session id) is kept in `<home>/state.json` with mode 0600.
+State (Linear tokens, and each conversation's repository, workspace and Claude session id or Codex thread id) is kept in `<home>/state.json` with mode 0600.
 
 ### Repositories
 
@@ -177,7 +179,23 @@ Each turn's `--model` comes from the first of: a session's `[model=…]`, its mo
 
 Write `[model=sonnet]`, `[effort=high]`, or both, anywhere in the @mention that starts a Linear session, in a reply to it, or in a Zulip message; `[model=default]` and `[effort=default]` drop the session's choice again. One in the starting mention applies to the first turn; one in a reply that joins a running turn applies from the next turn, which still resumes the same conversation. An effort other than the five levels is answered with an error and runs no turn; a reply refused this way is dropped rather than kept for a session that waits for its repository or mode, so send it again corrected. A model name is passed to Claude Code as written: if the turn on it fails, the error shows in the session and the session goes back to the model it had.
 
-`CLAUDE_MODEL`, `CLAUDE_FALLBACK_MODEL` and `CLAUDE_EFFORT` are read from `.env` again before every turn, so a change applies to the next turn without a restart. `GET /status` shows the defaults in effect as `model`, `fallback_model` and `effort`. When a turn's model or effort differs from the session's previous turn, or a message sets one on its first turn, the turn's first thought says so, e.g. `Model: sonnet, effort: high (from your message)` or `Model: opus, effort: max (instance default)`.
+`CLAUDE_MODEL`, `CLAUDE_FALLBACK_MODEL` and `CLAUDE_EFFORT` are read from `.env` again before every turn, so a change applies to the next turn without a restart. `GET /status` shows the defaults in effect as `runner`, `model`, `fallback_model` and `effort`. When a turn's model or effort differs from the session's previous turn, or a message sets one on its first turn, the turn's first thought says so, e.g. `Model: sonnet, effort: high (from your message)` or `Model: opus, effort: max (instance default)`.
+
+### Codex
+
+With `AGENT_RUNNER=codex`, each turn runs `codex exec --json --skip-git-repo-check --sandbox workspace-write --cd <workspace> -` (checked against Codex 0.146 and 0.160) with the prompt on stdin, and its JSONL becomes the same thoughts, actions and response as Claude Code's: `reasoning` and `agent_message` items are thoughts, `command_execution` is a `Bash` action, `file_change` an `Edit` action per file, `mcp_tool_call` an `mcp__<server>__<tool>` action, and the last agent message before `turn.completed` is the response. `turn.failed`, or the output ending after an `error` event without a result, fails the turn; `turn.completed`'s token usage is logged. The `thread.started` id is kept where a Claude session id would be, and the next turn runs `codex exec … resume <thread_id> -`.
+
+- **System prompt:** what Claude Code gets through `--append-system-prompt` (the session's instructions, its mode's prompt, the repository's delivery rules) goes in as `-c developer_instructions=…`.
+- **Model and effort:** the turn's model is passed as `-m` unless it names a Claude model (`opus`, `sonnet`, `haiku`, `claude-…`, so also the `CLAUDE_MODEL` default); then Codex runs the model its own config picks. Set a Codex model with a mode's `model` or `[model=…]`. The effort is passed as `-c model_reasoning_effort=…`. There is no fallback model.
+- **Prompts during a turn:** `codex exec` reads its prompt to the end of stdin and takes nothing more, so a prompt that arrives while it works waits for the turn to end and starts the next one, which resumes the thread.
+- **Switching runners:** a session whose runner changed since its last turn starts a new conversation on the new runner; it cannot resume the other runner's.
+
+Limits of this first version:
+
+- Codex runs in its own sandbox, `workspace-write` with network access, and `codex exec` never asks for approval (it has no `-a`). Its sandbox may also write `SANDBOX_WRITE` and the progress directory (`--add-dir`), but none of mothership's `Read` and `Edit` deny rules apply: Codex can read anything the mothership user can.
+- `CHAT_PERMISSION_MODE` and a mode's `permission_mode` and `deny` do not apply.
+- No Linear MCP, `MCP_CONFIGS`, repository `mcp_configs` or `<home>/plugins`; configure MCP servers and skills in Codex's own config (`~/.codex`).
+- `CLAUDE_FALLBACK_MODEL` does not apply, and `CLAUDE_CODE_OAUTH_TOKEN` is irrelevant; Codex uses its own login.
 
 ## Linear auth
 
