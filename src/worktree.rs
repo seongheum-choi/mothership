@@ -104,6 +104,11 @@ pub async fn remove(repo: &Path, dir: &Path) -> Result<bool> {
     Ok(true)
 }
 
+/// Whether the clone at `repo` has the local branch `branch`.
+pub async fn has_branch(repo: &Path, branch: &str) -> bool {
+    has_ref(repo, &format!("refs/heads/{branch}")).await
+}
+
 async fn has_ref(repo: &Path, name: &str) -> bool {
     git(repo, &["rev-parse", "--verify", "--quiet", name])
         .await
