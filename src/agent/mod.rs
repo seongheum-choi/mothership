@@ -1,9 +1,10 @@
 //! The agent runtime behind a turn: which [`Runner`] it is, its process, the input it takes
 //! and its output as runner-neutral [`Event`]s. `claude.rs` speaks Claude Code's protocol,
-//! `codex.rs` the Codex CLI's.
+//! `codex.rs` the Codex CLI's, and `limit.rs` when Claude Code's usage limit moves turns to Codex.
 
 mod claude;
 mod codex;
+pub mod limit;
 
 use crate::config::AgentConfig;
 use anyhow::{Context, Result};
@@ -16,7 +17,7 @@ use tokio::{
 };
 
 /// The CLI that runs a turn: `AGENT_RUNNER`.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Runner {
     #[default]
@@ -60,6 +61,7 @@ impl FromStr for Runner {
 }
 
 /// Everything one turn needs that depends on the session.
+#[derive(Clone)]
 pub struct Launch {
     pub runner: Runner,
     pub cwd: PathBuf,
@@ -107,11 +109,16 @@ pub enum Event {
     },
     /// Token counts of a finished turn, as the runner reports them.
     Usage(Value),
+    /// Comes right before the failed `Result` of a Claude turn that ended on the account's
+    /// usage limit, with when the limit resets (Unix seconds) if Claude Code said.
+    Limited {
+        resets_at: Option<u64>,
+    },
 }
 
 /// How a runner's output is read: Codex keeps state across lines.
 enum Output {
-    Claude,
+    Claude(claude::Stream),
     Codex(codex::Stream),
 }
 
@@ -125,7 +132,10 @@ pub struct Agent {
 impl Agent {
     pub fn spawn(cfg: &AgentConfig, launch: Launch) -> Result<Self> {
         let (mut cmd, output) = match launch.runner {
-            Runner::Claude => (claude::command(&cfg.claude_bin, &launch), Output::Claude),
+            Runner::Claude => (
+                claude::command(&cfg.claude_bin, &launch),
+                Output::Claude(claude::Stream::default()),
+            ),
             Runner::Codex => (
                 codex::command(&cfg.codex_bin, &launch),
                 Output::Codex(codex::Stream::default()),
@@ -162,7 +172,7 @@ impl Agent {
     pub async fn send(&mut self, text: &str) -> Result<()> {
         let stdin = self.stdin.as_mut().context("agent input already closed")?;
         let input = match self.output {
-            Output::Claude => claude::message(text),
+            Output::Claude(_) => claude::message(text),
             Output::Codex(_) => text.to_string(),
         };
         stdin.write_all(input.as_bytes()).await?;
@@ -182,7 +192,7 @@ impl Agent {
     pub async fn next(&mut self) -> Result<Option<Vec<Event>>> {
         let line = self.lines.next_line().await?;
         Ok(match (&mut self.output, line) {
-            (Output::Claude, line) => line.map(|line| claude::parse(&line)),
+            (Output::Claude(stream), line) => line.map(|line| stream.parse(&line)),
             (Output::Codex(stream), Some(line)) => Some(stream.parse(&line)),
             (Output::Codex(stream), None) => stream.end(),
         })

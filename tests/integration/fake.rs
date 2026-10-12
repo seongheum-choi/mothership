@@ -22,6 +22,11 @@ pub const PROGRESS_LINE: &str = "Phase 1 of 2";
 /// Claude Code hangs on a macOS privacy dialog nobody can answer.
 pub const HANG: &str = "FAKE_HANG";
 
+/// While this file is next to `FAKE_LOG`, the fake claude answers every prompt the way Claude
+/// Code 2.1.296 does when the account's usage limit refuses it. The limit resets as many seconds
+/// after the refusal as the file says.
+pub const CLAUDE_LIMIT: &str = "claude-limit";
+
 /// `claude -p --input-format stream-json --output-format stream-json`: announces a session,
 /// then answers each prompt with a tool call, a thought and `Done: <prompt>` as the result.
 /// Each prompt is recorded with the full argument list.
@@ -80,6 +85,10 @@ pub fn claude() -> ExitCode {
         if let Some(mut child) = tool.take() {
             let _ = child.kill();
             let _ = child.wait();
+        }
+        if let Some(resets_at) = limit() {
+            refuse(&mut out, resets_at);
+            continue;
         }
         let assistant = |content: Value| json!({"type": "assistant", "message": {"content": [content]}, "parent_tool_use_id": null});
         emit(
@@ -159,6 +168,41 @@ pub fn codex() -> ExitCode {
         let _ = writeln!(out, "{line}").and_then(|()| out.flush());
     }
     ExitCode::SUCCESS
+}
+
+/// The `resetsAt` of the usage limit [`CLAUDE_LIMIT`] sets, while that file is there.
+fn limit() -> Option<u64> {
+    let log = std::path::PathBuf::from(std::env::var("FAKE_LOG").ok()?);
+    let after = std::fs::read_to_string(log.with_file_name(CLAUDE_LIMIT)).ok()?;
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH);
+    Some(now.ok()?.as_secs() + after.trim().parse::<u64>().ok()?)
+}
+
+/// The refused request's API error message and the result that ends the turn on it.
+fn refuse(out: &mut impl Write, resets_at: u64) {
+    let text = "You've hit your session limit";
+    emit(
+        out,
+        &json!({
+            "type": "assistant",
+            "error": "rate_limit",
+            "is_api_error_message": true,
+            "api_error_status": 429,
+            "api_error": "usage_limit_reached",
+            "api_error_params": {"rate_limit_info": {
+                "status": "rejected",
+                "isUsingOverage": false,
+                "rateLimitType": "five_hour",
+                "resetsAt": resets_at,
+            }},
+            "parent_tool_use_id": null,
+            "message": {"content": [{"type": "text", "text": text}]},
+        }),
+    );
+    emit(
+        out,
+        &json!({"type": "result", "subtype": "success", "is_error": true, "api_error_status": 429, "api_error": "usage_limit_reached", "result": text}),
+    );
 }
 
 fn busy_tool() -> Option<std::process::Child> {

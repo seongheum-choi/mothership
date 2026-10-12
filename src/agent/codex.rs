@@ -64,6 +64,9 @@ fn codex_model(model: &str) -> Option<&str> {
     (!claude && !model.is_empty()).then_some(model)
 }
 
+/// The response of a turn that completed without an agent message.
+const NO_REPLY: &str = "Codex finished the turn without a reply.";
+
 /// What one `codex exec --json` process said so far. Its reply is the last agent message,
 /// sent before `turn.completed`; `error` events may be retried, so only `turn.failed`, or the
 /// output ending without a result, fails the turn.
@@ -128,7 +131,9 @@ impl Stream {
                     .collect()
             }
             (Some("turn.completed"), _) => {
-                let text = self.reply.take().unwrap_or_default();
+                // A turn can end on a command or an edit with nothing said after it.
+                let text = self.reply.take().filter(|t| !t.is_empty());
+                let text = text.unwrap_or_else(|| NO_REPLY.into());
                 let mut events = vec![Event::Usage(v["usage"].clone())];
                 events.extend(self.finish(text, false));
                 events
@@ -245,6 +250,21 @@ mod tests {
         assert_eq!(stream.end(), None);
         assert_eq!(Stream::default().end(), None);
         assert_eq!(Stream::default().parse("not json"), []);
+    }
+
+    #[test]
+    fn says_so_when_a_turn_completes_without_a_reply() {
+        let events = parse_all(&[
+            json!({"type":"item.completed","item":{"id":"0","type":"agent_message","text":" "}}),
+            json!({"type":"turn.completed","usage":{}}),
+        ]);
+        assert_eq!(
+            events.last(),
+            Some(&Event::Result {
+                text: NO_REPLY.into(),
+                is_error: false
+            })
+        );
     }
 
     #[test]

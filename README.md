@@ -188,7 +188,7 @@ With `AGENT_RUNNER=codex`, each turn runs `codex exec --json --skip-git-repo-che
 - **System prompt:** what Claude Code gets through `--append-system-prompt` (the session's instructions, its mode's prompt, the repository's delivery rules) goes in as `-c developer_instructions=…`.
 - **Model and effort:** the turn's model is passed as `-m` unless it names a Claude model (`opus`, `sonnet`, `haiku`, `claude-…`, so also the `CLAUDE_MODEL` default); then Codex runs the model its own config picks. Set a Codex model with a mode's `model` or `[model=…]`. The effort is passed as `-c model_reasoning_effort=…`. There is no fallback model.
 - **Prompts during a turn:** `codex exec` reads its prompt to the end of stdin and takes nothing more, so a prompt that arrives while it works waits for the turn to end and starts the next one, which resumes the thread.
-- **Switching runners:** a session whose runner changed since its last turn starts a new conversation on the new runner; it cannot resume the other runner's.
+- **Switching runners:** each session keeps one conversation per runner. A turn on a runner the session has not used yet starts a new conversation there; one on a runner it used before resumes that runner's conversation.
 
 Limits of this first version:
 
@@ -196,6 +196,12 @@ Limits of this first version:
 - `CHAT_PERMISSION_MODE` and a mode's `permission_mode` and `deny` do not apply.
 - No Linear MCP, `MCP_CONFIGS`, repository `mcp_configs` or `<home>/plugins`; configure MCP servers and skills in Codex's own config (`~/.codex`).
 - `CLAUDE_FALLBACK_MODEL` does not apply, and `CLAUDE_CODE_OAUTH_TOKEN` is irrelevant; Codex uses its own login.
+
+#### Claude usage limit
+
+On an instance that runs Claude Code, a turn that Claude Code ends on the account's usage limit runs again on Codex with the same prompts, including those added while it worked, and its first thought says `Claude usage limit reached → switching to Codex until 2026-10-12 14:05 UTC`. Claude Code retries and tries `CLAUDE_FALLBACK_MODEL` itself first, so only a limit that ends the turn switches. The limit is recognised by what Claude Code 2.1.296 writes: an `assistant` message with `"api_error": "usage_limit_reached"` whose `api_error_params.rate_limit_info.resetsAt` is the reset time, then a `result` with `"is_error": true` and the same `api_error`.
+
+The reset time is kept in `state.json` for the whole instance, since every session shares one account. Until then, every new turn runs on Codex, opening with `Claude usage limit until … → running on Codex`, and `GET /status` shows it as `claude_limited_until` with `runner` `codex`. The first turn after it goes back to Claude Code and resumes the session's Claude conversation; a session that worked on Codex meanwhile keeps its Codex thread for the next limit. Without a reset time, only the turn that hit the limit moves. An instance with `AGENT_RUNNER=codex`, or whose `CODEX_BIN` is neither a file nor on `PATH`, reports the limit as a failed turn, as before.
 
 ## Linear auth
 
