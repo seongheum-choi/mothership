@@ -346,6 +346,10 @@ async fn linear_agent_is_launched_in_the_sandbox(ctx: Ctx) -> Result<()> {
     ];
     deny.push(deny_edit_dir(&state.join("mcp")));
     deny.push(deny_edit_file(&state.join("state.json")));
+    // The clone's `.git` stays editable for git's own writes, but for its config and hooks.
+    let clone_git = h.home.join("src/app/.git");
+    deny.push(deny_edit_file(&clone_git.join("config")));
+    deny.push(deny_edit_dir(&clone_git.join("hooks")));
     let settings = json!({
         "permissions": {"deny": deny},
         "sandbox": {
@@ -502,6 +506,9 @@ async fn linear_mode_from_labels_shapes_the_agent(ctx: Ctx) -> Result<()> {
     expected.push(deny_edit_dir(&state.join("mcp")));
     expected.push(deny_edit_dir(&state.join("modes")));
     expected.push(deny_edit_file(&state.join("state.json")));
+    let clone_git = h.home.join("src/app/.git");
+    expected.push(deny_edit_file(&clone_git.join("config")));
+    expected.push(deny_edit_dir(&clone_git.join("hooks")));
     expected.extend(["Edit".to_string(), "Bash(git push:*)".to_string()]);
     ensure!(deny == expected, "deny {deny:#?}\nexpected {expected:#?}");
     let system_prompt = flag(&args, "--append-system-prompt")?;

@@ -43,7 +43,12 @@ pub fn settings(
     extra_deny: &[String],
     paths: &Paths,
 ) -> Value {
+    let git_dir = worktree_git_dir(workspace);
+    let clone_git = git_dir
+        .as_deref()
+        .and_then(|d| Some(d.parent()?.parent()?.to_path_buf()));
     let writable: Vec<PathBuf> = std::iter::once(workspace.to_path_buf())
+        .chain(clone_git.clone())
         .chain(paths.write.iter().cloned())
         .collect();
     let allowed: Vec<PathBuf> = writable
@@ -55,6 +60,9 @@ pub fn settings(
         .collect();
     let mut deny = deny_rules(home, &allowed, READ);
     deny.extend(deny_rules(state, &writable, EDIT));
+    if let (Some(clone_git), Some(git_dir)) = (&clone_git, &git_dir) {
+        deny.extend(git_dir_rules(clone_git, git_dir));
+    }
     deny.extend_from_slice(extra_deny);
     json!({
         "permissions": { "deny": deny },
@@ -70,6 +78,27 @@ pub fn settings(
             },
         },
     })
+}
+
+/// The git directory of `workspace` when it is a linked worktree: its `.git` is a file naming
+/// `<clone>/.git/worktrees/<name>`.
+fn worktree_git_dir(workspace: &Path) -> Option<PathBuf> {
+    let gitfile = std::fs::read_to_string(workspace.join(".git")).ok()?;
+    Some(PathBuf::from(gitfile.strip_prefix("gitdir:")?.trim()))
+}
+
+/// A commit from the worktree writes the clone's `.git` (objects, refs, the worktree's own
+/// index under `worktrees/`), and the sandbox folds an `Edit` deny into Bash's writes, so the
+/// clone's `.git` is left editable but for what would change later sessions: its config, its
+/// hooks and the other worktrees' metadata.
+fn git_dir_rules(clone_git: &Path, git_dir: &Path) -> Vec<String> {
+    let mut rules = vec![
+        format!("{EDIT}(/{}/config)", clone_git.display()),
+        format!("{EDIT}(/{}/hooks/**)", clone_git.display()),
+    ];
+    let worktrees = clone_git.join("worktrees");
+    rules.extend(deny_rules(&worktrees, &[git_dir.to_path_buf()], EDIT));
+    rules
 }
 
 const READ: &str = "Read";
@@ -169,6 +198,68 @@ mod tests {
             deny_rules(&home.join("work"), &[home.join("work/repo")], EDIT),
             vec![format!("Edit(/{h}/work/other/**)")]
         );
+        std::fs::remove_dir_all(&home).unwrap();
+    }
+
+    #[test]
+    fn leaves_the_clone_git_dir_editable_but_for_config_hooks_and_other_worktrees() {
+        let home = std::env::temp_dir().join(format!("mothership-gitdir-{}", std::process::id()));
+        let state = home.join(".mothership");
+        let clone = state.join("repos/r");
+        for dir in [
+            "repos/r/src",
+            "repos/r/.git/objects",
+            "repos/r/.git/hooks",
+            "repos/r/.git/worktrees/A",
+            "repos/r/.git/worktrees/B",
+            "worktrees/A",
+            "worktrees/B",
+        ] {
+            std::fs::create_dir_all(state.join(dir)).unwrap();
+        }
+        std::fs::write(clone.join(".git/config"), "").unwrap();
+        let git_dir = clone.join(".git/worktrees/A");
+        let workspace = state.join("worktrees/A");
+        std::fs::write(
+            workspace.join(".git"),
+            format!("gitdir: {}\n", git_dir.display()),
+        )
+        .unwrap();
+        let paths = Paths {
+            read: vec![],
+            write: vec![],
+            skip_deny: vec![],
+        };
+
+        let made = settings(
+            &home,
+            &state,
+            &workspace,
+            std::slice::from_ref(&clone),
+            &[],
+            &paths,
+        );
+        let deny: Vec<String> =
+            serde_json::from_value(made["permissions"]["deny"].clone()).unwrap();
+        let edits: Vec<String> = deny
+            .into_iter()
+            .filter(|r| r.starts_with("Edit("))
+            .collect();
+        let (s, c) = (state.display(), clone.display());
+        assert_eq!(
+            edits,
+            vec![
+                format!("Edit(/{s}/repos/r/src/**)"),
+                format!("Edit(/{s}/worktrees/B/**)"),
+                format!("Edit(/{c}/.git/config)"),
+                format!("Edit(/{c}/.git/hooks/**)"),
+                format!("Edit(/{c}/.git/worktrees/B/**)"),
+            ]
+        );
+        // A workspace that is not a linked worktree (Zulip's) gets no git rule.
+        let plain = settings(&home, &state, &state.join("worktrees/B"), &[], &[], &paths);
+        let deny = plain["permissions"]["deny"].to_string();
+        assert!(!deny.contains(".git"), "{deny}");
         std::fs::remove_dir_all(&home).unwrap();
     }
 }
