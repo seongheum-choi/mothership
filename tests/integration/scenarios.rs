@@ -35,6 +35,7 @@ pub const ALL: &[(&str, Scenario)] = scenarios![
     linear_token_is_refreshed_at_startup,
     linear_routes_between_two_repositories,
     linear_refused_reply_is_not_kept,
+    linear_lost_worktree_is_cut_again_where_its_branch_is,
     linear_prompt_joins_the_running_turn,
     linear_stop_kills_the_agent,
     linear_agent_that_never_starts_is_stopped,
@@ -804,6 +805,51 @@ async fn linear_refused_reply_is_not_kept(ctx: Ctx) -> Result<()> {
         "{prompt:?}"
     );
     ensure!(flag(&argv(&call), "--effort")? == "high", "{call}");
+    Ok(())
+}
+
+/// A session from before repository routing whose worktree is gone (here as closed-issue
+/// cleanup leaves it: no workspace, the branch kept) goes to the repository that has its
+/// branch, ahead of what the issue says, and its worktree is cut again there on that branch.
+async fn linear_lost_worktree_is_cut_again_where_its_branch_is(ctx: Ctx) -> Result<()> {
+    let issue = issue(40, "Speed it up [repo=app]");
+    let setup = Setup {
+        repos: vec![("app", "o/app"), ("lib", "o/lib")],
+        state: Some(json!({"sessions": {"s40": {
+            "issue_id": issue["id"], "identifier": issue["identifier"],
+            "title": issue["title"], "url": issue["url"],
+            "branch": "nate/sh-40",
+        }}})),
+        ..Setup::default()
+    };
+    let h = Harness::start(&ctx, setup).await?;
+    h.mock.add_issue(&issue);
+    let lib = h.home.join("src/lib");
+    let work = git(
+        &lib,
+        &[
+            "commit-tree",
+            "-m",
+            "work so far",
+            "-p",
+            "HEAD",
+            "HEAD^{tree}",
+        ],
+    )?;
+    git(&lib, &["update-ref", "refs/heads/nate/sh-40", work.trim()])?;
+
+    ensure!(h.linear(prompted("s40", &issue, "carry on")).await? == 200);
+    let thought = h.activity("s40", "thought", 1).await?;
+    ensure!(
+        body(&thought)
+            == "Working in `lib` (the repository with this session's branch `nate/sh-40`).",
+        "{thought}"
+    );
+    let call = h.prompt_with("carry on").await?;
+    let cwd = Path::new(call["cwd"].as_str().context("cwd")?);
+    ensure!(main_clone(cwd)? == lib.display().to_string());
+    ensure!(git(cwd, &["branch", "--show-current"])?.trim() == "nate/sh-40");
+    ensure!(git(cwd, &["log", "-1", "--format=%s"])?.trim() == "work so far");
     Ok(())
 }
 
