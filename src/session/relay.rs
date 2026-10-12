@@ -33,7 +33,7 @@ impl Relay {
                     nested,
                 });
             }
-            Event::Started { .. } | Event::Result { .. } => {}
+            Event::Started { .. } | Event::Result { .. } | Event::Usage(_) => {}
         }
         out
     }

@@ -124,6 +124,7 @@ impl Harness {
             ("LINEAR_ACCESS_TOKEN", setup.token.into()),
             ("LINEAR_REFRESH_TOKEN", "refresh".into()),
             ("CLAUDE_BIN", bin.join("claude").display().to_string()),
+            ("CODEX_BIN", bin.join("codex").display().to_string()),
             ("FAKE_LOG", dir.join("fake.jsonl").display().to_string()),
             // `origin` points at github.com; fetching it fails at once instead of going online.
             ("GIT_ALLOW_PROTOCOL", "file".into()),
@@ -246,7 +247,14 @@ impl Harness {
         .with_context(|| format!("activities so far: {:#?}", self.activities(sid)))
     }
 
-    /// Everything the fakes were asked, oldest first, filtered by `tool` (`claude` or `gh`).
+    /// What `GET /status` says.
+    pub async fn status(&self) -> Result<Value> {
+        let res = self.http.get(format!("{}/status", self.url)).send().await?;
+        Ok(res.json().await?)
+    }
+
+    /// Everything the fakes were asked, oldest first, filtered by `tool` (`claude`, `codex` or
+    /// `gh`).
     pub fn calls(&self, tool: &str) -> Vec<Value> {
         std::fs::read_to_string(self.dir.join("fake.jsonl"))
             .unwrap_or_default()
@@ -256,9 +264,11 @@ impl Harness {
             .collect()
     }
 
-    /// The prompts the fake agent received that contain `needle`.
+    /// The prompts the fake agents received that contain `needle`.
     pub fn prompts_with(&self, needle: &str) -> Vec<Value> {
-        self.calls("claude")
+        let mut calls = self.calls("claude");
+        calls.extend(self.calls("codex"));
+        calls
             .into_iter()
             .filter(|c| c["prompt"].as_str().is_some_and(|p| p.contains(needle)))
             .collect()
@@ -319,7 +329,7 @@ fn new_dir(ctx: &Ctx) -> Result<PathBuf> {
         .expect("ctx lock poisoned")
         .push(dir.clone());
     let me = std::env::current_exe().context("locating the test executable")?;
-    for name in ["claude", "gh"] {
+    for name in ["claude", "codex", "gh"] {
         std::os::unix::fs::symlink(&me, dir.join("bin").join(name))?;
     }
     Ok(dir)

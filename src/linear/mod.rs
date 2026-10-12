@@ -122,7 +122,9 @@ impl Surface for Linear {
         let mut mcp_configs = vec![mcp::config(app, key)?];
         mcp_configs.extend(app.cfg.mcp_configs.iter().cloned());
         mcp_configs.extend(repo.mcp_configs.iter().cloned());
+        let runner = app.runner();
         Ok(Launch {
+            runner,
             settings: app.agent_settings(
                 &workspace,
                 &readable,
@@ -130,7 +132,7 @@ impl Surface for Linear {
             ),
             cwd: workspace,
             system_prompt,
-            resume: rec.claude_session_id,
+            resume: rec.resume(runner),
             permission_mode: mode
                 .as_ref()
                 .and_then(|m| m.permission_mode.clone())

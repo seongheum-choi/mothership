@@ -1,6 +1,7 @@
 //! Shared state and the HTTP surface.
 
 use crate::{
+    agent::Runner,
     config::{Config, Live, ModelDefaults},
     github::GitHub,
     linear::Linear,
@@ -99,6 +100,12 @@ impl App {
         }
     }
 
+    /// The instance's runner as `.env` says now, read again for every turn.
+    pub fn runner(&self) -> Runner {
+        self.refresh();
+        self.live.runner()
+    }
+
     /// The instance's model defaults as `.env` says now, read again for every turn.
     pub fn models(&self) -> ModelDefaults {
         self.refresh();
@@ -183,6 +190,7 @@ async fn status(State(app): State<Arc<App>>) -> Json<Value> {
     let models = app.models();
     Json(json!({
         "status": if app.busy() { "busy" } else { "idle" },
+        "runner": app.runner(),
         "model": models.model,
         "fallback_model": models.fallback_model,
         "effort": models.effort,
