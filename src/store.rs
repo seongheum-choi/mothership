@@ -4,7 +4,7 @@ use crate::agent::Runner;
 use serde::{Deserialize, Serialize};
 use std::fmt::Write as _;
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     io::{Read, Write},
     os::unix::fs::OpenOptionsExt,
     path::{Path, PathBuf},
@@ -36,10 +36,15 @@ pub struct SessionRec {
     #[serde(alias = "worktree")]
     pub workspace: Option<PathBuf>,
     pub branch: Option<String>,
-    /// The runner's session the next turn continues: a Claude session id or a Codex thread id.
-    #[serde(alias = "claude_session_id")]
+    /// The session the next turn on each runner continues: a Claude session id or a Codex
+    /// thread id. Kept per runner, so a session back on Claude Code after its usage limit
+    /// resumes where Claude Code left off.
+    pub agent_sessions: BTreeMap<Runner, String>,
+    /// From before per-runner ids: the one session kept, and the runner it belongs to (`None`,
+    /// from before runners, is Claude Code). Moved into `agent_sessions` on load.
+    #[serde(alias = "claude_session_id", skip_serializing)]
     pub agent_session_id: Option<String>,
-    /// The runner `agent_session_id` belongs to; `None`, from before runners, is Claude Code.
+    #[serde(skip_serializing)]
     pub agent_runner: Option<Runner>,
     /// Linear: the first prompt and every reply since, kept while the session waits for its
     /// repository, mode or a corrected directive; run together once it can start.
@@ -66,18 +71,23 @@ pub struct SessionRec {
 }
 
 impl SessionRec {
-    /// The session a turn on `runner` continues. One from another runner cannot be resumed,
-    /// so a session whose runner changed starts afresh.
+    /// The session a turn on `runner` continues. One runner cannot resume another's, so a
+    /// session on a runner it has not used yet starts afresh there.
     pub fn resume(&self, runner: Runner) -> Option<String> {
-        (self.agent_runner.unwrap_or_default() == runner)
-            .then(|| self.agent_session_id.clone())
-            .flatten()
+        self.agent_sessions.get(&runner).cloned()
     }
 
-    /// Records the session a turn on `runner` started, for the next turn to resume.
+    /// Records the session a turn on `runner` started, for the next turn on it to resume.
     pub fn set_resume(&mut self, runner: Runner, id: String) {
-        self.agent_session_id = Some(id);
-        self.agent_runner = Some(runner);
+        self.agent_sessions.insert(runner, id);
+    }
+
+    /// Moves the single session id of a record from before per-runner ids into place.
+    fn upgrade(&mut self) {
+        if let Some(id) = self.agent_session_id.take() {
+            let runner = self.agent_runner.take().unwrap_or_default();
+            self.agent_sessions.entry(runner).or_insert(id);
+        }
     }
 }
 
@@ -98,6 +108,10 @@ pub struct State {
     pub linear: Tokens,
     #[serde(default)]
     pub sessions: HashMap<String, SessionRec>,
+    /// When Claude Code's usage limit resets (Unix seconds), as the turn that hit it said. Until
+    /// then turns run on Codex; the whole instance shares the one account.
+    #[serde(default)]
+    pub claude_resets_at: Option<u64>,
 }
 
 pub struct Store {
@@ -107,11 +121,12 @@ pub struct Store {
 
 impl Store {
     pub fn open(path: PathBuf) -> anyhow::Result<Self> {
-        let state = match std::fs::read(&path) {
+        let mut state: State = match std::fs::read(&path) {
             Ok(bytes) => serde_json::from_slice(&bytes)?,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => State::default(),
             Err(e) => return Err(e.into()),
         };
+        state.sessions.values_mut().for_each(SessionRec::upgrade);
         Ok(Self {
             path,
             state: Mutex::new(state),
@@ -183,17 +198,34 @@ pub fn file_name(key: &str) -> String {
 mod tests {
     use super::*;
 
+    fn load(json: &str) -> SessionRec {
+        let mut rec: SessionRec = serde_json::from_str(json).unwrap();
+        rec.upgrade();
+        rec
+    }
+
     #[test]
-    fn resumes_only_the_same_runner() {
-        let old: SessionRec = serde_json::from_str(r#"{"claude_session_id":"c1"}"#).unwrap();
-        assert_eq!(old.resume(Runner::Claude).as_deref(), Some("c1"));
-        assert_eq!(old.resume(Runner::Codex), None);
-        let codex = SessionRec {
-            agent_session_id: Some("t1".into()),
-            agent_runner: Some(Runner::Codex),
-            ..SessionRec::default()
-        };
-        assert_eq!(codex.resume(Runner::Codex).as_deref(), Some("t1"));
-        assert_eq!(codex.resume(Runner::Claude), None);
+    fn keeps_a_session_per_runner() {
+        let mut rec = load(r#"{"claude_session_id":"c1"}"#);
+        assert_eq!(rec.resume(Runner::Claude).as_deref(), Some("c1"));
+        assert_eq!(rec.resume(Runner::Codex), None);
+        rec.set_resume(Runner::Codex, "t1".into());
+        assert_eq!(rec.resume(Runner::Codex).as_deref(), Some("t1"));
+        assert_eq!(rec.resume(Runner::Claude).as_deref(), Some("c1"));
+        let saved = serde_json::to_value(&rec).unwrap();
+        assert_eq!(
+            saved["agent_sessions"],
+            serde_json::json!({"claude":"c1","codex":"t1"})
+        );
+        assert!(saved.get("agent_session_id").is_none(), "{saved}");
+        assert_eq!(load(&saved.to_string()).agent_sessions, rec.agent_sessions);
+    }
+
+    #[test]
+    fn upgrades_the_single_id_of_its_runner() {
+        let rec = load(r#"{"agent_session_id":"t1","agent_runner":"codex"}"#);
+        assert_eq!(rec.resume(Runner::Codex).as_deref(), Some("t1"));
+        assert_eq!(rec.resume(Runner::Claude), None);
+        assert!(load("{}").agent_sessions.is_empty());
     }
 }
