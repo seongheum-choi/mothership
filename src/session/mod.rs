@@ -3,6 +3,7 @@
 //! running agent, and reports progress and results through the surface.
 
 pub mod choice;
+mod process;
 mod relay;
 mod turn;
 

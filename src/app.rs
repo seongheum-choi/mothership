@@ -1,7 +1,7 @@
 //! Shared state and the HTTP surface.
 
 use crate::{
-    agent::Runner,
+    agent::{Runner, limit},
     config::{Config, Live, ModelDefaults},
     github::GitHub,
     linear::Linear,
@@ -100,10 +100,27 @@ impl App {
         }
     }
 
-    /// The instance's runner as `.env` says now, read again for every turn.
+    /// The runner of the next turn: the instance's as `.env` says now, read again for every
+    /// turn, or Codex while Claude Code's usage limit lasts.
     pub fn runner(&self) -> Runner {
+        if self.claude_limited_until().is_some() {
+            Runner::Codex
+        } else {
+            self.live.runner()
+        }
+    }
+
+    /// When Claude Code's usage limit resets, while it moves this instance's turns to Codex.
+    pub fn claude_limited_until(&self) -> Option<u64> {
         self.refresh();
-        self.live.runner()
+        let resets_at = self.store.read(|s| s.claude_resets_at)?;
+        let applies = limit::applies(self.live.runner(), resets_at, crate::store::now_secs());
+        (applies && self.codex_installed()).then_some(resets_at)
+    }
+
+    /// Whether a turn that hit Claude Code's usage limit can move to Codex: `CODEX_BIN` is there.
+    pub fn codex_installed(&self) -> bool {
+        limit::installed(&self.cfg.agent.codex_bin)
     }
 
     /// The instance's model defaults as `.env` says now, read again for every turn.
@@ -191,6 +208,7 @@ async fn status(State(app): State<Arc<App>>) -> Json<Value> {
     Json(json!({
         "status": if app.busy() { "busy" } else { "idle" },
         "runner": app.runner(),
+        "claude_limited_until": app.claude_limited_until(),
         "model": models.model,
         "fallback_model": models.fallback_model,
         "effort": models.effort,

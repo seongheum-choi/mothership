@@ -1,21 +1,14 @@
 //! One conversation's worker: runs agent turns back to back and feeds prompts that arrive
 //! mid-turn into the running agent.
 
-use super::{
-    Msg, Outcome, Registry, Surface, Update,
-    relay::{ProgressTail, Relay},
-};
+use super::{Msg, Outcome, Registry, Surface, Update, process::Ended, relay::ProgressTail};
 use crate::{
-    agent::{Agent, Event, Runner},
+    agent::{Runner, limit},
     app::App,
 };
-use anyhow::{Result, bail};
-use std::{sync::Arc, time::Duration};
+use anyhow::Result;
+use std::sync::Arc;
 use tokio::sync::mpsc;
-
-/// Where an agent that never starts is explained.
-const START_HELP: &str =
-    "https://github.com/seongheum-choi/mothership#agent-does-not-start-macos-privacy-prompts";
 
 pub(super) async fn worker<S: Surface>(
     app: Arc<App>,
@@ -64,10 +57,10 @@ pub(super) async fn worker<S: Surface>(
     }
 }
 
-struct Turn<'a, S: Surface> {
-    app: &'a Arc<App>,
-    reg: &'a Registry<S>,
-    key: &'a str,
+pub(super) struct Turn<'a, S: Surface> {
+    pub(super) app: &'a Arc<App>,
+    pub(super) reg: &'a Registry<S>,
+    pub(super) key: &'a str,
 }
 
 impl<S: Surface> Turn<'_, S> {
@@ -92,6 +85,13 @@ impl<S: Surface> Turn<'_, S> {
                 app.lock_workspace(&launch.cwd).await
             }
         };
+        if launch.runner == Runner::Codex
+            && let Some(resets_at) = app.claude_limited_until()
+        {
+            let limited = limit::still_limited(resets_at);
+            let note = launch.note.take().map(|n| format!("{limited}\n\n{n}"));
+            launch.note = Some(note.unwrap_or(limited));
+        }
         if let Some(text) = launch.note.take() {
             let note = Update::Thought {
                 text,
@@ -106,88 +106,29 @@ impl<S: Surface> Turn<'_, S> {
             progress.path.display().to_string(),
         ));
 
-        let runner = launch.runner;
-        let mut agent = Agent::spawn(&app.cfg.agent, launch)?;
-        agent.send(prompt).await?;
-        let mut relay = Relay::default();
-        let mut tick = tokio::time::interval(Duration::from_secs(1));
-        // An agent blocked before its first output (a macOS privacy dialog under launchd) would
-        // otherwise hold the session silently forever.
-        let start_timeout = app.cfg.agent.start_timeout;
-        let start_deadline = tokio::time::sleep(start_timeout);
-        tokio::pin!(start_deadline);
-        let mut started = false;
-        loop {
-            tokio::select! {
-                events = agent.next() => {
-                    let Some(events) = events? else { break };
-                    for event in events {
-                        match event {
-                            Event::Started { session_id } => {
-                                started = true;
-                                app.store.update(|s| {
-                                    s.sessions.entry(key.to_string()).or_default().set_resume(runner, session_id);
-                                });
-                            }
-                            Event::Result { text, is_error } => {
-                                agent.close_input();
-                                for update in relay.flush_except(&text) {
-                                    surface.update(app, key, update).await;
-                                }
-                                let outcome = if is_error { Outcome::Failed(text) } else { Outcome::Reply(text) };
-                                surface.finish(app, key, std::mem::take(tickets), outcome).await;
-                            }
-                            Event::Usage(usage) => tracing::info!("[{key}] {runner} usage: {usage}"),
-                            event => {
-                                for update in relay.on(event) {
-                                    surface.update(app, key, update).await;
-                                }
-                            }
-                        }
-                    }
-                }
-                Some(msg) = rx.recv() => match msg {
-                    Msg::Prompt { text, ticket } if agent.accepts_input() => {
-                        agent.send(&text).await?;
-                        tickets.push(ticket);
-                        surface.update(app, key, Update::Noted).await;
-                    }
-                    Msg::Prompt { text, ticket } => queued.push((text, ticket)),
-                    Msg::Stop(note) => {
-                        agent.kill().await;
-                        tickets.extend(queued.drain(..).map(|(_, ticket)| ticket));
-                        surface.finish(app, key, std::mem::take(tickets), Outcome::Stopped(note)).await;
-                        return Ok(());
-                    }
-                },
-                () = &mut start_deadline, if !started => {
-                    agent.kill().await;
-                    return Err(not_started(runner, start_timeout));
-                }
-                _ = tick.tick() => {
-                    for line in progress.read_new() {
-                        surface.update(app, key, Update::Progress(line)).await;
-                    }
-                }
-            }
-        }
-        for line in progress.read_new() {
-            surface.update(app, key, Update::Progress(line)).await;
-        }
-        let status = agent.wait().await?;
-        if !tickets.is_empty() {
-            bail!("{runner} exited ({status}) without answering");
+        // A Claude turn that ends on the usage limit runs again on Codex, with every prompt
+        // it was given.
+        let retry = (launch.runner == Runner::Claude).then(|| launch.clone());
+        let mut prompt = prompt.to_string();
+        let ended = self
+            .drive(launch, &mut prompt, tickets, rx, queued, &mut progress)
+            .await?;
+        if let (Ended::Limited { resets_at }, Some(mut launch)) = (ended, retry) {
+            let text = limit::switched(resets_at);
+            tracing::warn!("[{key}] {text}");
+            let note = Update::Thought {
+                text,
+                nested: false,
+            };
+            surface.update(app, key, note).await;
+            launch.runner = Runner::Codex;
+            launch.resume = app.store.read(|s| {
+                let rec = s.sessions.get(key);
+                rec.and_then(|r| r.resume(Runner::Codex))
+            });
+            self.drive(launch, &mut prompt, tickets, rx, queued, &mut progress)
+                .await?;
         }
         Ok(())
     }
-}
-
-/// Why a turn whose agent never announced its session failed.
-fn not_started(runner: Runner, timeout: Duration) -> anyhow::Error {
-    anyhow::anyhow!(
-        "The agent did not start within {}s (no {}) and was stopped. Under launchd on macOS this \
-         is usually a privacy dialog nobody can answer: see {START_HELP}",
-        timeout.as_secs(),
-        runner.start_event()
-    )
 }

@@ -1,7 +1,9 @@
 //! The scenarios: each starts its own mothership and drives it through webhooks.
 
 use crate::{
-    fake::{CODEX_RELEASE, CODEX_SCRIPT, HANG, HOLD, PROGRESS, PROGRESS_LINE, RELEASE},
+    fake::{
+        CLAUDE_LIMIT, CODEX_RELEASE, CODEX_SCRIPT, HANG, HOLD, PROGRESS, PROGRESS_LINE, RELEASE,
+    },
     harness::{Ctx, Harness, Setup, ZULIP_TOKEN, create_repo, eventually, exited, git},
     mock::{self, ORG},
 };
@@ -54,6 +56,7 @@ pub const ALL: &[(&str, Scenario)] = scenarios![
     zulip_effort_from_the_message,
     codex_runner_answers_with_thoughts_and_a_response,
     codex_runner_resumes_the_thread_with_a_prompt_from_mid_turn,
+    claude_usage_limit_moves_turns_to_codex_until_it_resets,
 ];
 
 /// An issue as Linear's API returns it; the webhook carries a subset.
@@ -1447,8 +1450,7 @@ async fn codex_runner_answers_with_thoughts_and_a_response(ctx: Ctx) -> Result<(
     );
     let sessions = h.sessions()?;
     ensure!(
-        sessions["s40"]["agent_session_id"] == format!("thread-{}", call["pid"])
-            && sessions["s40"]["agent_runner"] == "codex",
+        sessions["s40"]["agent_sessions"] == json!({"codex": format!("thread-{}", call["pid"])}),
         "{sessions}"
     );
     Ok(())
@@ -1488,5 +1490,78 @@ async fn codex_runner_resumes_the_thread_with_a_prompt_from_mid_turn(ctx: Ctx) -
             .all(|t| t != "Got it, adding that to the current work."),
         "not noted as joining the running turn"
     );
+    Ok(())
+}
+
+/// A Claude turn that ends on the usage limit runs again, same prompt, on Codex, and says so
+/// first. Until the limit resets, the next turn runs on Codex and resumes its thread; after it,
+/// the session is back on Claude Code and resumes the Claude session.
+async fn claude_usage_limit_moves_turns_to_codex_until_it_resets(ctx: Ctx) -> Result<()> {
+    let h = Harness::start(&ctx, Setup::default()).await?;
+    std::fs::write(h.dir.join(CODEX_SCRIPT), CODEX_TURN)?;
+    std::fs::write(h.dir.join(CLAUDE_LIMIT), "6")?;
+    // The hold below is Claude's; Codex must not honour it.
+    std::fs::write(h.dir.join(CODEX_RELEASE), "")?;
+    let issue = issue(50, "Fix it.");
+    h.mock.add_issue(&issue);
+    let context = format!("context of SH-50 {HOLD}");
+    ensure!(h.linear(created("s50", &issue, &context)).await? == 200);
+    h.prompt_with(&context).await?;
+    // A reply that joined the turn before the limit hit goes to Codex with it.
+    let more = format!("and the docs {RELEASE}");
+    ensure!(h.linear(prompted("s50", &issue, &more)).await? == 200);
+
+    let response = h.activity("s50", "response", 1).await?;
+    let prompt = format!("{context}\n\n{more}");
+    ensure!(body(&response) == format!("Done: {prompt}"), "{response}");
+    let tried = h.calls("claude");
+    ensure!(
+        tried.len() == 2 && tried[0]["pid"] == tried[1]["pid"],
+        "{tried:?}"
+    );
+    let codex = h.calls("codex");
+    ensure!(
+        codex.len() == 1 && codex[0]["prompt"] == prompt && codex[0]["resume"].is_null(),
+        "both prompts on a new thread: {codex:?}"
+    );
+    let switched = "Claude usage limit reached → switching to Codex until ";
+    ensure!(
+        thoughts(&h, "s50").iter().any(|t| t.starts_with(switched)),
+        "{:?}",
+        thoughts(&h, "s50")
+    );
+    let resets_at = h.status().await?["claude_limited_until"].as_u64();
+    let resets_at = resets_at.context("the limit holds after the switch")?;
+
+    ensure!(h.linear(prompted("s50", &issue, "and the tests")).await? == 200);
+    h.activity("s50", "response", 2).await?;
+    let next = h.prompt_with("and the tests").await?;
+    let thread = format!("thread-{}", codex[0]["pid"]);
+    ensure!(
+        next["tool"] == "codex" && next["resume"] == thread,
+        "{next}"
+    );
+    ensure!(
+        thoughts(&h, "s50").iter().any(
+            |t| t.starts_with("Claude usage limit until ") && t.ends_with("→ running on Codex")
+        ),
+        "{:?}",
+        thoughts(&h, "s50")
+    );
+
+    std::fs::remove_file(h.dir.join(CLAUDE_LIMIT))?;
+    eventually("the limit to reset", || {
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH);
+        now.is_ok_and(|n| n.as_secs() >= resets_at).then_some(())
+    })
+    .await?;
+    ensure!(h.linear(prompted("s50", &issue, "back on claude")).await? == 200);
+    h.activity("s50", "response", 3).await?;
+    let back = h.prompt_with("back on claude").await?;
+    ensure!(
+        back["tool"] == "claude" && back["resume"] == format!("fake-{}", tried[0]["pid"]),
+        "{back}"
+    );
+    ensure!(h.status().await?["claude_limited_until"].is_null());
     Ok(())
 }
