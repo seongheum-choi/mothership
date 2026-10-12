@@ -73,6 +73,8 @@ pub struct Setup {
     /// The seed `LINEAR_ACCESS_TOKEN`.
     pub token: &'static str,
     pub env: Vec<(&'static str, String)>,
+    /// A `state.json` to start from, as one left by an earlier mothership.
+    pub state: Option<Value>,
 }
 
 impl Default for Setup {
@@ -84,6 +86,7 @@ impl Default for Setup {
             github: false,
             token: "token",
             env: Vec::new(),
+            state: None,
         }
     }
 }
@@ -105,28 +108,7 @@ impl Harness {
         let state = home.join(".mothership");
         std::fs::create_dir_all(&state)?;
 
-        let mut env: Vec<(&str, String)> = Vec::new();
-        let mut repos = Vec::new();
-        for (name, origin) in &setup.repos {
-            let path = home.join("src").join(name);
-            create_repo(&path, origin)?;
-            repos.push(json!({ "name": name, "path": path }));
-        }
-        for name in &setup.folders {
-            let path = home.join("src").join(name);
-            std::fs::create_dir_all(&path)?;
-            repos.push(json!({ "name": name, "path": path, "git": false }));
-        }
-        if let [repo] = repos.as_slice()
-            && setup.folders.is_empty()
-        {
-            env.push((
-                "REPO_PATH",
-                repo["path"].as_str().unwrap_or_default().into(),
-            ));
-        } else {
-            std::fs::write(state.join("repos.json"), Value::Array(repos).to_string())?;
-        }
+        let mut env = write_home(&setup, &home, &state)?;
 
         let mock = Mock::start().await?;
         let path = std::env::var("PATH").unwrap_or_default();
@@ -441,6 +423,38 @@ pub fn create_repo(path: &Path, origin: &str) -> Result<()> {
     git(path, &["remote", "add", "origin", &url])?;
     git(path, &["update-ref", "refs/remotes/origin/main", "HEAD"])?;
     Ok(())
+}
+
+/// The repositories, `repos.json` and seed `state.json` under `home`, and the environment that
+/// points mothership at them.
+fn write_home(setup: &Setup, home: &Path, state: &Path) -> Result<Vec<(&'static str, String)>> {
+    let mut env = Vec::new();
+    let mut repos = Vec::new();
+    for (name, origin) in &setup.repos {
+        let path = home.join("src").join(name);
+        create_repo(&path, origin)?;
+        repos.push(json!({ "name": name, "path": path }));
+    }
+    for name in &setup.folders {
+        let path = home.join("src").join(name);
+        std::fs::create_dir_all(&path)?;
+        repos.push(json!({ "name": name, "path": path, "git": false }));
+    }
+    if let [repo] = repos.as_slice()
+        && setup.folders.is_empty()
+    {
+        env.push((
+            "REPO_PATH",
+            repo["path"].as_str().unwrap_or_default().into(),
+        ));
+    } else {
+        std::fs::write(state.join("repos.json"), Value::Array(repos).to_string())?;
+    }
+
+    if let Some(seed) = &setup.state {
+        std::fs::write(state.join("state.json"), seed.to_string())?;
+    }
+    Ok(env)
 }
 
 fn free_port() -> Result<u16> {

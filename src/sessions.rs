@@ -25,6 +25,21 @@ pub async fn workspace_repo<'a>(repos: &'a [Repo], workspace: &Path) -> Option<&
     existing_repo(repos, main_clone.as_deref())
 }
 
+/// The git repository whose main clone has the branch `branch`, when exactly one has: a
+/// worktree is removed without its branch, so the branch still names the clone it was cut from.
+pub async fn branch_repo<'a>(repos: &'a [Repo], branch: &str) -> Option<&'a Repo> {
+    let mut found = Vec::new();
+    for repo in repos.iter().filter(|r| r.git) {
+        if worktree::has_branch(&repo.path, branch).await {
+            found.push(repo);
+        }
+    }
+    match found[..] {
+        [only] => Some(only),
+        _ => None,
+    }
+}
+
 /// Records that `sid` was just prompted, so it wins over older sessions on its branch.
 pub fn mark_prompted(store: &Store, sid: &str) {
     store.update(|s| {

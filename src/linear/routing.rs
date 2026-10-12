@@ -5,10 +5,9 @@ use crate::{
     app::App,
     modes,
     repos::{self, IssueFacts, Ref, Repo},
-    sessions,
 };
 use serde_json::Value;
-use std::{path::PathBuf, sync::Arc};
+use std::sync::Arc;
 
 /// Why a session cannot start its turn yet.
 pub(super) enum Blocked {
@@ -60,10 +59,10 @@ impl Linear {
         request: Option<&str>,
         lookup: &mut IssueLookup<'_>,
     ) -> Result<(), Blocked> {
-        let (current, workspace) = app.store.read(|s| {
+        let (current, workspace, branch) = app.store.read(|s| {
             s.sessions
                 .get(sid)
-                .map(|r| (r.repo.clone(), r.workspace.clone()))
+                .map(|r| (r.repo.clone(), r.workspace.clone(), r.branch.clone()))
                 .unwrap_or_default()
         });
         let repos = app.repos();
@@ -78,17 +77,11 @@ impl Linear {
                 ))),
             };
         }
-        if let Some(workspace) = standing_worktree(workspace) {
-            // A session from before repository routing: it stays where its worktree is.
-            let Some(repo) = sessions::workspace_repo(&repos, &workspace).await else {
-                return Err(Blocked::Stuck(format!(
-                    "This session's worktree {} belongs to no repository in repos.json. Add \
-                     its repository and reply to continue.",
-                    workspace.display()
-                )));
-            };
-            self.settle(app, sid, repo, "the repository of this session's worktree")
-                .await;
+        if (workspace.is_some() || branch.is_some())
+            && self
+                .choose_pre_routing(app, sid, &repos, workspace.as_deref(), branch.as_deref())
+                .await?
+        {
             return Ok(());
         }
         let null = Value::Null;
@@ -154,7 +147,7 @@ impl Linear {
     }
 
     /// Records the session's repository and tells the requester which one and why.
-    async fn settle(&self, app: &Arc<App>, sid: &str, repo: &Repo, reason: &str) {
+    pub(super) async fn settle(&self, app: &Arc<App>, sid: &str, repo: &Repo, reason: &str) {
         let name = repo.name.clone();
         tracing::info!("[{sid}] repository {name} ({reason})");
         app.store.update(|s| {
@@ -165,13 +158,6 @@ impl Linear {
         let note = format!("Working in `{name}` ({reason}).");
         self.activity(app, sid, thought(&note), false).await;
     }
-}
-
-/// The worktree a session from before repository routing still stands in. One that is gone
-/// says nothing about its repository, so the session is routed like a new one, and its
-/// worktree is cut again on its recorded branch.
-fn standing_worktree(workspace: Option<PathBuf>) -> Option<PathBuf> {
-    workspace.filter(|w| w.exists())
 }
 
 /// What routing looks at: the `issue_routing` result (`None` when the lookup failed), with the
@@ -242,17 +228,6 @@ mod tests {
         let none = routing_facts(&json!({"project": null, "labels": {"nodes": []}}));
         assert!(none.description.is_none() && none.labels.is_empty() && none.project.is_none());
         assert!(routing_facts(&Value::Null).team.is_none());
-    }
-
-    #[test]
-    fn a_missing_worktree_does_not_pin_the_repository() {
-        let here = std::env::current_dir().unwrap();
-        assert_eq!(standing_worktree(Some(here.clone())), Some(here));
-        assert_eq!(
-            standing_worktree(Some(PathBuf::from("/nonexistent/worktrees/SH-1"))),
-            None
-        );
-        assert_eq!(standing_worktree(None), None);
     }
 
     #[test]

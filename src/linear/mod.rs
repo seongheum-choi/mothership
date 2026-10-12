@@ -8,6 +8,7 @@ mod mcp;
 mod oauth;
 mod pin;
 mod pr;
+mod prerouting;
 mod routing;
 mod start;
 mod webhook;
