@@ -1,5 +1,6 @@
 //! Durable state: Linear OAuth tokens and per-session bookkeeping, in `<home>/state.json`.
 
+use crate::agent::Runner;
 use serde::{Deserialize, Serialize};
 use std::fmt::Write as _;
 use std::{
@@ -35,7 +36,11 @@ pub struct SessionRec {
     #[serde(alias = "worktree")]
     pub workspace: Option<PathBuf>,
     pub branch: Option<String>,
-    pub claude_session_id: Option<String>,
+    /// The runner's session the next turn continues: a Claude session id or a Codex thread id.
+    #[serde(alias = "claude_session_id")]
+    pub agent_session_id: Option<String>,
+    /// The runner `agent_session_id` belongs to; `None`, from before runners, is Claude Code.
+    pub agent_runner: Option<Runner>,
     /// Linear: the first prompt and every reply since, kept while the session waits for its
     /// repository, mode or a corrected directive; run together once it can start.
     pub pending_prompt: Option<String>,
@@ -58,6 +63,22 @@ pub struct SessionRec {
     pub replaced_model: Option<Replaced>,
     /// The model and effort the latest turn started with.
     pub launched: Option<Launched>,
+}
+
+impl SessionRec {
+    /// The session a turn on `runner` continues. One from another runner cannot be resumed,
+    /// so a session whose runner changed starts afresh.
+    pub fn resume(&self, runner: Runner) -> Option<String> {
+        (self.agent_runner.unwrap_or_default() == runner)
+            .then(|| self.agent_session_id.clone())
+            .flatten()
+    }
+
+    /// Records the session a turn on `runner` started, for the next turn to resume.
+    pub fn set_resume(&mut self, runner: Runner, id: String) {
+        self.agent_session_id = Some(id);
+        self.agent_runner = Some(runner);
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Default, Debug, PartialEq)]
@@ -156,4 +177,23 @@ pub fn file_name(key: &str) -> String {
             }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resumes_only_the_same_runner() {
+        let old: SessionRec = serde_json::from_str(r#"{"claude_session_id":"c1"}"#).unwrap();
+        assert_eq!(old.resume(Runner::Claude).as_deref(), Some("c1"));
+        assert_eq!(old.resume(Runner::Codex), None);
+        let codex = SessionRec {
+            agent_session_id: Some("t1".into()),
+            agent_runner: Some(Runner::Codex),
+            ..SessionRec::default()
+        };
+        assert_eq!(codex.resume(Runner::Codex).as_deref(), Some("t1"));
+        assert_eq!(codex.resume(Runner::Claude), None);
+    }
 }

@@ -6,7 +6,7 @@ use super::{
     relay::{ProgressTail, Relay},
 };
 use crate::{
-    agent::{Agent, Event},
+    agent::{Agent, Event, Runner},
     app::App,
 };
 use anyhow::{Result, bail};
@@ -106,13 +106,14 @@ impl<S: Surface> Turn<'_, S> {
             progress.path.display().to_string(),
         ));
 
-        let mut agent = Agent::spawn(&app.cfg.claude, launch)?;
+        let runner = launch.runner;
+        let mut agent = Agent::spawn(&app.cfg.agent, launch)?;
         agent.send(prompt).await?;
         let mut relay = Relay::default();
         let mut tick = tokio::time::interval(Duration::from_secs(1));
         // An agent blocked before its first output (a macOS privacy dialog under launchd) would
         // otherwise hold the session silently forever.
-        let start_timeout = app.cfg.claude.start_timeout;
+        let start_timeout = app.cfg.agent.start_timeout;
         let start_deadline = tokio::time::sleep(start_timeout);
         tokio::pin!(start_deadline);
         let mut started = false;
@@ -125,7 +126,7 @@ impl<S: Surface> Turn<'_, S> {
                             Event::Started { session_id } => {
                                 started = true;
                                 app.store.update(|s| {
-                                    s.sessions.entry(key.to_string()).or_default().claude_session_id = Some(session_id);
+                                    s.sessions.entry(key.to_string()).or_default().set_resume(runner, session_id);
                                 });
                             }
                             Event::Result { text, is_error } => {
@@ -136,6 +137,7 @@ impl<S: Surface> Turn<'_, S> {
                                 let outcome = if is_error { Outcome::Failed(text) } else { Outcome::Reply(text) };
                                 surface.finish(app, key, std::mem::take(tickets), outcome).await;
                             }
+                            Event::Usage(usage) => tracing::info!("[{key}] {runner} usage: {usage}"),
                             event => {
                                 for update in relay.on(event) {
                                     surface.update(app, key, update).await;
@@ -160,11 +162,7 @@ impl<S: Surface> Turn<'_, S> {
                 },
                 () = &mut start_deadline, if !started => {
                     agent.kill().await;
-                    bail!(
-                        "The agent did not start within {}s (no `system:init` from Claude Code) and was stopped. \
-                         Under launchd on macOS this is usually a privacy dialog nobody can answer: see {START_HELP}",
-                        start_timeout.as_secs()
-                    );
+                    return Err(not_started(runner, start_timeout));
                 }
                 _ = tick.tick() => {
                     for line in progress.read_new() {
@@ -178,8 +176,18 @@ impl<S: Surface> Turn<'_, S> {
         }
         let status = agent.wait().await?;
         if !tickets.is_empty() {
-            bail!("claude exited ({status}) without answering");
+            bail!("{runner} exited ({status}) without answering");
         }
         Ok(())
     }
+}
+
+/// Why a turn whose agent never announced its session failed.
+fn not_started(runner: Runner, timeout: Duration) -> anyhow::Error {
+    anyhow::anyhow!(
+        "The agent did not start within {}s (no {}) and was stopped. Under launchd on macOS this \
+         is usually a privacy dialog nobody can answer: see {START_HELP}",
+        timeout.as_secs(),
+        runner.start_event()
+    )
 }

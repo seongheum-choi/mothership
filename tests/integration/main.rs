@@ -1,6 +1,6 @@
 //! Integration tests: the mothership binary against local stand-ins for Linear, Zulip, GitHub
-//! and the Claude Code CLI. The harness is our own, so this executable can also play `claude`
-//! and `gh` when it is started under those names.
+//! and the Claude Code and Codex CLIs. The harness is our own, so this executable can also play
+//! `claude`, `codex` and `gh` when it is started under those names.
 
 mod fake;
 mod harness;
@@ -21,6 +21,7 @@ fn main() -> ExitCode {
     let argv0 = std::env::args().next().unwrap_or_default();
     match Path::new(&argv0).file_name().and_then(|n| n.to_str()) {
         Some("claude") => return fake::claude(),
+        Some("codex") => return fake::codex(),
         Some("gh") => return fake::gh(),
         _ => {}
     }

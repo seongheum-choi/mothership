@@ -1,4 +1,4 @@
-//! Stand-ins for the `claude` and `gh` CLIs. Both append what they were asked to the JSON
+//! Stand-ins for the `claude`, `codex` and `gh` CLIs. Each appends what it was asked to the JSON
 //! lines file `FAKE_LOG`, which mothership's environment passes down to them.
 
 use serde_json::{Value, json};
@@ -102,6 +102,61 @@ pub fn claude() -> ExitCode {
             &mut out,
             &json!({"type": "result", "subtype": "success", "is_error": false, "result": format!("Done: {text}")}),
         );
+    }
+    ExitCode::SUCCESS
+}
+
+/// The JSONL file next to `FAKE_LOG` that the fake codex plays back, line by line, with
+/// `{thread}` and `{prompt}` filled in.
+pub const CODEX_SCRIPT: &str = "codex-script.jsonl";
+/// With a prompt containing [`HOLD`], the fake codex keeps the turn open until this file
+/// appears next to `FAKE_LOG`.
+pub const CODEX_RELEASE: &str = "codex-release";
+
+/// `codex exec --json [resume <id>] -`: reads the prompt from stdin to its end, records it with
+/// the argument list, then plays back the script. The thread id is `thread-<pid>` on a new
+/// thread and the resumed one otherwise.
+pub fn codex() -> ExitCode {
+    use std::io::Read;
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let resume = args
+        .windows(2)
+        .find(|w| w[0] == "resume")
+        .map(|w| w[1].clone());
+    let mut prompt = String::new();
+    let _ = std::io::stdin().read_to_string(&mut prompt);
+    let pid = std::process::id();
+    record(&json!({
+        "tool": "codex",
+        "pid": pid,
+        "cwd": std::env::current_dir().unwrap_or_default(),
+        "args": args,
+        "resume": resume,
+        "surface": std::env::var("MOTHERSHIP_SURFACE").ok(),
+        "prompt": prompt,
+    }));
+    let thread = resume.unwrap_or_else(|| format!("thread-{pid}"));
+    let log = std::path::PathBuf::from(std::env::var("FAKE_LOG").unwrap_or_default());
+    let mut out = std::io::stdout().lock();
+    emit(
+        &mut out,
+        &json!({"type": "thread.started", "thread_id": thread}),
+    );
+    if prompt.contains(HOLD) {
+        let release = log.with_file_name(CODEX_RELEASE);
+        while !release.exists() {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    }
+    let script = std::fs::read_to_string(log.with_file_name(CODEX_SCRIPT)).unwrap_or_default();
+    // The prompt goes inside a JSON string, so it is escaped the way JSON escapes it.
+    let escaped = Value::from(prompt.as_str()).to_string();
+    let escaped = &escaped[1..escaped.len() - 1];
+    for line in script.lines().filter(|l| !l.trim().is_empty()) {
+        let line = line
+            .replace("{thread}", &thread)
+            .replace("{prompt}", escaped);
+        let _ = writeln!(out, "{line}").and_then(|()| out.flush());
     }
     ExitCode::SUCCESS
 }

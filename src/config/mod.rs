@@ -1,5 +1,5 @@
 //! Settings, read from the process environment and `<home>/.env` (the environment wins), and
-//! the repository list and model defaults that are reloaded while running (`reload.rs`).
+//! the repository list, runner and model defaults that are reloaded while running (`reload.rs`).
 
 mod model;
 mod reload;
@@ -36,7 +36,7 @@ pub struct Config {
     pub zulip: Option<ZulipConfig>,
     pub github: Option<GitHubConfig>,
     pub worktrees_dir: PathBuf,
-    pub claude: ClaudeConfig,
+    pub agent: AgentConfig,
     /// Extra MCP config files for every session, next to the Linear one.
     pub mcp_configs: Vec<PathBuf>,
     /// Replaces the review backend's default instructions in issue sessions.
@@ -45,9 +45,13 @@ pub struct Config {
     pub tunnel: Option<Tunnel>,
 }
 
-/// The CLI fixed at startup; its model settings are [`ModelDefaults`], reloaded with `.env`.
-pub struct ClaudeConfig {
-    pub bin: String,
+/// The CLIs fixed at startup; which one runs a turn and its model settings are reloaded with
+/// `.env` (see [`Live`]).
+pub struct AgentConfig {
+    /// `CLAUDE_BIN`
+    pub claude_bin: String,
+    /// `CODEX_BIN`
+    pub codex_bin: String,
     /// Permission mode for chat sessions; issue sessions always bypass prompts.
     pub chat_permission_mode: String,
     /// `AGENT_START_TIMEOUT`: how long an agent may run without announcing its session
@@ -103,8 +107,9 @@ impl Config {
             worktrees_dir: vars
                 .get("WORKTREES_DIR")
                 .map_or_else(|| home.join("worktrees"), PathBuf::from),
-            claude: ClaudeConfig {
-                bin: vars.get("CLAUDE_BIN").unwrap_or_else(|| "claude".into()),
+            agent: AgentConfig {
+                claude_bin: vars.get("CLAUDE_BIN").unwrap_or_else(|| "claude".into()),
+                codex_bin: vars.get("CODEX_BIN").unwrap_or_else(|| "codex".into()),
                 chat_permission_mode: vars
                     .get("CHAT_PERMISSION_MODE")
                     .unwrap_or_else(|| "auto".into()),

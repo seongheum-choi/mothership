@@ -50,12 +50,14 @@ fn launch(app: &App, key: &str) -> Result<Launch> {
     let mut mcp_configs = vec![crate::linear::mcp_config(app, key)?];
     mcp_configs.extend(app.cfg.mcp_configs.iter().cloned());
     let (models, note) = choice::for_turn(app, key, &rec, None);
+    let runner = app.runner();
     Ok(Launch {
+        runner,
         settings: app.agent_settings(&workspace, &readable, &read_only),
         cwd: workspace,
         system_prompt,
-        resume: rec.claude_session_id,
-        permission_mode: app.cfg.claude.chat_permission_mode.clone(),
+        resume: rec.resume(runner),
+        permission_mode: app.cfg.agent.chat_permission_mode.clone(),
         models,
         note,
         mcp_configs,
