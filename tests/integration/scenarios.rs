@@ -41,6 +41,7 @@ pub const ALL: &[(&str, Scenario)] = scenarios![
     linear_agent_that_never_starts_is_stopped,
     github_feedback_continues_the_session,
     github_fork_conversation_comment_is_ignored,
+    github_feedback_reaches_a_lost_worktree_session,
     zulip_mention_gets_a_reply,
     sigterm_stops_running_agents,
     reload_routes_to_a_repository_added_between_turns,
@@ -1001,6 +1002,51 @@ async fn github_feedback_continues_the_session(ctx: Ctx) -> Result<()> {
         h.prompts_with("aside to a reviewer").is_empty(),
         "comment without a mention heard"
     );
+    Ok(())
+}
+
+/// Feedback on the branch of a session from before repository routing whose worktree is gone
+/// reaches it through the repository that has the branch, and its worktree is cut again there.
+async fn github_feedback_reaches_a_lost_worktree_session(ctx: Ctx) -> Result<()> {
+    let issue = issue(41, "Speed it up.");
+    let setup = Setup {
+        repos: vec![("app", "o/app"), ("lib", "o/lib")],
+        github: true,
+        state: Some(json!({"sessions": {"s41": {
+            "issue_id": issue["id"], "identifier": issue["identifier"],
+            "title": issue["title"], "url": issue["url"],
+            "branch": "nate/sh-41", "workspace": "/nonexistent/worktrees/SH-41",
+        }}})),
+        ..Setup::default()
+    };
+    let h = Harness::start(&ctx, setup).await?;
+    h.mock.add_issue(&issue);
+    let lib = h.home.join("src/lib");
+    git(&lib, &["branch", "nate/sh-41"])?;
+
+    let comment = json!({
+        "action": "created",
+        "repository": {"full_name": "o/lib"},
+        "pull_request": {
+            "number": 9,
+            "html_url": "https://github.com/o/lib/pull/9",
+            "head": {"ref": "nate/sh-41", "repo": {"full_name": "o/lib"}},
+        },
+        "comment": {
+            "id": 41, "user": {"login": "someone", "type": "User"},
+            "author_association": "OWNER", "body": "@impala tidy this up",
+            "path": "src/lib.rs", "line": 3, "html_url": "https://github.com/o/lib/pull/9#r41",
+        },
+    });
+    ensure!(
+        h.github("pull_request_review_comment", "d-41", &comment)
+            .await?
+            == 200
+    );
+    let call = h.prompt_with("tidy this up").await?;
+    let cwd = Path::new(call["cwd"].as_str().context("cwd")?);
+    ensure!(main_clone(cwd)? == lib.display().to_string());
+    ensure!(git(cwd, &["branch", "--show-current"])?.trim() == "nate/sh-41");
     Ok(())
 }
 
