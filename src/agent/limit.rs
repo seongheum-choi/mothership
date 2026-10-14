@@ -3,6 +3,7 @@
 //! Claude Code.
 
 use super::Runner;
+use std::ffi::OsString;
 use std::path::Path;
 
 /// Whether a turn runs on Codex rather than `configured`: only one that would run Claude Code
@@ -17,13 +18,22 @@ pub const PINNED: &str = "This session is pinned to Claude Code with `[runner=cl
      does not move to Codex. Reply with `[runner=default]` or `[runner=codex]` to let it.";
 
 /// Whether the Codex CLI at `bin` is there to switch to: a path to a file, or a name found on
-/// `PATH` the way the agent process is spawned.
-pub fn installed(bin: &str) -> bool {
+/// `path`, the `PATH` the agent process gets, so the check sees what the launch will. `None`
+/// falls back to this process's `PATH`, which the agent inherits when `AGENT_ENV` sets none.
+pub fn installed(bin: &str, path: Option<&str>) -> bool {
     if bin.contains('/') {
         return Path::new(bin).is_file();
     }
-    std::env::var_os("PATH")
-        .is_some_and(|paths| std::env::split_paths(&paths).any(|dir| dir.join(bin).is_file()))
+    let path = path
+        .map(OsString::from)
+        .or_else(|| std::env::var_os("PATH"));
+    path.is_some_and(|paths| std::env::split_paths(&paths).any(|dir| dir.join(bin).is_file()))
+}
+
+/// The reset to keep when a turn reports one at `reported`: the later of the two. Two sessions
+/// hitting the limit at once would otherwise leave whichever wrote last, shortening the wait.
+pub fn later(current: Option<u64>, reported: u64) -> u64 {
+    current.map_or(reported, |at| at.max(reported))
 }
 
 /// The thought that opens a turn moved to Codex as Claude Code hit its limit.
@@ -88,9 +98,24 @@ mod tests {
 
     #[test]
     fn finds_binaries_by_path_or_name() {
-        assert!(installed("/bin/sh"));
-        assert!(installed("sh"));
-        assert!(!installed("/nonexistent/codex"));
-        assert!(!installed("mothership-no-such-binary"));
+        assert!(installed("/bin/sh", None));
+        assert!(installed("sh", None));
+        assert!(!installed("/nonexistent/codex", None));
+        assert!(!installed("mothership-no-such-binary", None));
+    }
+
+    #[test]
+    fn looks_for_a_bare_name_on_the_agents_path() {
+        assert!(installed("sh", Some("/nowhere:/bin")));
+        assert!(!installed("sh", Some("/nowhere")));
+        // A path to a file is not looked for on any `PATH`.
+        assert!(installed("/bin/sh", Some("/nowhere")));
+    }
+
+    #[test]
+    fn keeps_the_later_reset() {
+        assert_eq!(later(None, 100), 100);
+        assert_eq!(later(Some(200), 100), 200);
+        assert_eq!(later(Some(100), 200), 200);
     }
 }

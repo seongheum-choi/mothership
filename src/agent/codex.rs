@@ -106,6 +106,11 @@ impl Stream {
                 let name = format!("mcp__{}__{}", str(server), str(name));
                 vec![tool(name, item["arguments"].clone())]
             }
+            // Codex 0.160 starts a search with an empty `query` and fills it in when the search
+            // ends, so the finished item is the one that says what was searched.
+            (Some("item.completed"), Some("web_search")) => {
+                vec![tool("WebSearch".into(), json!({ "query": item["query"] }))]
+            }
             (Some("item.completed"), Some("file_change")) => item["changes"]
                 .as_array()
                 .into_iter()
@@ -191,9 +196,11 @@ mod tests {
             json!({"type":"item.started","item":{"id":"1","type":"command_execution","command":"ls","status":"in_progress"}}),
             json!({"type":"item.completed","item":{"id":"1","type":"command_execution","command":"ls","status":"completed"}}),
             json!({"type":"item.started","item":{"id":"2","type":"mcp_tool_call","server":"linear","tool":"get_issue","arguments":{"id":"SH-1"}}}),
-            json!({"type":"item.completed","item":{"id":"3","type":"file_change","changes":[{"path":"a.rs","kind":"update"}]}}),
-            json!({"type":"item.updated","item":{"id":"4","type":"todo_list","items":[]}}),
-            json!({"type":"item.completed","item":{"id":"5","type":"agent_message","text":" Done. "}}),
+            json!({"type":"item.started","item":{"id":"3","type":"web_search","query":"","action":{"type":"other"}}}),
+            json!({"type":"item.completed","item":{"id":"3","type":"web_search","query":"rust 1.95","results":[]}}),
+            json!({"type":"item.completed","item":{"id":"4","type":"file_change","changes":[{"path":"a.rs","kind":"update"}]}}),
+            json!({"type":"item.updated","item":{"id":"5","type":"todo_list","items":[]}}),
+            json!({"type":"item.completed","item":{"id":"6","type":"agent_message","text":" Done. "}}),
             json!({"type":"turn.completed","usage":{"input_tokens":3,"output_tokens":1}}),
         ]);
         let text = |t: &str| Event::Text {
@@ -214,6 +221,7 @@ mod tests {
                 text("Thinking."),
                 tool("Bash", json!({"command":"ls"})),
                 tool("mcp__linear__get_issue", json!({"id":"SH-1"})),
+                tool("WebSearch", json!({"query":"rust 1.95"})),
                 tool("Edit", json!({"file_path":"a.rs","kind":"update"})),
                 text("Done."),
                 Event::Usage(json!({"input_tokens":3,"output_tokens":1})),

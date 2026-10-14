@@ -100,8 +100,8 @@ impl App {
         }
     }
 
-    /// The runner of a turn no narrower scope decides: the instance's as `.env` says now, or
-    /// Codex while Claude Code's usage limit lasts.
+    /// The runner of a turn no narrower scope decides: the instance's as the last [`Self::refresh`]
+    /// read `.env`, or Codex while Claude Code's usage limit lasts.
     pub fn runner(&self) -> Runner {
         if self.claude_limited_until().is_some() {
             Runner::Codex
@@ -118,20 +118,31 @@ impl App {
     /// When Claude Code's usage limit resets, while it moves a turn that `decided` would run
     /// to Codex.
     pub fn claude_limit(&self, decided: Runner) -> Option<u64> {
-        self.refresh();
         let resets_at = self.store.read(|s| s.claude_resets_at)?;
         let applies = limit::applies(decided, resets_at, crate::store::now_secs());
         (applies && self.codex_installed()).then_some(resets_at)
     }
 
-    /// Whether a turn that hit Claude Code's usage limit can move to Codex: `CODEX_BIN` is there.
+    /// Whether a turn that hit Claude Code's usage limit can move to Codex: `CODEX_BIN` is there
+    /// on the `PATH` the agent would run with, not this process's.
     pub fn codex_installed(&self) -> bool {
-        limit::installed(&self.cfg.agent.codex_bin)
+        limit::installed(&self.cfg.agent.codex_bin, self.agent_path().as_deref())
     }
 
-    /// The instance's model defaults as `.env` says now, read again for every turn.
+    /// The `PATH` agent processes get, when `AGENT_ENV` carries one. Without it they inherit this
+    /// process's, which [`limit::installed`] falls back to.
+    fn agent_path(&self) -> Option<String> {
+        self.cfg
+            .agent_env
+            .iter()
+            .rev()
+            .find(|(key, _)| key == "PATH")
+            .map(|(_, path)| path.clone())
+    }
+
+    /// The instance's model defaults as of the last [`Self::refresh`]; every entry point that
+    /// cares refreshes once and then reads.
     pub fn models(&self) -> ModelDefaults {
-        self.refresh();
         self.live.models()
     }
 
@@ -210,6 +221,8 @@ impl App {
 }
 
 async fn status(State(app): State<Arc<App>>) -> Json<Value> {
+    // One look at `.env` and `repos.json` for the whole response; the reads below follow it.
+    app.refresh();
     let models = app.models();
     Json(json!({
         "status": if app.busy() { "busy" } else { "idle" },
