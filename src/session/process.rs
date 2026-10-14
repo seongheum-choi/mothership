@@ -66,8 +66,10 @@ impl<S: Surface> Turn<'_, S> {
                                 });
                             }
                             Event::Limited { resets_at } => {
-                                if resets_at.is_some() {
-                                    app.store.update(|s| s.claude_resets_at = resets_at);
+                                if let Some(at) = resets_at {
+                                    app.store.update(|s| {
+                                        s.claude_resets_at = Some(limit::later(s.claude_resets_at, at));
+                                    });
                                 }
                                 limited = Some(resets_at);
                             }

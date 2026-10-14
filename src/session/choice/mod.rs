@@ -44,6 +44,8 @@ pub struct Chosen {
 /// What the next turn of `key` runs on and with and, when that changed since its last turn (or
 /// anything but the instance defaults decided it on its first), the line that says so.
 pub fn for_turn(app: &App, key: &str, rec: &SessionRec, scopes: &Scopes<'_>) -> Chosen {
+    // The turn's defaults and its usage limit come from one look at `.env`.
+    app.refresh();
     let defaults = app.models();
     let mut chosen = choose(rec, scopes, &defaults);
     let launched = Launched {
