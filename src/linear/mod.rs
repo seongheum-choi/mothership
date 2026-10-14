@@ -115,7 +115,7 @@ impl Surface for Linear {
             mode: mode.as_ref().map(|m| (m.name.as_str(), &m.models)),
             repo: Some((repo.name.as_str(), &repo.models)),
         };
-        let (models, note) = choice::for_turn(app, key, &rec, &scopes);
+        let chosen = choice::for_turn(app, key, &rec, &scopes);
         let plugin_dirs = app.cfg.plugin_dirs();
         let mut readable = vec![repo.path.clone()];
         readable.extend(plugin_dirs.iter().cloned());
@@ -123,9 +123,9 @@ impl Surface for Linear {
         let mut mcp_configs = vec![mcp::config(app, key)?];
         mcp_configs.extend(app.cfg.mcp_configs.iter().cloned());
         mcp_configs.extend(repo.mcp_configs.iter().cloned());
-        let runner = app.runner();
         Ok(Launch {
-            runner,
+            runner: chosen.runner,
+            pinned: chosen.pinned,
             settings: app.agent_settings(
                 &workspace,
                 &readable,
@@ -133,13 +133,13 @@ impl Surface for Linear {
             ),
             cwd: workspace,
             system_prompt,
-            resume: rec.resume(runner),
+            resume: rec.resume(chosen.runner),
             permission_mode: mode
                 .as_ref()
                 .and_then(|m| m.permission_mode.clone())
                 .unwrap_or_else(|| "bypassPermissions".into()),
-            models,
-            note,
+            models: chosen.models,
+            note: chosen.note,
             mcp_configs,
             plugin_dirs,
             env: app.agent_env("linear"),

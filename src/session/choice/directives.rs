@@ -1,21 +1,21 @@
-//! `[model=…]` and `[effort=…]` in a session's messages, recorded on the session so the turns
-//! that start after the message run with them. `default` gives the field back to the wider
-//! scopes.
+//! `[runner=…]`, `[model=…]` and `[effort=…]` in a session's messages, recorded on the session
+//! so the turns that start after the message run with them. `default` gives the field back to
+//! the wider scopes.
 
-use crate::{app::App, config::EFFORTS, directive, store::Replaced};
+use crate::{agent::Runner, app::App, config::EFFORTS, directive, store::Replaced};
 
 /// What one message's directive does to a field.
 #[derive(Debug, Default, PartialEq)]
-enum Set {
+enum Set<T = String> {
     #[default]
     Keep,
     /// `default`: back to the labels, the mode, the repository and the instance.
     Clear,
-    To(String),
+    To(T),
 }
 
-impl Set {
-    fn apply(self, field: &mut Option<String>) {
+impl<T> Set<T> {
+    fn apply(self, field: &mut Option<T>) {
         match self {
             Self::Keep => {}
             Self::Clear => *field = None,
@@ -26,6 +26,7 @@ impl Set {
 
 #[derive(Debug, Default, PartialEq)]
 struct Directives {
+    runner: Set<Runner>,
     model: Set,
     effort: Set,
 }
@@ -36,6 +37,13 @@ fn value<'a>(text: &'a str, key: &str) -> Option<&'a str> {
 }
 
 fn parse(text: &str) -> Result<Directives, String> {
+    let runner = match value(text, "runner") {
+        Some("default") => Set::Clear,
+        Some(runner) => Set::To(runner.parse().map_err(|_| {
+            format!("`[runner={runner}]` is not a runner; use claude, codex or default.")
+        })?),
+        None => Set::Keep,
+    };
     let model = match value(text, "model") {
         Some("") => return Err("`[model=]` needs a model name, or `default`.".into()),
         Some("default") => Set::Clear,
@@ -53,7 +61,11 @@ fn parse(text: &str) -> Result<Directives, String> {
         }
         None => Set::Keep,
     };
-    Ok(Directives { model, effort })
+    Ok(Directives {
+        runner,
+        model,
+        effort,
+    })
 }
 
 /// Records the directives in `text` on the session, for the turns that start after it. A bad
@@ -74,6 +86,7 @@ pub fn record(app: &App, key: &str, text: &str) -> Result<(), String> {
                 model: rec.model.clone(),
             });
         }
+        directives.runner.apply(&mut rec.runner);
         directives.model.apply(&mut rec.model);
         directives.effort.apply(&mut rec.effort);
     });
@@ -101,5 +114,21 @@ mod tests {
                 .contains("not an effort level")
         );
         assert!(parse("[model=]").is_err());
+        assert_eq!(
+            parse("[runner=codex]").unwrap().runner,
+            Set::To(Runner::Codex)
+        );
+        assert_eq!(
+            parse("[runner= claude ]").unwrap().runner,
+            Set::To(Runner::Claude)
+        );
+        assert_eq!(parse("[runner=default]").unwrap().runner, Set::Clear);
+        assert_eq!(parse("`[runner=codex]`").unwrap(), Directives::default());
+        assert!(
+            parse("[runner=gpt]")
+                .unwrap_err()
+                .contains("is not a runner")
+        );
+        assert!(parse("[runner=]").unwrap_err().contains("is not a runner"));
     }
 }

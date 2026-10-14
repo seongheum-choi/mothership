@@ -85,13 +85,6 @@ impl<S: Surface> Turn<'_, S> {
                 app.lock_workspace(&launch.cwd).await
             }
         };
-        if launch.runner == Runner::Codex
-            && let Some(resets_at) = app.claude_limited_until()
-        {
-            let limited = limit::still_limited(resets_at);
-            let note = launch.note.take().map(|n| format!("{limited}\n\n{n}"));
-            launch.note = Some(note.unwrap_or(limited));
-        }
         if let Some(text) = launch.note.take() {
             let note = Update::Thought {
                 text,

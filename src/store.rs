@@ -59,18 +59,21 @@ pub struct SessionRec {
     pub closed: bool,
     /// Linear: pull request URLs already added to the session's external URLs.
     pub pull_requests: Vec<String>,
-    /// `[model=…]` and `[effort=…]` from the session's messages; `None` follows the labels,
-    /// the mode, the repository and the instance defaults.
+    /// `[runner=…]`, `[model=…]` and `[effort=…]` from the session's messages; `None` follows
+    /// the labels, the mode, the repository and the instance defaults. A runner set here also
+    /// keeps the session off Claude Code's usage limit switch.
+    pub runner: Option<Runner>,
     pub model: Option<String>,
     pub effort: Option<String>,
-    /// Linear: the `model:<name>` and `effort:<level>` labels the issue carried when the
-    /// session started, as written. Only read when the instance has mode files.
+    /// Linear: the `runner:<name>`, `model:<name>` and `effort:<level>` labels the issue carried
+    /// when the session started, as written. Only read when the instance has mode files.
+    pub label_runner: Option<String>,
     pub label_model: Option<String>,
     pub label_effort: Option<String>,
     /// Set while the model a message chose has not finished a turn: the `model` it replaced,
     /// which comes back if that turn fails.
     pub replaced_model: Option<Replaced>,
-    /// The model and effort the latest turn started with.
+    /// The runner, model and effort the latest turn decided on, before any usage limit switch.
     pub launched: Option<Launched>,
 }
 
@@ -102,6 +105,9 @@ pub struct Replaced {
 
 #[derive(Serialize, Deserialize, Clone, Default, Debug, PartialEq)]
 pub struct Launched {
+    /// `None` for a turn launched before the runner could come from a narrower scope.
+    #[serde(default)]
+    pub runner: Option<Runner>,
     pub model: String,
     /// Empty for a turn launched before the fallback model could come from a mode or a
     /// repository, so the first turn after that upgrade says the models once.

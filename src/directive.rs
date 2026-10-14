@@ -1,4 +1,5 @@
-//! `[key=value]` directives in issue text and messages: `[repo=…]`, `[model=…]`, `[effort=…]`.
+//! `[key=value]` directives in issue text and messages: `[repo=…]`, `[runner=…]`, `[model=…]`,
+//! `[effort=…]`.
 
 use std::ops::Range;
 
