@@ -3,6 +3,7 @@
 use super::Repo;
 use super::disk::check_on_disk;
 use super::select::same;
+use crate::agent::Runner;
 use crate::config::{ModelFields, check_effort};
 use crate::directive::valid_name;
 use anyhow::{Context, Result, bail};
@@ -25,6 +26,8 @@ struct Entry {
     prompt_file: Option<String>,
     #[serde(default)]
     mcp_configs: Vec<String>,
+    /// `claude` or `codex`; serde names any other value.
+    runner: Option<Runner>,
     model: Option<String>,
     fallback_model: Option<String>,
     effort: Option<String>,
@@ -45,6 +48,7 @@ fn model_fields(name: &str, entry: &Entry) -> Result<ModelFields> {
         bail!("repo {name:?} effort: {problem}");
     }
     Ok(ModelFields {
+        runner: entry.runner,
         model: entry.model.clone(),
         fallback_model: entry.fallback_model.clone(),
         effort: entry.effort.clone(),
@@ -231,7 +235,7 @@ mod tests {
     #[test]
     fn reads_model_fields_and_checks_the_effort() {
         let (repos, _) = parse(
-            r#"[{"name": "app", "path": "/src/app", "model": "sonnet",
+            r#"[{"name": "app", "path": "/src/app", "runner": "codex", "model": "sonnet",
                  "fallback_model": "haiku", "effort": "high"}]"#,
             &home(),
         )
@@ -239,6 +243,7 @@ mod tests {
         assert_eq!(
             repos[0].models,
             ModelFields {
+                runner: Some(Runner::Codex),
                 model: Some("sonnet".into()),
                 fallback_model: Some("haiku".into()),
                 effort: Some("high".into()),
@@ -256,6 +261,11 @@ mod tests {
             err.contains(r#"repo "app" effort: `ultra` is not an effort level"#),
             "{err}"
         );
+        let err = parse(
+            r#"[{"name": "app", "path": "/src/app", "runner": "gpt"}]"#,
+            &home(),
+        );
+        assert!(format!("{:#}", err.unwrap_err()).contains("unknown variant `gpt`"));
     }
 
     #[test]

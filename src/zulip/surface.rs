@@ -49,17 +49,17 @@ fn launch(app: &App, key: &str) -> Result<Launch> {
         .collect();
     let mut mcp_configs = vec![crate::linear::mcp_config(app, key)?];
     mcp_configs.extend(app.cfg.mcp_configs.iter().cloned());
-    let (models, note) = choice::for_turn(app, key, &rec, &choice::Scopes::default());
-    let runner = app.runner();
+    let chosen = choice::for_turn(app, key, &rec, &choice::Scopes::default());
     Ok(Launch {
-        runner,
+        runner: chosen.runner,
+        pinned: chosen.pinned,
         settings: app.agent_settings(&workspace, &readable, &read_only),
         cwd: workspace,
         system_prompt,
-        resume: rec.resume(runner),
+        resume: rec.resume(chosen.runner),
         permission_mode: app.cfg.agent.chat_permission_mode.clone(),
-        models,
-        note,
+        models: chosen.models,
+        note: chosen.note,
         mcp_configs,
         plugin_dirs,
         env: app.agent_env("zulip"),

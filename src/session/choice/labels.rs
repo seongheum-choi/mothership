@@ -1,12 +1,13 @@
-//! `model:<name>` and `effort:<level>` labels on a Linear issue, read once when its session
-//! starts. A label that cannot be used is logged and left unset, so a labelling mistake never
+//! `runner:<name>`, `model:<name>` and `effort:<level>` labels on a Linear issue, read once
+//! when its session starts. A label that cannot be used is logged and left unset, so a labelling mistake never
 //! stops a session.
 
-use crate::config::check_effort;
+use crate::{agent::Runner, config::check_effort};
 
-/// The labels, as written, that set the session's model and effort.
+/// The labels, as written, that set the session's runner, model and effort.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Picked {
+    pub runner: Option<String>,
     pub model: Option<String>,
     pub effort: Option<String>,
 }
@@ -18,22 +19,28 @@ pub(super) fn value(label: &str) -> Option<&str> {
     (!value.is_empty()).then_some(value)
 }
 
-/// The `model:` and `effort:` labels of `labels`, matched case-insensitively on the prefix.
+/// The `runner:`, `model:` and `effort:` labels of `labels`, matched case-insensitively on
+/// the prefix.
 pub fn select(key: &str, labels: &[String]) -> Picked {
-    let effort = one(key, labels, "effort").filter(|label| {
-        let level = value(label).unwrap_or_default();
-        match check_effort(level) {
+    let checked = |prefix: &str, check: fn(&str) -> Result<(), String>| {
+        one(key, labels, prefix).filter(|label| match check(value(label).unwrap_or_default()) {
             Ok(()) => true,
             Err(problem) => {
                 tracing::warn!("[{key}] label `{label}` ignored: {problem}");
                 false
             }
-        }
-    });
+        })
+    };
     Picked {
+        runner: checked("runner", |runner| runner.parse::<Runner>().map(drop)),
         model: one(key, labels, "model"),
-        effort,
+        effort: checked("effort", check_effort),
     }
+}
+
+/// The runner a `runner:` label stored on a session names.
+pub(super) fn runner(label: &str) -> Option<Runner> {
+    value(label)?.parse().ok()
 }
 
 /// The one label of `labels` that starts with `prefix:` and names a value. Two of them are a
@@ -76,18 +83,24 @@ mod tests {
         assert_eq!(
             select("s1", &labels(&["backend", "Model:sonnet", "effort: high"])),
             Picked {
+                runner: None,
                 model: Some("Model:sonnet".into()),
                 effort: Some("effort: high".into()),
             }
         );
         assert_eq!(value("Model:sonnet"), Some("sonnet"));
         assert_eq!(value("effort: high"), Some("high"));
+        let picked = select("s1", &labels(&["Runner: codex"]));
+        assert_eq!(picked.runner.as_deref(), Some("Runner: codex"));
+        assert_eq!(runner("Runner: codex"), Some(Runner::Codex));
     }
 
     #[test]
     fn a_bad_or_doubled_label_is_left_unset() {
         assert_eq!(select("s1", &labels(&["effort:ultra"])), Picked::default());
         assert_eq!(select("s1", &labels(&["effort:HIGH"])), Picked::default());
+        assert_eq!(select("s1", &labels(&["runner:gpt"])), Picked::default());
+        assert_eq!(select("s1", &labels(&["runner:Codex"])), Picked::default());
         assert_eq!(select("s1", &labels(&["model:"])), Picked::default());
         assert_eq!(
             select("s1", &labels(&["model:opus", "model:haiku"])),
@@ -97,7 +110,7 @@ mod tests {
             select("s1", &labels(&["model:opus", "effort:ultra"])),
             Picked {
                 model: Some("model:opus".into()),
-                effort: None,
+                ..Picked::default()
             },
             "one bad label leaves the other alone"
         );

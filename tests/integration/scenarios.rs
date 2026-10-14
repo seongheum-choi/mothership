@@ -57,6 +57,8 @@ pub const ALL: &[(&str, Scenario)] = scenarios![
     codex_runner_answers_with_thoughts_and_a_response,
     codex_runner_resumes_the_thread_with_a_prompt_from_mid_turn,
     claude_usage_limit_moves_turns_to_codex_until_it_resets,
+    runner_directive_keeps_the_session_on_codex,
+    runner_directive_keeps_the_session_on_claude_at_the_limit,
     repo_and_mode_models_apply_per_field,
     model_labels_beat_the_mode_and_bad_ones_are_ignored,
 ];
@@ -1572,6 +1574,82 @@ async fn claude_usage_limit_moves_turns_to_codex_until_it_resets(ctx: Ctx) -> Re
         "{back}"
     );
     ensure!(h.status().await?["claude_limited_until"].is_null());
+    Ok(())
+}
+
+/// `[runner=codex]` on an instance that runs Claude Code moves the session to Codex, its first
+/// thought says so, and the next turn stays there and resumes the thread.
+async fn runner_directive_keeps_the_session_on_codex(ctx: Ctx) -> Result<()> {
+    let h = Harness::start(&ctx, Setup::default()).await?;
+    std::fs::write(h.dir.join(CODEX_SCRIPT), CODEX_TURN)?;
+    let issue = issue(60, "Fix it.");
+    h.mock.add_issue(&issue);
+    let comment = "@mothership [runner=codex] take a look";
+    ensure!(
+        h.linear(mentioned("s60", &issue, comment, "context of SH-60"))
+            .await?
+            == 200
+    );
+    h.activity("s60", "response", 1).await?;
+    let first = h.prompt_with("context of SH-60").await?;
+    ensure!(first["tool"] == "codex", "{first}");
+    let said = thoughts(&h, "s60");
+    ensure!(
+        said.iter()
+            .any(|t| t.starts_with("Runner: codex (from your message), model: opus")),
+        "{said:?}"
+    );
+
+    ensure!(h.linear(prompted("s60", &issue, "and the tests")).await? == 200);
+    h.activity("s60", "response", 2).await?;
+    let next = h.prompt_with("and the tests").await?;
+    let thread = format!("thread-{}", first["pid"]);
+    ensure!(
+        next["tool"] == "codex" && next["resume"] == thread,
+        "{next}"
+    );
+    ensure!(h.calls("claude").is_empty(), "{:?}", h.calls("claude"));
+    ensure!(
+        h.status().await?["runner"] == "claude",
+        "the instance default"
+    );
+    Ok(())
+}
+
+/// A session `[runner=claude]` pins that hits Claude Code's usage limit fails with the reason
+/// instead of moving to Codex, and its next turn tries Claude Code again while the limit lasts.
+async fn runner_directive_keeps_the_session_on_claude_at_the_limit(ctx: Ctx) -> Result<()> {
+    let h = Harness::start(&ctx, Setup::default()).await?;
+    std::fs::write(h.dir.join(CODEX_SCRIPT), CODEX_TURN)?;
+    std::fs::write(h.dir.join(CLAUDE_LIMIT), "600")?;
+    let issue = issue(61, "Fix it.");
+    h.mock.add_issue(&issue);
+    let comment = "@mothership [runner=claude] take a look";
+    ensure!(
+        h.linear(mentioned("s61", &issue, comment, "context of SH-61"))
+            .await?
+            == 200
+    );
+    let error = h.activity("s61", "error", 1).await?;
+    ensure!(
+        body(&error).starts_with("You've hit your session limit")
+            && body(&error).contains("pinned to Claude Code with `[runner=claude]`"),
+        "{error}"
+    );
+    ensure!(h.status().await?["claude_limited_until"].is_u64());
+
+    ensure!(h.linear(prompted("s61", &issue, "try again")).await? == 200);
+    h.activity("s61", "error", 2).await?;
+    let again = h.prompt_with("try again").await?;
+    ensure!(again["tool"] == "claude", "{again}");
+    ensure!(h.calls("codex").is_empty(), "{:?}", h.calls("codex"));
+    ensure!(
+        thoughts(&h, "s61")
+            .iter()
+            .all(|t| !t.contains("switching to Codex") && !t.contains("running on Codex")),
+        "{:?}",
+        thoughts(&h, "s61")
+    );
     Ok(())
 }
 

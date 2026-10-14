@@ -64,13 +64,17 @@ impl FromStr for Runner {
 #[derive(Clone)]
 pub struct Launch {
     pub runner: Runner,
+    /// A message chose the runner, so a turn on Claude Code that hits its usage limit fails
+    /// rather than moving to Codex.
+    pub pinned: bool,
     pub cwd: PathBuf,
     pub system_prompt: String,
     /// The runner's session to continue: a Claude session id or a Codex thread id.
     pub resume: Option<String>,
     pub permission_mode: String,
     pub models: Models,
-    /// Said as the turn's first thought: the model or effort changed since the last turn.
+    /// Said as the turn's first thought: the runner, model or effort changed since the last
+    /// turn, or Claude Code's usage limit moved it to Codex.
     pub note: Option<String>,
     pub mcp_configs: Vec<PathBuf>,
     pub plugin_dirs: Vec<PathBuf>,

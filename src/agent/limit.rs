@@ -1,14 +1,20 @@
-//! Claude Code's usage limit: while it lasts, turns of an instance that runs Claude Code run
-//! on Codex instead, and the first turn after it resets goes back to Claude Code.
+//! Claude Code's usage limit: while it lasts, turns that would run Claude Code run on Codex
+//! instead, unless a message chose the runner, and the first turn after it resets goes back to
+//! Claude Code.
 
 use super::Runner;
 use std::path::Path;
 
-/// Whether turns run on Codex rather than `configured`: only an instance that runs Claude Code
+/// Whether a turn runs on Codex rather than `configured`: only one that would run Claude Code
 /// switches, and only until the limit resets at `resets_at` (Unix seconds).
 pub fn applies(configured: Runner, resets_at: u64, now: u64) -> bool {
     configured == Runner::Claude && now < resets_at
 }
+
+/// Added to the failure of a turn that hit the limit on a session `[runner=claude]` keeps on
+/// Claude Code.
+pub const PINNED: &str = "This session is pinned to Claude Code with `[runner=claude]`, so it \
+     does not move to Codex. Reply with `[runner=default]` or `[runner=codex]` to let it.";
 
 /// Whether the Codex CLI at `bin` is there to switch to: a path to a file, or a name found on
 /// `PATH` the way the agent process is spawned.

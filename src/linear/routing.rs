@@ -139,13 +139,14 @@ impl Linear {
         app.store.update(|s| {
             if let Some(rec) = s.sessions.get_mut(sid) {
                 rec.mode.clone_from(&name);
+                rec.label_runner.clone_from(&picked.runner);
                 rec.label_model.clone_from(&picked.model);
                 rec.label_effort.clone_from(&picked.effort);
                 rec.mode_pending = false;
             }
         });
         if picked != choice::labels::Picked::default() {
-            tracing::info!("[{sid}] model labels: {picked:?}");
+            tracing::info!("[{sid}] runner and model labels: {picked:?}");
         }
         if let Some(c) = choice {
             tracing::info!("[{sid}] mode {} (label {})", c.mode.name, c.label);

@@ -37,6 +37,10 @@ pub(super) fn parse(name: &str, text: &str) -> Result<Mode> {
         match key {
             "labels" => mode.labels = value.into_list(),
             "deny" => mode.deny = value.into_list(),
+            "runner" => match scalar(value)?.parse() {
+                Ok(runner) => mode.models.runner = Some(runner),
+                Err(problem) => bail!("frontmatter line {line}: {problem}"),
+            },
             "model" => mode.models.model = Some(scalar(value)?),
             "fallback_model" => mode.models.fallback_model = Some(scalar(value)?),
             "effort" => {
@@ -57,8 +61,8 @@ pub(super) fn parse(name: &str, text: &str) -> Result<Mode> {
                 mode.permission_mode = Some(pm);
             }
             other => bail!(
-                "frontmatter line {line}: unknown key `{other}` (known: labels, model, \
-                 fallback_model, effort, permission_mode, deny)"
+                "frontmatter line {line}: unknown key `{other}` (known: labels, runner, \
+                 model, fallback_model, effort, permission_mode, deny)"
             ),
         }
     }
@@ -210,13 +214,14 @@ fn unquote(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::ModelFields;
+    use crate::{agent::Runner, config::ModelFields};
 
     #[test]
     fn parses_frontmatter_and_body() {
         let text = "---\n\
                     # comment\n\
                     labels: [Research, \"deep dive\"]\n\
+                    runner: codex\n\
                     model: 'opus'\n\
                     fallback_model: sonnet\n\
                     effort: medium\n\
@@ -230,6 +235,7 @@ mod tests {
                 name: "research".into(),
                 labels: vec!["Research".into(), "deep dive".into()],
                 models: ModelFields {
+                    runner: Some(Runner::Codex),
                     model: Some("opus".into()),
                     fallback_model: Some("sonnet".into()),
                     effort: Some("medium".into()),
@@ -242,6 +248,11 @@ mod tests {
         let err = parse("research", "---\neffort: ultra\n---\n").unwrap_err();
         assert!(
             format!("{err:#}").contains("`ultra` is not an effort level"),
+            "{err:#}"
+        );
+        let err = parse("research", "---\nrunner: gpt\n---\n").unwrap_err();
+        assert!(
+            format!("{err:#}").contains("line 1: \"gpt\" is not a runner"),
             "{err:#}"
         );
     }

@@ -6,7 +6,7 @@ use super::{
     relay::{ProgressTail, Relay},
     turn::Turn,
 };
-use crate::agent::{Agent, Event, Launch, Runner};
+use crate::agent::{Agent, Event, Launch, Runner, limit};
 use anyhow::{Result, bail};
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -39,7 +39,8 @@ impl<S: Surface> Turn<'_, S> {
     ) -> Result<Ended> {
         let (app, surface, key) = (self.app, &self.reg.surface, self.key);
         let runner = launch.runner;
-        let can_switch = runner == Runner::Claude && app.codex_installed();
+        let pinned = launch.pinned;
+        let can_switch = runner == Runner::Claude && !pinned && app.codex_installed();
         let mut agent = Agent::spawn(&app.cfg.agent, launch)?;
         agent.send(prompt).await?;
         let mut relay = Relay::default();
@@ -79,7 +80,11 @@ impl<S: Surface> Turn<'_, S> {
                                 for update in relay.flush_except(&text) {
                                     surface.update(app, key, update).await;
                                 }
-                                let outcome = if is_error { Outcome::Failed(text) } else { Outcome::Reply(text) };
+                                let outcome = match (is_error, pinned && limited.is_some()) {
+                                    (true, true) => Outcome::Failed(format!("{text}\n\n{}", limit::PINNED)),
+                                    (true, false) => Outcome::Failed(text),
+                                    (false, _) => Outcome::Reply(text),
+                                };
                                 surface.finish(app, key, std::mem::take(tickets), outcome).await;
                             }
                             Event::Usage(usage) => tracing::info!("[{key}] {runner} usage: {usage}"),
