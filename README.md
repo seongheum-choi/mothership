@@ -78,7 +78,7 @@ Settings come from the process environment or `<home>/.env`, and the environment
 | `AGENT_START_TIMEOUT` | `120` | Seconds an agent may run without announcing its session before it is killed and the turn fails |
 | `BASE_BRANCH` | `main` | Ignored when `repos.json` exists |
 | `WORKTREES_DIR` | `<home>/worktrees` | |
-| `AGENT_RUNNER` | `claude` | `claude` or [`codex`](#codex); anything else is warned about and runs Claude Code. Read again before every turn, so a change applies to the next turn without a restart |
+| `AGENT_RUNNER` | `claude` | `claude` or [`codex`](#codex); anything else is warned about and runs Claude Code. Read again before every turn, so a change applies to the next turn without a restart. A repository, a mode, a label or a message can choose another; see [Model and effort](#model-and-effort) |
 | `CODEX_BIN` | `codex` | The Codex CLI, for `AGENT_RUNNER=codex` |
 | `CLAUDE_BIN`, `CLAUDE_MODEL`, `CLAUDE_FALLBACK_MODEL` | `claude`, `opus`, `sonnet` | On macOS with the native installer, point `CLAUDE_BIN` at `~/.local/share/claude/ClaudeCode.app/Contents/MacOS/claude`; launched through `~/.local/bin/claude`, privacy prompts name a version number ("2.1.x") that changes with every update |
 | `CLAUDE_EFFORT` | | Claude Code `--effort` for every turn: `low`, `medium`, `high`, `xhigh` or `max`; unset (or anything else, which is warned about) leaves the flag off. Like `CLAUDE_MODEL` and `CLAUDE_FALLBACK_MODEL`, it applies from the next turn without a restart; see [Model and effort](#model-and-effort) |
@@ -125,7 +125,7 @@ State (Linear tokens, and each conversation's repository, workspace and Claude s
 | `labels`, `linear_teams`, `linear_projects` | | Route issues here. Each value matches a name (case-insensitive) or an id, and a project's slug or a team's key (`EN`). No value may be claimed by two repositories |
 | `prompt_file` | | Replaces the review backend's instructions (and `APPEND_SYSTEM_PROMPT_FILE`); in a non-git repository it follows the no-commit instructions |
 | `mcp_configs` | | MCP config files added for sessions here, after `MCP_CONFIGS` |
-| `model`, `fallback_model`, `effort` | `CLAUDE_MODEL`, `CLAUDE_FALLBACK_MODEL`, `CLAUDE_EFFORT` | For sessions in this repository; see [Model and effort](#model-and-effort). An `effort` other than the five levels stops startup, and a reload keeps the previous list |
+| `runner`, `model`, `fallback_model`, `effort` | `AGENT_RUNNER`, `CLAUDE_MODEL`, `CLAUDE_FALLBACK_MODEL`, `CLAUDE_EFFORT` | For sessions in this repository; see [Model and effort](#model-and-effort). A `runner` other than `claude` or `codex`, or an `effort` other than the five levels, stops startup, and a reload keeps the previous list |
 | `git` | `true` | `false`: no worktree; sessions work in `path` directly, and only one turn runs there at a time while other sessions' turns wait; they are told not to commit or open pull requests |
 
 A Linear session picks its repository when it starts and keeps it for every later turn. The first rule that matches decides:
@@ -135,7 +135,7 @@ A Linear session picks its repository when it starts and keeps it for every late
 3. The issue's project
 4. The issue's team
 
-A directive inside backticks or a fenced code block is quoted, not given, and is ignored; this holds for `[model=…]` and `[effort=…]` too.
+A directive inside backticks or a fenced code block is quoted, not given, and is ignored; this holds for `[runner=…]`, `[model=…]` and `[effort=…]` too.
 
 With a single repository none of this is read: every session works there, as before `repos.json`.
 
@@ -150,6 +150,7 @@ A mode changes how a Linear session works: `<home>/modes/<name>.md` holds instru
 ```markdown
 ---
 labels: [Research]
+runner: claude
 model: opus
 fallback_model: sonnet
 effort: medium
@@ -164,7 +165,7 @@ Answer the question in the issue; do not change anything.
 | Field | Default | |
 | --- | --- | --- |
 | `labels` | | Linear label names that turn the mode on, case-insensitive |
-| `model`, `fallback_model`, `effort` | the repository's, then `CLAUDE_MODEL`, `CLAUDE_FALLBACK_MODEL`, `CLAUDE_EFFORT` | For the session's turns; see [Model and effort](#model-and-effort). An `effort` other than the five levels fails the mode file |
+| `runner`, `model`, `fallback_model`, `effort` | the repository's, then `AGENT_RUNNER`, `CLAUDE_MODEL`, `CLAUDE_FALLBACK_MODEL`, `CLAUDE_EFFORT` | For the session's turns; see [Model and effort](#model-and-effort). A `runner` other than `claude` or `codex`, or an `effort` other than the five levels, fails the mode file |
 | `permission_mode` | `bypassPermissions` | Claude Code `--permission-mode` |
 | `deny` | | Claude Code permission deny rules, added to the home directory ones |
 
@@ -180,29 +181,29 @@ Before each Linear, Zulip or GitHub event is routed, mothership compares the mod
 
 ### Model and effort
 
-Each of `--model`, `--fallback-model` and `--effort` is decided on its own by the narrowest scope that sets it, so `[model=sonnet]` keeps the effort as it was:
+The runner and each of `--model`, `--fallback-model` and `--effort` are decided on their own by the narrowest scope that sets them, so `[model=sonnet]` keeps the effort as it was:
 
-| | `--model` | `--fallback-model` | `--effort` |
-| --- | --- | --- | --- |
-| 1. the session's messages | `[model=…]` | | `[effort=…]` |
-| 2. the issue's labels | `model:<name>` | | `effort:<level>` |
-| 3. its mode | `model` | `fallback_model` | `effort` |
-| 4. its repository | `model` | `fallback_model` | `effort` |
-| 5. the instance | `CLAUDE_MODEL` | `CLAUDE_FALLBACK_MODEL` | `CLAUDE_EFFORT` |
+| | runner | `--model` | `--fallback-model` | `--effort` |
+| --- | --- | --- | --- | --- |
+| 1. the session's messages | `[runner=…]` | `[model=…]` | | `[effort=…]` |
+| 2. the issue's labels | `runner:<name>` | `model:<name>` | | `effort:<level>` |
+| 3. its mode | `runner` | `model` | `fallback_model` | `effort` |
+| 4. its repository | `runner` | `model` | `fallback_model` | `effort` |
+| 5. the instance | `AGENT_RUNNER` | `CLAUDE_MODEL` | `CLAUDE_FALLBACK_MODEL` | `CLAUDE_EFFORT` |
 
 With no scope setting the effort, no `--effort` is passed and Claude Code picks. A Zulip session has neither labels, a mode nor a repository, so its messages and the instance decide.
 
-A `model:<name>` or `effort:<level>` label is read once, when the session starts, from the same lookup the mode and the repository come from, and the prefix is matched case-insensitively (`Model:sonnet` works) while the value is passed as written, so an `effort:` label needs one of the five lowercase levels (`effort: HIGH` is ignored). Because nothing looks an issue's labels up on an instance with no mode files, model labels are only read where `<home>/modes` has at least one file. Unlike a mode label, a mistake here never stops the session: a label with no value, an `effort:` that is not one of the five levels, and a prefix two labels carry are each logged as ignored, and that field falls through to the mode, the repository and the instance. Mode labels and model labels are separate, so `model:sonnet` does not make a `research` mode ambiguous.
+A `runner:<name>`, `model:<name>` or `effort:<level>` label is read once, when the session starts, from the same lookup the mode and the repository come from, and the prefix is matched case-insensitively (`Model:sonnet` works) while the value is passed as written, so a `runner:` label needs `claude` or `codex` and an `effort:` label one of the five lowercase levels (`effort: HIGH` is ignored). Because nothing looks an issue's labels up on an instance with no mode files, model labels are only read where `<home>/modes` has at least one file. Unlike a mode label, a mistake here never stops the session: a label with no value, a `runner:` that is not `claude` or `codex`, an `effort:` that is not one of the five levels, and a prefix two labels carry are each logged as ignored, and that field falls through to the mode, the repository and the instance. Mode labels and these prefixed labels are separate, so `model:sonnet` or `runner:codex` does not make a `research` mode ambiguous.
 
-Write `[model=sonnet]`, `[effort=high]`, or both, anywhere in the @mention that starts a Linear session, in a reply to it, or in a Zulip message; `[model=default]` and `[effort=default]` drop the session's choice again. One in the starting mention applies to the first turn; one in a reply that joins a running turn applies from the next turn, which still resumes the same conversation. An effort other than the five levels is answered with an error and runs no turn; a reply refused this way is dropped rather than kept for a session that waits for its repository or mode, so send it again corrected. A model name is passed to Claude Code as written: if the turn on it fails, the error shows in the session and the session goes back to the model it had.
+Write `[runner=codex]`, `[model=sonnet]`, `[effort=high]`, or any of them together, anywhere in the @mention that starts a Linear session, in a reply to it, or in a Zulip message; `[runner=default]`, `[model=default]` and `[effort=default]` drop the session's choice again. One in the starting mention applies to the first turn; one in a reply that joins a running turn applies from the next turn, which still resumes the same conversation. A runner other than `claude` or `codex`, or an effort other than the five levels, is answered with an error and runs no turn; a reply refused this way is dropped rather than kept for a session that waits for its repository or mode, so send it again corrected. A model name is passed to Claude Code as written: if the turn on it fails, the error shows in the session and the session goes back to the model it had.
 
 `CLAUDE_MODEL`, `CLAUDE_FALLBACK_MODEL` and `CLAUDE_EFFORT` are read from `.env` again before every turn, so a change applies to the next turn without a restart; a mode's and a repository's values are read again every turn too. `GET /status` shows the instance defaults in effect as `runner`, `model`, `fallback_model` and `effort`.
 
-When a turn's models differ from the session's previous turn, or anything but the instance defaults decided them on its first turn, the turn's first thought says each value and where it came from: `Model: sonnet, effort: high (from your message)`, or `Model: haiku (repo \`vault\`), effort: medium (mode \`research\`)`. The fallback model is named only when a mode or a repository set it. A first turn on the instance defaults alone says nothing.
+When a turn's runner or models differ from the session's previous turn, or anything but the instance defaults decided them on its first turn, the turn's first thought says each value and where it came from: `Model: sonnet, effort: high (from your message)`, `Model: haiku (repo \`vault\`), effort: medium (mode \`research\`)`, or `Runner: codex (label \`runner:codex\`), model: opus, effort: default (instance default)`. The runner is named only when something other than the instance chose it or it changed since the previous turn, and the fallback model only when a mode or a repository set it. A first turn on the instance defaults alone says nothing.
 
 ### Codex
 
-With `AGENT_RUNNER=codex`, each turn runs `codex exec --json --skip-git-repo-check --sandbox workspace-write --cd <workspace> -` (checked against Codex 0.146 and 0.160) with the prompt on stdin, and its JSONL becomes the same thoughts, actions and response as Claude Code's: `reasoning` and `agent_message` items are thoughts, `command_execution` is a `Bash` action, `file_change` an `Edit` action per file, `mcp_tool_call` an `mcp__<server>__<tool>` action, and the last agent message before `turn.completed` is the response. `turn.failed`, or the output ending after an `error` event without a result, fails the turn; `turn.completed`'s token usage is logged. The `thread.started` id is kept where a Claude session id would be, and the next turn runs `codex exec … resume <thread_id> -`.
+With `AGENT_RUNNER=codex`, or a session whose [runner scope](#model-and-effort) chose Codex (`[runner=codex]`, a `runner:codex` label, a mode's or a repository's `runner: codex`), each turn runs `codex exec --json --skip-git-repo-check --sandbox workspace-write --cd <workspace> -` (checked against Codex 0.146 and 0.160) with the prompt on stdin, and its JSONL becomes the same thoughts, actions and response as Claude Code's: `reasoning` and `agent_message` items are thoughts, `command_execution` is a `Bash` action, `file_change` an `Edit` action per file, `mcp_tool_call` an `mcp__<server>__<tool>` action, and the last agent message before `turn.completed` is the response. `turn.failed`, or the output ending after an `error` event without a result, fails the turn; `turn.completed`'s token usage is logged. The `thread.started` id is kept where a Claude session id would be, and the next turn runs `codex exec … resume <thread_id> -`.
 
 - **System prompt:** what Claude Code gets through `--append-system-prompt` (the session's instructions, its mode's prompt, the repository's delivery rules) goes in as `-c developer_instructions=…`.
 - **Model and effort:** the turn's model is passed as `-m` unless it names a Claude model (`opus`, `sonnet`, `haiku`, `claude-…`, so also the `CLAUDE_MODEL` default); then Codex runs the model its own config picks. Set a Codex model with `[model=…]`, a `model:` label, a mode's `model` or the repository's `model`. The effort is passed as `-c model_reasoning_effort=…`. There is no fallback model.
@@ -218,9 +219,11 @@ Limits of this first version:
 
 #### Claude usage limit
 
-On an instance that runs Claude Code, a turn that Claude Code ends on the account's usage limit runs again on Codex with the same prompts, including those added while it worked, and its first thought says `Claude usage limit reached → switching to Codex until 2026-10-12 14:05 UTC`. Claude Code retries and tries `CLAUDE_FALLBACK_MODEL` itself first, so only a limit that ends the turn switches. The limit is recognised by what Claude Code 2.1.296 writes: an `assistant` message with `"api_error": "usage_limit_reached"` whose `api_error_params.rate_limit_info.resetsAt` is the reset time, then a `result` with `"is_error": true` and the same `api_error`.
+A turn on Claude Code that Claude Code ends on the account's usage limit runs again on Codex with the same prompts, including those added while it worked, and its first thought says `Claude usage limit reached → switching to Codex until 2026-10-12 14:05 UTC`. Claude Code retries and tries `CLAUDE_FALLBACK_MODEL` itself first, so only a limit that ends the turn switches. The limit is recognised by what Claude Code 2.1.296 writes: an `assistant` message with `"api_error": "usage_limit_reached"` whose `api_error_params.rate_limit_info.resetsAt` is the reset time, then a `result` with `"is_error": true` and the same `api_error`.
 
-The reset time is kept in `state.json` for the whole instance, since every session shares one account. Until then, every new turn runs on Codex, opening with `Claude usage limit until … → running on Codex`, and `GET /status` shows it as `claude_limited_until` with `runner` `codex`. The first turn after it goes back to Claude Code and resumes the session's Claude conversation; a session that worked on Codex meanwhile keeps its Codex thread for the next limit. Without a reset time, only the turn that hit the limit moves. An instance with `AGENT_RUNNER=codex`, or whose `CODEX_BIN` is neither a file nor on `PATH`, reports the limit as a failed turn, as before.
+The reset time is kept in `state.json` for the whole instance, since every session shares one account. Until then, every new turn that would run on Claude Code runs on Codex, opening with `Claude usage limit until … → running on Codex`, and `GET /status` shows it as `claude_limited_until` with `runner` `codex` when the instance default is Claude Code (`runner` is always the instance default, never a session's). The first turn after it goes back to Claude Code and resumes the session's Claude conversation; a session that worked on Codex meanwhile keeps its Codex thread for the next limit. Without a reset time, only the turn that hit the limit moves. An instance whose `CODEX_BIN` is neither a file nor on `PATH` reports the limit as a failed turn, as before.
+
+The switch only applies to a runner a label, a mode, a repository or the instance chose. A runner a message chose is pinned: a `[runner=claude]` session that hits the limit fails the turn, with a note that it is pinned and that `[runner=default]` or `[runner=codex]` lets it move, and tries Claude Code again on its next turn; a `[runner=codex]` session stays on Codex before, during and after the limit.
 
 ## Linear auth
 

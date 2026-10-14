@@ -100,21 +100,27 @@ impl App {
         }
     }
 
-    /// The runner of the next turn: the instance's as `.env` says now, read again for every
-    /// turn, or Codex while Claude Code's usage limit lasts.
+    /// The runner of a turn no narrower scope decides: the instance's as `.env` says now, or
+    /// Codex while Claude Code's usage limit lasts.
     pub fn runner(&self) -> Runner {
         if self.claude_limited_until().is_some() {
             Runner::Codex
         } else {
-            self.live.runner()
+            self.models().runner
         }
     }
 
     /// When Claude Code's usage limit resets, while it moves this instance's turns to Codex.
     pub fn claude_limited_until(&self) -> Option<u64> {
+        self.claude_limit(self.models().runner)
+    }
+
+    /// When Claude Code's usage limit resets, while it moves a turn that `decided` would run
+    /// to Codex.
+    pub fn claude_limit(&self, decided: Runner) -> Option<u64> {
         self.refresh();
         let resets_at = self.store.read(|s| s.claude_resets_at)?;
-        let applies = limit::applies(self.live.runner(), resets_at, crate::store::now_secs());
+        let applies = limit::applies(decided, resets_at, crate::store::now_secs());
         (applies && self.codex_installed()).then_some(resets_at)
     }
 
