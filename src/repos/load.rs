@@ -8,7 +8,10 @@ use crate::config::{ModelFields, check_effort};
 use crate::directive::valid_name;
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
-use std::path::{Path, PathBuf};
+use std::{
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+};
 
 /// One `repos.json` entry as written.
 #[derive(Deserialize)]
@@ -26,6 +29,8 @@ struct Entry {
     prompt_file: Option<String>,
     #[serde(default)]
     mcp_configs: Vec<String>,
+    #[serde(default)]
+    commands: BTreeMap<String, String>,
     /// `claude` or `codex`; serde names any other value.
     runner: Option<Runner>,
     model: Option<String>,
@@ -149,6 +154,17 @@ pub(super) fn parse(text: &str, user_home: &Path) -> Result<(Vec<Repo>, Vec<Opti
                 .transpose()?,
         );
         let models = model_fields(&name, &entry)?;
+        if let Some((bad, _)) = entry.commands.iter().find(|(n, c)| {
+            c.trim().is_empty()
+                || n.is_empty()
+                || !n
+                    .chars()
+                    .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
+        }) {
+            bail!(
+                "repo {name:?} command {bad:?} needs a name of letters, digits, - and _ and a command"
+            );
+        }
         repos.push(Repo {
             path,
             base_branch: entry.base_branch.unwrap_or_else(|| "main".into()),
@@ -162,6 +178,7 @@ pub(super) fn parse(text: &str, user_home: &Path) -> Result<(Vec<Repo>, Vec<Opti
                 .map(|p| resolve("mcp_configs", p))
                 .collect::<Result<_>>()?,
             git: entry.git,
+            commands: entry.commands,
             name,
             models,
         });
@@ -215,7 +232,7 @@ mod tests {
     fn parses_entries_with_defaults() {
         let (repos, prompts) = parse(
             r#"[{"name": "app", "path": "/src/app", "prompt_file": "~/p.md",
-                 "mcp_configs": ["/etc/mcp.json"]},
+                 "mcp_configs": ["/etc/mcp.json"], "commands": {"pnpm-install": "pnpm i"}},
                 {"name": "lib", "path": "/src/lib/", "base_branch": "trunk"},
                 {"name": "vault", "path": "~/vault", "git": false}]"#,
             &home(),
@@ -224,6 +241,8 @@ mod tests {
         assert_eq!(repos[0].base_branch, "main");
         assert!(repos[0].git);
         assert_eq!(repos[0].mcp_configs, [PathBuf::from("/etc/mcp.json")]);
+        assert_eq!(repos[0].commands["pnpm-install"], "pnpm i");
+        assert!(repos[1].commands.is_empty());
         assert_eq!(repos[1].path, PathBuf::from("/src/lib"));
         assert_eq!(repos[1].base_branch, "trunk");
         assert_eq!(repos[2].path, PathBuf::from("/Users/me/vault"));
@@ -338,6 +357,10 @@ mod tests {
         assert!(error(r#"[{"name": "a", "path": "/a", "lables": []}]"#).contains("unknown field"));
         assert!(error(r#"[{"name": "a b", "path": "/a"}]"#).contains("must be letters"));
         assert!(error(r#"[{"name": "a", "path": "rel"}]"#).contains("must be absolute"));
+        for commands in [r#"{"a b": "x"}"#, r#"{"": "x"}"#, r#"{"x": " "}"#] {
+            let json = format!(r#"[{{"name": "a", "path": "/a", "commands": {commands}}}]"#);
+            assert!(error(&json).contains("needs a name"), "{commands}");
+        }
         assert!(
             error(r#"[{"name": "a", "path": "/a", "prompt_file": "p.md"}]"#)
                 .contains(r#"repo "a" prompt_file: path p.md must be absolute"#)

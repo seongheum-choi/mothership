@@ -45,7 +45,8 @@ fn toml_string(text: &str) -> String {
 }
 
 /// The directories Claude Code's sandbox lets Bash write besides the working directory
-/// (`SANDBOX_WRITE` and the progress directory), so Codex's sandbox opens the same.
+/// (`SANDBOX_WRITE` and the session's directory, whose `runs/` it may ask mothership in), so
+/// Codex's sandbox opens the same.
 fn writable(settings: &Value) -> Vec<&str> {
     settings["sandbox"]["filesystem"]["allowWrite"]
         .as_array()

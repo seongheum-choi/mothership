@@ -13,7 +13,7 @@ use serde_json::Value;
 use std::{fmt, path::PathBuf, process::Stdio, str::FromStr};
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines},
-    process::{Child, ChildStdin, ChildStdout, Command},
+    process::{Child, ChildStdin, ChildStdout},
 };
 
 /// The CLI that runs a turn: `AGENT_RUNNER`.
@@ -80,6 +80,11 @@ pub struct Launch {
     pub plugin_dirs: Vec<PathBuf>,
     /// Claude Code settings layered over the user's (permission deny rules).
     pub settings: Value,
+    /// The same rules for what mothership runs on the session's behalf, with Codex's own
+    /// paths readable: see [`crate::host`].
+    pub host_settings: Value,
+    /// The repository's `commands`, which the session may ask mothership to run.
+    pub commands: std::collections::BTreeMap<String, String>,
     pub env: Vec<(String, String)>,
 }
 
@@ -202,25 +207,10 @@ impl Agent {
         })
     }
 
-    /// Kills the agent and everything it started. Agents run shell commands in their own
-    /// process groups, so the whole tree is collected first: each process is
-    /// frozen (SIGSTOP) before its children are listed, so nothing forks past the sweep.
+    /// Kills the agent and everything it started: see [`kill_tree`].
     pub async fn kill(&mut self) {
         if let Some(root) = self.child.id() {
-            let mut tree = vec![root.to_string()];
-            let mut next = 0;
-            while let Some(pid) = tree.get(next).cloned() {
-                let _ = Command::new("kill").args(["-STOP", &pid]).status().await;
-                if let Ok(out) = Command::new("pgrep").args(["-P", &pid]).output().await {
-                    tree.extend(
-                        String::from_utf8_lossy(&out.stdout)
-                            .split_whitespace()
-                            .map(String::from),
-                    );
-                }
-                next += 1;
-            }
-            let _ = Command::new("kill").arg("-KILL").args(&tree).status().await;
+            let _ = tokio::task::spawn_blocking(move || kill_tree(root)).await;
         }
         let _ = self.child.kill().await;
     }
@@ -228,6 +218,27 @@ impl Agent {
     pub async fn wait(&mut self) -> Result<std::process::ExitStatus> {
         Ok(self.child.wait().await?)
     }
+}
+
+/// Kills `root` and everything it started. Agents run shell commands in their own process
+/// groups, so the whole tree is collected first: each process is frozen (SIGSTOP) before its
+/// children are listed, so nothing forks past the sweep.
+pub fn kill_tree(root: u32) {
+    use std::process::Command;
+    let mut tree = vec![root.to_string()];
+    let mut next = 0;
+    while let Some(pid) = tree.get(next).cloned() {
+        let _ = Command::new("kill").args(["-STOP", &pid]).status();
+        if let Ok(out) = Command::new("pgrep").args(["-P", &pid]).output() {
+            tree.extend(
+                String::from_utf8_lossy(&out.stdout)
+                    .split_whitespace()
+                    .map(String::from),
+            );
+        }
+        next += 1;
+    }
+    let _ = Command::new("kill").arg("-KILL").args(&tree).status();
 }
 
 #[cfg(test)]
