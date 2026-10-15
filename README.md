@@ -285,7 +285,8 @@ TCC remembers an approval by the program's identifier and signing certificate. `
 
 ```sh
 openssl req -x509 -newkey rsa:2048 -nodes -days 3650 -subj "/CN=Mothership Dev" \
-  -keyout dev.key -out dev.crt -addext extendedKeyUsage=codeSigning
+  -keyout dev.key -out dev.crt -addext basicConstraints=critical,CA:TRUE \
+  -addext keyUsage=digitalSignature -addext extendedKeyUsage=codeSigning
 # -legacy is for OpenSSL 3, whose default p12 encryption macOS cannot import; drop it with /usr/bin/openssl (LibreSSL)
 openssl pkcs12 -export -inkey dev.key -in dev.crt -out dev.p12 -legacy
 security create-keychain mothership.keychain-db        # choose a password
@@ -294,7 +295,7 @@ security set-key-partition-list -S apple-tool:,apple: -k <password> mothership.k
 trash dev.key dev.p12
 ```
 
-`security find-identity -v` lists no *valid* identity for a self-signed certificate; that is expected. `codesign` still signs with it, and TCC compares the certificate, not its trust.
+`security find-identity -v` lists no *valid* identity for a self-signed certificate; that is expected. `codesign` still signs with it, and TCC compares the certificate, not its trust. Keep all three extensions: LibreSSL adds none by default, and with only `extendedKeyUsage` `find-identity` still lists the certificate but `codesign` answers `Mothership Dev: no identity found`.
 
 [`contrib/deploy.sh`](contrib/deploy.sh) then pulls, builds, signs (`codesign -s "Mothership Dev" -i mothership`), waits for `/status` to report idle, replaces the binary and kickstarts the agent. Its paths, launchd label and keychain are variables at the top of the script; put the keychain password in `~/.mothership/.keychain-pw` (mode 0600) to run it unattended. The first signed binary needs the approval once; later rebuilds keep it. If the first session after a deploy hangs, check the signature with `codesign -dv` first.
 
