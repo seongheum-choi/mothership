@@ -338,6 +338,7 @@ With the native installer, `CLAUDE_BIN` pointing at the `ClaudeCode.app` bundle 
 The Bash sandbox blocks some things a development host relies on. What has been needed so far:
 
 - **gh:** `~/.config/gh/hosts.yml` holds a plain-text token, so do not open `~/.config/gh`. Give agents a config directory without it: copy `config.yml` to `~/.mothership/gh`, set `GH_CONFIG_DIR=~/.mothership/gh` in `.env`, list `GH_CONFIG_DIR` and `GH_TOKEN` in `AGENT_ENV`, and add the directory to `SANDBOX_WRITE`.
+- **gh extensions:** `gh` finds extensions such as `gh stack` under `~/.local/share/gh/extensions`; add that directory to `SANDBOX_READ`. Reading is enough to run one; only `gh extension install` and `upgrade` write there.
 - **Temporary files:** the sandbox blocks `/var/folders`, so `mktemp` fails. Set `TMPDIR=~/.mothership/tmp` in `.env`, list it in `AGENT_ENV`, and add the directory to `SANDBOX_WRITE`.
 - **mise:** each new worktree's `mise.toml` is untrusted, and the shims stop with `Config files … are not trusted`. Trust the worktree and clone directories once in `~/.config/mise/config.toml`: `[settings]` `trusted_config_paths = ["~/.mothership/worktrees", "~/.mothership/repos"]`.
 - **Symlinked directories:** symlink targets are resolved only for the listed path itself, not for symlinks inside a listed directory. If `~/.claude/skills/x` links to `~/settings/ai/skills/x`, list the target directory (`~/settings/ai/skills`) in `SANDBOX_READ` as well, or the skill's scripts fail with `operation not permitted`.

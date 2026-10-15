@@ -55,6 +55,10 @@ pub fn profile(settings: &Value, workspace: &[PathBuf], always: &[String], own: 
             .collect::<Vec<_>>()
     };
     rule(&mut sb, "deny file-read*", &rules("Read"));
+    // Node's `realpath`, which pnpm runs on its `TMPDIR`, lstats every directory above it,
+    // and the run's directory sits in one every session's rules deny.
+    let above: Vec<String> = own.ancestors().skip(1).flat_map(literal).collect();
+    rule(&mut sb, "allow file-read-metadata", &above);
     sb.push_str("(deny file-write*)\n");
     rule(&mut sb, "allow file-write*", &writable);
     let mut protected = rules("Edit");
@@ -210,6 +214,8 @@ mod tests {
                 "(version 1)\n(allow default)\n\
                  (deny signal)\n(allow signal (target same-sandbox))\n\
                  (deny file-read* (subpath \"/h/.ssh\") (literal \"/h/.netrc\"))\n\
+                 (allow file-read-metadata (literal \"/h/.m/host-runs\") (literal \"/h/.m\") \
+                 (literal \"/h\") (literal \"/\"))\n\
                  (deny file-write*)\n\
                  (allow file-write* (subpath \"/h/.m/worktrees/A\") (subpath \"/h/.cargo/registry\") \
                  (subpath \"/h/.m/progress/s1\") (subpath \"/h/.codex/sessions\"))\n\
@@ -273,7 +279,7 @@ mod tests {
     #[test]
     fn seatbelt_enforces_the_profile() {
         let base = std::env::temp_dir().join(format!("mothership-sbx-{}", std::process::id()));
-        for dir in ["ws/sub/.git/hooks", "own", "sess", "secret", "outside"] {
+        for dir in ["ws/sub/.git/hooks", "secret/own", "sess", "outside"] {
             std::fs::create_dir_all(base.join(dir)).unwrap();
         }
         let d = std::fs::canonicalize(&base).unwrap();
@@ -282,7 +288,7 @@ mod tests {
             "permissions": {"deny": [format!("Read(/{}/secret/**)", d.display())]},
             "sandbox": {"filesystem": {"allowWrite": [d.join("sess")]}},
         });
-        let made = profile(&settings, &[d.join("ws")], &[], &d.join("own"));
+        let made = profile(&settings, &[d.join("ws")], &[], &d.join("secret/own"));
         let runs = |cmd: &str| {
             std::process::Command::new("/usr/bin/sandbox-exec")
                 .args(["-p", &made, "/bin/sh", "-c", cmd])
@@ -294,7 +300,8 @@ mod tests {
         };
         for allowed in [
             "echo > ws/a",
-            "echo > own/x",
+            "echo > secret/own/x",
+            "test -d secret",
             "echo > sess/r.json",
             "echo > ws/sub/.git/x",
         ] {
@@ -302,13 +309,14 @@ mod tests {
         }
         for denied in [
             "cat secret/s",
+            "ls secret",
             "echo > outside/x",
             "echo > ws/.envrc",
             "echo > ws/.ENVRC",
             "echo > ws/sub/.git/hooks/pre-commit",
             "mv ws/sub/.git ws/sub/.gitx",
             "rm -f sess/r.json && rmdir sess",
-            "mv own own2",
+            "mv secret/own secret/own2",
             "mv ws ws2",
         ] {
             assert!(!runs(denied), "{denied}");
