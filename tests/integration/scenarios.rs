@@ -349,7 +349,11 @@ async fn linear_agent_is_launched_in_the_sandbox(ctx: Ctx) -> Result<()> {
         deny_file(&state.join("state.json")),
     ];
     deny.push(deny_edit_dir(&state.join("mcp")));
+    // `repos/` and `worktrees/` hold the empty `.env` that stops dotenv searches; it stays
+    // readable, and like the rest of the state, not editable.
+    deny.push(deny_edit_dir(&state.join("repos")));
     deny.push(deny_edit_file(&state.join("state.json")));
+    deny.push(deny_edit_file(&state.join("worktrees/.env")));
     // The clone's `.git` stays editable for git's own writes, but for its config and hooks.
     let clone_git = h.home.join("src/app/.git");
     deny.push(deny_edit_file(&clone_git.join("config")));
@@ -509,7 +513,9 @@ async fn linear_mode_from_labels_shapes_the_agent(ctx: Ctx) -> Result<()> {
     ];
     expected.push(deny_edit_dir(&state.join("mcp")));
     expected.push(deny_edit_dir(&state.join("modes")));
+    expected.push(deny_edit_dir(&state.join("repos")));
     expected.push(deny_edit_file(&state.join("state.json")));
+    expected.push(deny_edit_file(&state.join("worktrees/.env")));
     let clone_git = h.home.join("src/app/.git");
     expected.push(deny_edit_file(&clone_git.join("config")));
     expected.push(deny_edit_dir(&clone_git.join("hooks")));
