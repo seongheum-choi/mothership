@@ -3,8 +3,9 @@
 
 use super::{Msg, Outcome, Registry, Surface, Update, process::Ended, relay::ProgressTail};
 use crate::{
-    agent::{Runner, limit},
+    agent::{Launch, Runner, limit},
     app::App,
+    host,
 };
 use anyhow::Result;
 use std::sync::Arc;
@@ -92,19 +93,32 @@ impl<S: Surface> Turn<'_, S> {
             };
             surface.update(app, key, note).await;
         }
-        let mut progress =
-            ProgressTail::create(app.cfg.progress_dir().join(crate::store::file_name(key)))?;
-        launch.env.push((
-            "MOTHERSHIP_PROGRESS_FILE".into(),
-            progress.path.display().to_string(),
-        ));
+        let (mut progress, mut host) = prepare(app, key, &mut launch)?;
+        let driven = self
+            .drive_all(launch, prompt, tickets, rx, queued, &mut progress)
+            .await;
+        // Before the workspace lock goes: a run still going would overlap the next turn.
+        host.stop().await;
+        driven
+    }
 
+    /// Runs `launch`, and once more on Codex when Claude Code ended it on its usage limit.
+    async fn drive_all(
+        &self,
+        launch: Launch,
+        prompt: &str,
+        tickets: &mut Vec<S::Ticket>,
+        rx: &mut mpsc::UnboundedReceiver<Msg<S::Ticket>>,
+        queued: &mut Vec<(String, S::Ticket)>,
+        progress: &mut ProgressTail,
+    ) -> Result<()> {
+        let (app, surface, key) = (self.app, &self.reg.surface, self.key);
         // A Claude turn that ends on the usage limit runs again on Codex, with every prompt
         // it was given.
         let retry = (launch.runner == Runner::Claude).then(|| launch.clone());
         let mut prompt = prompt.to_string();
         let ended = self
-            .drive(launch, &mut prompt, tickets, rx, queued, &mut progress)
+            .drive(launch, &mut prompt, tickets, rx, queued, progress)
             .await?;
         if let (Ended::Limited { resets_at }, Some(mut launch)) = (ended, retry) {
             let text = limit::switched(resets_at);
@@ -119,9 +133,44 @@ impl<S: Surface> Turn<'_, S> {
                 let rec = s.sessions.get(key);
                 rec.and_then(|r| r.resume(Runner::Codex))
             });
-            self.drive(launch, &mut prompt, tickets, rx, queued, &mut progress)
+            self.drive(launch, &mut prompt, tickets, rx, queued, progress)
                 .await?;
         }
         Ok(())
     }
+}
+
+/// The session's directory for this turn: its progress file and the runs it may ask for,
+/// named to the agent in `launch`'s environment, with a [`host::Watch`] serving those runs.
+fn prepare(app: &Arc<App>, key: &str, launch: &mut Launch) -> Result<(ProgressTail, host::Watch)> {
+    let dir = app.session_dir(key);
+    if std::fs::symlink_metadata(&dir).is_ok_and(|m| !m.is_dir()) {
+        // The progress file of the layout before session directories.
+        std::fs::remove_file(&dir)?;
+    }
+    std::fs::create_dir_all(&dir)?;
+    let progress = ProgressTail::create(dir.join("progress.log"))?;
+    launch.env.push((
+        "MOTHERSHIP_PROGRESS_FILE".into(),
+        progress.path.display().to_string(),
+    ));
+    launch
+        .env
+        .push(("MOTHERSHIP_RUNS".into(), dir.display().to_string()));
+    let codex = &app.cfg.agent.codex_bin;
+    let codex_home = host::codex_home(app);
+    let host = host::Host {
+        runs: dir,
+        run_root: host::run_root(&app.cfg.home),
+        progress: progress.handle()?,
+        cwd: launch.cwd.clone(),
+        env: host::env(&launch.settings, &launch.env),
+        settings: launch.settings.clone(),
+        codex_settings: launch.host_settings.clone(),
+        commands: launch.commands.clone(),
+        codex: limit::locate(codex, app.agent_path().as_deref()).unwrap_or_else(|| codex.into()),
+        codex_home: std::fs::canonicalize(&codex_home).unwrap_or(codex_home),
+        sandbox: app.cfg.agent.host_sandbox.clone(),
+    };
+    Ok((progress, host::watch(key.to_string(), host)))
 }

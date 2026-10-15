@@ -110,6 +110,7 @@ impl Surface for Linear {
                 .unwrap_or(app.cfg.review.instructions()),
         );
         system_prompt.push_str(&work_instructions(mode.as_ref(), &delivery));
+        system_prompt.extend(crate::host::commands_prompt(&repo.commands));
 
         let scopes = choice::Scopes {
             mode: mode.as_ref().map(|m| (m.name.as_str(), &m.models)),
@@ -123,14 +124,18 @@ impl Surface for Linear {
         let mut mcp_configs = vec![mcp::config(app, key)?];
         mcp_configs.extend(app.cfg.mcp_configs.iter().cloned());
         mcp_configs.extend(repo.mcp_configs.iter().cloned());
+        let settings = app.agent_settings(
+            key,
+            &workspace,
+            &readable,
+            mode.as_ref().map_or(&[], |m| &m.deny),
+        );
         Ok(Launch {
             runner: chosen.runner,
             pinned: chosen.pinned,
-            settings: app.agent_settings(
-                &workspace,
-                &readable,
-                mode.as_ref().map_or(&[], |m| &m.deny),
-            ),
+            settings: settings.agent,
+            host_settings: settings.host,
+            commands: repo.commands.clone(),
             cwd: workspace,
             system_prompt,
             resume: rec.resume(chosen.runner),

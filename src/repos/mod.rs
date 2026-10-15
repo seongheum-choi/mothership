@@ -41,6 +41,9 @@ pub struct Repo {
     /// `model`, `fallback_model` and `effort` for sessions in this repository, each beating
     /// the instance default and beaten by the session's mode.
     pub models: ModelFields,
+    /// Shell commands by name that mothership runs for a session outside its sandbox: see
+    /// [`crate::host`].
+    pub commands: std::collections::BTreeMap<String, String>,
 }
 
 impl Repo {
@@ -60,6 +63,7 @@ impl Repo {
             mcp_configs: Vec::new(),
             git: true,
             models: ModelFields::default(),
+            commands: std::collections::BTreeMap::new(),
         }
     }
 

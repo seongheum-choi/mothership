@@ -125,7 +125,13 @@ impl Harness {
             ("LINEAR_REFRESH_TOKEN", "refresh".into()),
             ("CLAUDE_BIN", bin.join("claude").display().to_string()),
             ("CODEX_BIN", bin.join("codex").display().to_string()),
+            (
+                "HOST_SANDBOX",
+                bin.join("sandbox-exec").display().to_string(),
+            ),
             ("FAKE_LOG", dir.join("fake.jsonl").display().to_string()),
+            // Host runs get only the agent's environment; the fakes they start log here too.
+            ("AGENT_ENV", "FAKE_LOG".into()),
             // `origin` points at github.com; fetching it fails at once instead of going online.
             ("GIT_ALLOW_PROTOCOL", "file".into()),
             ("GIT_CONFIG_NOSYSTEM", "1".into()),
@@ -329,7 +335,7 @@ fn new_dir(ctx: &Ctx) -> Result<PathBuf> {
         .expect("ctx lock poisoned")
         .push(dir.clone());
     let me = std::env::current_exe().context("locating the test executable")?;
-    for name in ["claude", "codex", "gh"] {
+    for name in ["claude", "codex", "gh", "sandbox-exec"] {
         std::os::unix::fs::symlink(&me, dir.join("bin").join(name))?;
     }
     Ok(dir)

@@ -23,6 +23,7 @@ fn main() -> ExitCode {
         Some("claude") => return fake::claude(),
         Some("codex") => return fake::codex(),
         Some("gh") => return fake::gh(),
+        Some("sandbox-exec") => return fake::sandbox_exec(),
         _ => {}
     }
     let args = Args::parse(std::env::args().skip(1));

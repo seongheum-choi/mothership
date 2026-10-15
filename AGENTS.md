@@ -21,7 +21,8 @@ One file, one responsibility. A file's logic, everything before `#[cfg(test)]` m
 | Module | Responsibility |
 | --- | --- |
 | `main.rs` | Startup |
-| `app.rs` | Shared state, HTTP router, agent environment |
+| `app/` | Shared state and HTTP router (`mod.rs`), what each agent process gets: its environment, its settings and the host settings beside them, its session's directory (`agent.rs`) |
+| `host/` | Runs mothership starts for a session that its sandbox cannot: watching the session's directory for requests, a run's environment and profile (`mod.rs`), Codex runs and what they may write in Codex's home (`codex.rs`), the repository's named commands and their prompt (`command.rs`), the confined process, its directory, output and process group (`process.rs`), request and answer files read and written without following links (`request.rs`), the Seatbelt profile made from the session's settings (`seatbelt.rs`) |
 | `config/` | Settings: `Config`, its loading and derived paths (`mod.rs`), the environment over `<home>/.env` and list formats (`vars.rs`), per-surface settings (`surfaces.rs`), the runner, model, fallback and effort defaults and the fields a narrower scope may set (`model.rs`), the repository list, runner and model defaults reloaded when `repos.json` or `.env` changes (`reload.rs`) |
 | `repos/` | Repositories: `Repo` and lookups by name or clone (`mod.rs`), reading and validating `<home>/repos.json` (`load.rs`), each entry's directory, clone and files on disk (`disk.rs`), which repository a Linear issue belongs to (`select.rs`) |
 | `modes/` | Working modes: `Mode`, loading `<home>/modes/*.md` and which mode a Linear issue's labels pick (`mod.rs`), the mode file's frontmatter and its YAML subset (`frontmatter.rs`) |

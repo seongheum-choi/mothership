@@ -5,6 +5,7 @@ mod app;
 mod config;
 mod directive;
 mod github;
+mod host;
 mod linear;
 mod modes;
 mod repos;
@@ -29,6 +30,7 @@ async fn main() -> Result<()> {
         .with_ansi(std::io::stdout().is_terminal()) // plain text in pm2/systemd logs
         .init();
     let mut cfg = config::Config::load()?;
+    host::reset_run_root(&cfg.home).context("preparing the host run directory")?;
     let stops = [cfg.worktrees_dir.clone(), cfg.home.join("repos")];
     let stops = sandbox::dotenv_stops(&cfg.home, &stops);
     cfg.sandbox.read.extend(stops);
