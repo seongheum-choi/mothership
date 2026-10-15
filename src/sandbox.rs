@@ -71,7 +71,12 @@ pub fn settings(
             "failIfUnavailable": true,
             "filesystem": { "allowWrite": paths.write },
             // Local servers are how agents run and probe what they build; no outside port is involved.
-            "network": { "allowLocalBinding": true },
+            // trustd verifies TLS for Go binaries built without cgo, such as the `gh stack`
+            // extension; without it every HTTPS call fails with `x509: OSStatus -26276`.
+            "network": {
+                "allowLocalBinding": true,
+                "allowMachLookup": ["com.apple.trustd.agent"],
+            },
             "credentials": {
                 "envVars": [{ "name": "CLAUDE_CODE_OAUTH_TOKEN", "mode": "deny" }],
             },

@@ -372,7 +372,7 @@ async fn linear_agent_is_launched_in_the_sandbox(ctx: Ctx) -> Result<()> {
             "allowUnsandboxedCommands": false,
             "failIfUnavailable": true,
             "filesystem": {"allowWrite": [state.join("progress/s10")]},
-            "network": {"allowLocalBinding": true},
+            "network": {"allowLocalBinding": true, "allowMachLookup": ["com.apple.trustd.agent"]},
             "credentials": {"envVars": [{"name": "CLAUDE_CODE_OAUTH_TOKEN", "mode": "deny"}]},
         },
     });
