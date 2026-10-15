@@ -154,9 +154,64 @@ fn walk(dir: &Path, targets: &[Vec<String>], tool: &str, deny: &mut Vec<String>)
     }
 }
 
+/// Empty `.env` files in the directories under `state` that hold workspaces (`dirs`), created
+/// when missing and returned for `SANDBOX_READ`. dotenv loaders such as diesel's take the first
+/// `.env` above the working directory; under `MOTHERSHIP_HOME` that is mothership's own, which
+/// agents may not read, and the loader fails instead of moving on. A readable empty file stops
+/// the search first. One that is already there is left as it is.
+pub fn dotenv_stops(state: &Path, dirs: &[PathBuf]) -> Vec<PathBuf> {
+    dirs.iter()
+        .filter(|dir| dir.starts_with(state) && dir.as_path() != state)
+        .filter_map(|dir| {
+            let stop = dir.join(".env");
+            let made = std::fs::create_dir_all(dir).and_then(|()| {
+                std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(&stop)
+            });
+            match made {
+                Ok(_) => Some(stop),
+                Err(err) => {
+                    tracing::warn!("cannot create {}: {err}", stop.display());
+                    None
+                }
+            }
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stops_dotenv_searches_below_the_state_dir() {
+        let home = std::env::temp_dir().join(format!("mothership-dotenv-{}", std::process::id()));
+        let state = home.join(".mothership");
+        std::fs::create_dir_all(state.join("repos")).unwrap();
+        std::fs::write(state.join("repos/.env"), "KEPT=1\n").unwrap();
+        let outside = home.join("elsewhere");
+
+        let stops = dotenv_stops(
+            &state,
+            &[
+                state.join("worktrees"),
+                state.join("repos"),
+                outside.clone(),
+                state.clone(),
+            ],
+        );
+        assert_eq!(
+            stops,
+            vec![state.join("worktrees/.env"), state.join("repos/.env")]
+        );
+        assert_eq!(std::fs::read_to_string(&stops[0]).unwrap(), "");
+        assert_eq!(std::fs::read_to_string(&stops[1]).unwrap(), "KEPT=1\n");
+        assert!(!outside.exists());
+        assert!(!state.join(".env").exists());
+        std::fs::remove_dir_all(&home).unwrap();
+    }
 
     #[test]
     fn denies_everything_off_the_allowed_paths() {

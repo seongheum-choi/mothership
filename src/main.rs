@@ -29,6 +29,9 @@ async fn main() -> Result<()> {
         .with_ansi(std::io::stdout().is_terminal()) // plain text in pm2/systemd logs
         .init();
     let mut cfg = config::Config::load()?;
+    let stops = [cfg.worktrees_dir.clone(), cfg.home.join("repos")];
+    let stops = sandbox::dotenv_stops(&cfg.home, &stops);
+    cfg.sandbox.read.extend(stops);
     let tunnel = cfg.tunnel.take();
     let app = app::App::new(cfg)?;
 
