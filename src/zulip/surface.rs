@@ -50,10 +50,13 @@ fn launch(app: &App, key: &str) -> Result<Launch> {
     let mut mcp_configs = vec![crate::linear::mcp_config(app, key)?];
     mcp_configs.extend(app.cfg.mcp_configs.iter().cloned());
     let chosen = choice::for_turn(app, key, &rec, &choice::Scopes::default());
+    let settings = app.agent_settings(key, &workspace, &readable, &read_only);
     Ok(Launch {
         runner: chosen.runner,
         pinned: chosen.pinned,
-        settings: app.agent_settings(&workspace, &readable, &read_only),
+        settings: settings.agent,
+        host_settings: settings.host,
+        commands: std::collections::BTreeMap::new(),
         cwd: workspace,
         system_prompt,
         resume: rec.resume(chosen.runner),

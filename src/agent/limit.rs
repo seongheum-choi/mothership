@@ -4,7 +4,7 @@
 
 use super::Runner;
 use std::ffi::OsString;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Whether a turn runs on Codex rather than `configured`: only one that would run Claude Code
 /// switches, and only until the limit resets at `resets_at` (Unix seconds).
@@ -21,13 +21,20 @@ pub const PINNED: &str = "This session is pinned to Claude Code with `[runner=cl
 /// `path`, the `PATH` the agent process gets, so the check sees what the launch will. `None`
 /// falls back to this process's `PATH`, which the agent inherits when `AGENT_ENV` sets none.
 pub fn installed(bin: &str, path: Option<&str>) -> bool {
+    locate(bin, path).is_some()
+}
+
+/// Where the CLI `bin` is, looked for as [`installed`] does.
+pub fn locate(bin: &str, path: Option<&str>) -> Option<PathBuf> {
     if bin.contains('/') {
-        return Path::new(bin).is_file();
+        return Path::new(bin).is_file().then(|| PathBuf::from(bin));
     }
     let path = path
         .map(OsString::from)
-        .or_else(|| std::env::var_os("PATH"));
-    path.is_some_and(|paths| std::env::split_paths(&paths).any(|dir| dir.join(bin).is_file()))
+        .or_else(|| std::env::var_os("PATH"))?;
+    std::env::split_paths(&path)
+        .map(|dir| dir.join(bin))
+        .find(|file| file.is_file())
 }
 
 /// The reset to keep when a turn reports one at `reported`: the later of the two. Two sessions

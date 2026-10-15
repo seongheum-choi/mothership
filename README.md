@@ -23,14 +23,15 @@ Licensed under the [Apache License 2.0](LICENSE).
 - **Closed issues:** when an issue moves to a completed or canceled state or is deleted, its running sessions stop and its worktree under `WORKTREES_DIR` is removed from the session's own repository, ignored files such as `.env` or `build/` included; the branch stays, and a worktree with uncommitted changes is kept with a warning. A worktree that an open session of another issue records (a stacked branch) or that a new prompt reopened meanwhile stays. A non-git repository's directory is never removed. GitHub feedback on a closed session's PR is logged and ignored until the session is prompted again in Linear. When the app is unassigned or undelegated, running sessions stop with a note and the worktree stays. This needs the Linear app's `Issue` data-change and app notification webhooks.
 - **Worktrees:** a new branch is cut from `origin/<BASE_BRANCH>` with no upstream, so a bare `git push` never targets the base branch. An existing local or remote branch is continued, and an existing checkout is reused. Only one agent runs per worktree at a time.
 - **Home directory:** agents may read only their workspace, their repository's main clone (every repository's, in Zulip), and plugin directories. Every other entry under `$HOME` gets a `Read` deny rule, except the paths in `SANDBOX_READ`, `SANDBOX_WRITE` and `SANDBOX_SKIP_DENY` and the progress directory. Claude Code applies deny rules under `bypassPermissions` too. An `Edit` deny rule, which Claude Code applies to every file-editing tool, covers every entry of `MOTHERSHIP_HOME` except the session's own workspace, the progress directory and `SANDBOX_WRITE`, so an agent cannot change `.env`, `repos.json`, `modes/`, `plugins/` or another session's worktree for later sessions. The sandbox folds `Edit` deny rules into Bash's writes too, and a commit from a worktree writes the clone's `.git` (objects, refs, the worktree's own index under `worktrees/`), so the session's clone keeps its `.git` editable except `config`, `hooks/` and the other worktrees' metadata. dotenv loaders (diesel's, for one) read the first `.env` above the working directory and fail on one they may not read, so at startup mothership puts an empty, readable `.env` in `WORKTREES_DIR` and `<home>/repos` when they are inside `MOTHERSHIP_HOME`; the search stops there before it reaches mothership's own `.env`.
-- **Bash sandbox:** Bash runs in Claude Code's sandbox (Seatbelt on macOS, bubblewrap on Linux), which enforces the deny rules on every process it starts and allows writes only to the working directory, `SANDBOX_WRITE` and `<home>/progress`. Commands cannot opt out of it, and `CLAUDE_CODE_OAUTH_TOKEN` is hidden from Bash. Its limits:
+- **Bash sandbox:** Bash runs in Claude Code's sandbox (Seatbelt on macOS, bubblewrap on Linux), which enforces the deny rules on every process it starts and allows writes only to the working directory, `SANDBOX_WRITE` and the session's own directory under `<home>/progress`. Commands cannot opt out of it, and `CLAUDE_CODE_OAUTH_TOKEN` is hidden from Bash. Its limits:
   - Without Seatbelt (macOS) or bubblewrap and socat (Linux), the session fails (`failIfUnavailable`) rather than run unconfined.
   - The sandbox judges a symlink by its target, so `SANDBOX_READ` and `SANDBOX_WRITE` list each path's resolved target next to it, as read at startup.
   - The Read, Edit and Write tools, hooks and MCP servers run outside it; only the deny rules bind them, and nothing stops the Edit and Write tools from writing in `$HOME` outside `MOTHERSHIP_HOME`.
   - The other `AGENT_ENV` values, such as `GH_TOKEN`, are visible to Bash.
   - Under `bypassPermissions` the network stays open: direct connections are blocked, but everything through the sandbox's proxy is allowed.
   - `gh` cannot reach the keyring or read `~/.config/gh`, so it needs `GH_TOKEN` in `AGENT_ENV`, and a config directory of its own: see [sandbox host setup](#sandbox-host-setup).
-- **Progress:** every agent process gets `MOTHERSHIP_PROGRESS_FILE`. Lines that tools or skills append to it, from any depth of the process tree, show up in Linear as thoughts. Long-running skill workflows use it to report their phases.
+- **Host runs:** what the sandbox keeps Bash from starting, mothership runs for the session; see [Host runs](#host-runs).
+- **Progress:** every agent process gets `MOTHERSHIP_PROGRESS_FILE`, in the session's directory `<home>/progress/<session>/`, which only that session writes. Other sessions' directories are denied as the turn's rules are made, so a session that starts later is not hidden from a turn already running. Lines that tools or skills append to it, from any depth of the process tree, show up in Linear as thoughts. Long-running skill workflows use it to report their phases.
 - **Environment:** `MOTHERSHIP_AGENT` (the `AGENT_NAME` setting) and `MOTHERSHIP_SURFACE` (`linear` or `zulip`) let hooks and skills tell where they run. The keys named in `AGENT_ENV` are forwarded on top, so secrets like `CLAUDE_CODE_OAUTH_TOKEN` can live only in `<home>/.env` instead of the daemon config.
 
 Agents run as `claude -p --input-format stream-json --output-format stream-json`. The `--settings` deny rules, `--mcp-config` (Linear's hosted MCP with the app token, plus `MCP_CONFIGS`), and `--plugin-dir` for each plugin are generated per turn.
@@ -75,6 +76,7 @@ Settings come from the process environment or `<home>/.env`, and the environment
 | `SANDBOX_READ` | | Comma-separated home paths (files or directories, `~/` allowed) every agent may read besides its workspace and repositories, e.g. `~/.gitconfig,~/.rustup,~/.cargo`. Symlink targets are added; home itself is refused at startup. Without it, git config and toolchains under `$HOME` are unreadable and `git commit` and `cargo` fail Git also needs the targets of any `[include]` in `~/.gitconfig`, and a mise-managed toolchain needs `~/.config/mise` and `~/.local/share/mise` here plus `~/.local/state/mise` and `~/.cache/mise` in `SANDBOX_WRITE`. |
 | `SANDBOX_WRITE` | | Comma-separated paths Bash may write, and every agent may read, besides the working directory, e.g. `~/.cargo/registry,~/.cargo/git`. Symlink targets are added; home itself is refused at startup |
 | `SANDBOX_SKIP_DENY` | | Comma-separated entries directly under home (`~/Documents,~/Desktop`) that get no deny rule, for macOS hosts where the [privacy approval](#agent-does-not-start-macos-privacy-prompts) cannot be given. The trade-off: the Read tool, and every command in Bash, can then read everything in those folders. Paths are not resolved, and anything deeper than one level is refused at startup |
+| `HOST_SANDBOX` | `/usr/bin/sandbox-exec` | What confines [host runs](#host-runs); read at startup |
 | `AGENT_START_TIMEOUT` | `120` | Seconds an agent may run without announcing its session before it is killed and the turn fails |
 | `BASE_BRANCH` | `main` | Ignored when `repos.json` exists |
 | `WORKTREES_DIR` | `<home>/worktrees` | |
@@ -125,6 +127,7 @@ State (Linear tokens, and each conversation's repository, workspace and Claude s
 | `labels`, `linear_teams`, `linear_projects` | | Route issues here. Each value matches a name (case-insensitive) or an id, and a project's slug or a team's key (`EN`). No value may be claimed by two repositories |
 | `prompt_file` | | Replaces the review backend's instructions (and `APPEND_SYSTEM_PROMPT_FILE`); in a non-git repository it follows the no-commit instructions |
 | `mcp_configs` | | MCP config files added for sessions here, after `MCP_CONFIGS` |
+| `commands` | | Shell commands by name (letters, digits, `-`, `_`) that mothership runs for a session outside its sandbox, under the same rules; see [Host runs](#host-runs) |
 | `runner`, `model`, `fallback_model`, `effort` | `AGENT_RUNNER`, `CLAUDE_MODEL`, `CLAUDE_FALLBACK_MODEL`, `CLAUDE_EFFORT` | For sessions in this repository; see [Model and effort](#model-and-effort). A `runner` other than `claude` or `codex`, or an `effort` other than the five levels, stops startup, and a reload keeps the previous list |
 | `git` | `true` | `false`: no worktree; sessions work in `path` directly, and only one turn runs there at a time while other sessions' turns wait; they are told not to commit or open pull requests |
 
@@ -216,6 +219,35 @@ Limits of this first version:
 - `CHAT_PERMISSION_MODE` and a mode's `permission_mode` and `deny` do not apply.
 - No Linear MCP, `MCP_CONFIGS`, repository `mcp_configs` or `<home>/plugins`; configure MCP servers and skills in Codex's own config (`~/.codex`).
 - `CLAUDE_FALLBACK_MODEL` does not apply, and `CLAUDE_CODE_OAUTH_TOKEN` is irrelevant; Codex uses its own login.
+
+#### Host runs
+
+A Claude Code session cannot start Codex from Bash: its sandbox keeps Codex's binary and login (`~/.codex`) out of reach, and Codex's own sandbox cannot start inside another Seatbelt sandbox. Some setup fails there too: Claude Code's sandbox refuses writes to any `.idea` directory, so `pnpm install` fails on a dependency that ships one. So mothership runs these for the session. The agent writes a request into `$MOTHERSHIP_RUNS`, its session's directory `<home>/progress/<session>/`, as a file renamed into place once whole:
+
+```json
+{"kind": "codex", "prompt": "…", "schema": {"type": "object"}, "effort": "high", "model": "gpt-5.5"}
+{"kind": "command", "name": "pnpm-install"}
+```
+
+- **Codex:** `codex exec --sandbox danger-full-access -C <workspace>` with the prompt on stdin. `schema` is passed as `--output-schema`, `effort` (`minimal` to `xhigh`) as `model_reasoning_effort`, `model` as `--model`. The result is the final message, parsed as JSON when a `schema` shaped it.
+- **Command:** one of the repository's `commands` in `repos.json`, a map of names to shell commands (`{"pnpm-install": "cd client && pnpm install --frozen-lockfile"}`), run with `/bin/sh -c` in the workspace. The result is the end of its output. The session's system prompt lists the repository's commands.
+
+While the turn lasts, mothership takes one request at a time and writes `<id>.out.json` next to it, either `{"result": …}` or `{"error": "…"}`. Each run's start and end show up as thoughts. A run runs in a process group of its own; the group is killed when the run exits, and the whole tree too when the turn ends or is stopped (before the workspace is released) or after an hour.
+
+Every run happens under `HOST_SANDBOX -p <profile>`, with a profile made from the turn's own settings:
+
+- the `Read` deny rules deny reading, matched as written and as resolved, globs included;
+- writing is allowed only in the workspace and the clone's `.git` (neither under a mode's bare `Edit` rule), `SANDBOX_WRITE`, the session's directory, `/dev` and the run's own directory under `<home>/host-runs`, which is also its `TMPDIR`; not `/private/tmp` or `/private/var/folders`, where runs could reach each other's files;
+- a Codex run may also write Codex's state in `CODEX_HOME`: sessions, logs, caches, state databases and a refreshed login, but not its config, hooks, rules, skills, memories or plugins;
+- the `Edit` deny rules deny writing again inside those (the clone's `config` and `hooks`, other worktrees), and so do the names Claude Code's sandbox never lets Bash write (shell rc files, `.gitconfig`, `.envrc`, `.npmrc`, `.mcp.json`, `.git/hooks`, `.claude/`, `.vscode/` and the rest), but for `.idea`;
+- signals reach only processes in the same sandbox;
+- the network and other system services stay open, as through Claude Code's proxy under `bypassPermissions`.
+
+Only a Codex run can read Codex's home and binary; a command runs under the session's own read rules. A run's environment is the agent's (`AGENT_ENV` and the `MOTHERSHIP_*` values) without what the settings hide from Bash (`CLAUDE_CODE_OAUTH_TOKEN`), over `HOME`, `USER`, `LOGNAME`, `SHELL`, `LANG`, `LC_ALL` and `PATH`; nothing else of mothership's.
+
+A session can only ask in its own directory. Neither the session nor a run can remove, rename or swap for a link a directory they write in (the session's directory, the workspace, a run's own directory), nor move a `.git` aside, since a sandbox may not touch the directory it writes in and the profile pins these. mothership reads a request or a final message only as a plain file with no other link, of at most a mebibyte, opened without following a link or waiting on a FIFO, and writes its answer fresh under a name nobody can guess before renaming it into place, so nothing a session or a run plants leads mothership elsewhere.
+
+What stays exposed: a Codex run and every command it runs can read Codex's login, since Seatbelt cannot tell Codex from its commands; Codex runs of all sessions share Codex's session history; a process that leaves both the run's tree and its group (`setsid`) outlives it; and a global `AGENTS.md` in Codex's home that links outside what the session may read is not read. Without macOS's `sandbox-exec`, requests are answered with an error.
 
 #### Claude usage limit
 

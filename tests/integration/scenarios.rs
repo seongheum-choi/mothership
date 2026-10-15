@@ -2,7 +2,8 @@
 
 use crate::{
     fake::{
-        CLAUDE_LIMIT, CODEX_RELEASE, CODEX_SCRIPT, HANG, HOLD, PROGRESS, PROGRESS_LINE, RELEASE,
+        CLAUDE_LIMIT, CODEX_RELEASE, CODEX_SCRIPT, HANG, HOLD, HOST_COMMAND, HOST_RUN, PROGRESS,
+        PROGRESS_LINE, RELEASE,
     },
     harness::{Ctx, Harness, Setup, ZULIP_TOKEN, create_repo, eventually, exited, git},
     mock::{self, ORG},
@@ -28,6 +29,9 @@ pub const ALL: &[(&str, Scenario)] = scenarios![
     linear_session_links_the_pull_requests_it_mentions,
     linear_agent_is_launched_in_the_sandbox,
     linear_progress_from_bash_becomes_a_thought,
+    host_run_answers_a_codex_request,
+    host_run_dies_with_the_turn,
+    host_run_runs_a_repository_command,
     linear_mention_leaves_the_issue_state_alone,
     linear_mode_from_labels_shapes_the_agent,
     linear_mode_conflict_or_broken_file_holds_the_turn,
@@ -344,10 +348,13 @@ async fn linear_agent_is_launched_in_the_sandbox(ctx: Ctx) -> Result<()> {
     let args = argv(&h.prompt_with("context of SH-10").await?);
     let state = h.home.join(".mothership");
     // `HOME` holds `.mothership` and `src/app`; the worktree is `.mothership/worktrees/SH-10`.
+    // `host-runs/` holds runs' private directories, which no session may read or write.
     let mut deny = vec![
+        deny_dir(&state.join("host-runs")),
         deny_dir(&state.join("mcp")),
         deny_file(&state.join("state.json")),
     ];
+    deny.push(deny_edit_dir(&state.join("host-runs")));
     deny.push(deny_edit_dir(&state.join("mcp")));
     // `repos/` and `worktrees/` hold the empty `.env` that stops dotenv searches; it stays
     // readable, and like the rest of the state, not editable.
@@ -364,7 +371,7 @@ async fn linear_agent_is_launched_in_the_sandbox(ctx: Ctx) -> Result<()> {
             "enabled": true,
             "allowUnsandboxedCommands": false,
             "failIfUnavailable": true,
-            "filesystem": {"allowWrite": [state.join("progress")]},
+            "filesystem": {"allowWrite": [state.join("progress/s10")]},
             "network": {"allowLocalBinding": true},
             "credentials": {"envVars": [{"name": "CLAUDE_CODE_OAUTH_TOKEN", "mode": "deny"}]},
         },
@@ -402,7 +409,7 @@ async fn linear_agent_is_launched_in_the_sandbox(ctx: Ctx) -> Result<()> {
 }
 
 /// A line a shell command appends to `MOTHERSHIP_PROGRESS_FILE` shows up as a thought, and
-/// Bash's sandbox may write and read the progress directory: its file gets no deny rule.
+/// Bash's sandbox may write and read the session's progress directory: it gets no deny rule.
 async fn linear_progress_from_bash_becomes_a_thought(ctx: Ctx) -> Result<()> {
     let h = Harness::start(&ctx, Setup::default()).await?;
     let issue = issue(13, "Report as you go.");
@@ -423,7 +430,8 @@ async fn linear_progress_from_bash_becomes_a_thought(ctx: Ctx) -> Result<()> {
     .await?;
     let args = argv(&h.prompt_with(&prompt).await?);
     let settings: Value = serde_json::from_str(flag(&args, "--settings")?)?;
-    let progress = h.home.join(".mothership/progress");
+    // Of the progress directory, a session may write only its own.
+    let progress = h.home.join(".mothership/progress/s13");
     ensure!(
         settings["sandbox"]["filesystem"]["allowWrite"] == json!([progress]),
         "{settings}"
@@ -507,10 +515,12 @@ async fn linear_mode_from_labels_shapes_the_agent(ctx: Ctx) -> Result<()> {
     let state = h.home.join(".mothership");
     let deny = deny_rules(&args)?;
     let mut expected = vec![
+        deny_dir(&state.join("host-runs")),
         deny_dir(&state.join("mcp")),
         deny_dir(&state.join("modes")),
         deny_file(&state.join("state.json")),
     ];
+    expected.push(deny_edit_dir(&state.join("host-runs")));
     expected.push(deny_edit_dir(&state.join("mcp")));
     expected.push(deny_edit_dir(&state.join("modes")));
     expected.push(deny_edit_dir(&state.join("repos")));
@@ -1751,6 +1761,121 @@ async fn model_labels_beat_the_mode_and_bad_ones_are_ignored(ctx: Ctx) -> Result
     ensure!(
         log.contains("label `effort:ultra` ignored: `ultra` is not an effort level"),
         "{log}"
+    );
+    Ok(())
+}
+
+/// A Codex run the agent asks for in `MOTHERSHIP_RUNS` runs under `HOST_SANDBOX` with a profile
+/// made from the session's rules, Codex's own sandbox off, in the worktree; the answer lands
+/// next to the request, and its start and end show up as thoughts.
+async fn host_run_answers_a_codex_request(ctx: Ctx) -> Result<()> {
+    let h = Harness::start(&ctx, Setup::default()).await?;
+    let issue = issue(30, "Review it.");
+    h.mock.add_issue(&issue);
+    let prompt = format!("check {HOST_RUN}");
+    ensure!(h.linear(created("s30", &issue, &prompt)).await? == 200);
+    let response = h.activity("s30", "response", 1).await?;
+    let worktree = h.home.join(".mothership/worktrees/SH-30");
+    let answer: Value = body(&response)
+        .strip_prefix("Host: ")
+        .and_then(|a| serde_json::from_str(a).ok())
+        .with_context(|| format!("{response}"))?;
+    ensure!(
+        answer == json!({"result": {"findings": [], "cwd": worktree}}),
+        "{answer}"
+    );
+
+    let sandbox = h.calls("sandbox-exec");
+    ensure!(sandbox.len() == 1, "{sandbox:#?}");
+    let profile = sandbox[0]["profile"].as_str().unwrap_or_default();
+    let subpath = |p: &Path| format!("(subpath \"{}\")", p.display());
+    ensure!(
+        profile.contains("(deny file-read* ")
+            && profile.contains(&format!("(allow file-write* {}", subpath(&worktree)))
+            && profile.contains(&subpath(&h.home.join(".codex/sessions")))
+            && !profile.contains(&subpath(&h.home.join(".codex")))
+            && profile.contains("(deny signal)")
+            && profile.contains(&subpath(&h.home.join(".mothership/progress/s30"))),
+        "{profile}"
+    );
+    let codex = h.calls("codex");
+    ensure!(codex.len() == 1, "{codex:#?}");
+    let args: Vec<String> = serde_json::from_value(codex[0]["args"].clone())?;
+    for expected in [
+        "--sandbox",
+        "danger-full-access",
+        "--output-schema",
+        "model_reasoning_effort=\"high\"",
+        worktree.to_str().unwrap_or_default(),
+    ] {
+        ensure!(
+            args.iter().any(|a| a == expected),
+            "{expected} not in {args:#?}"
+        );
+    }
+    ensure!(
+        codex[0]["prompt"]
+            .as_str()
+            .is_some_and(|p| p.contains(&prompt)),
+        "{codex:#?}"
+    );
+    eventually("run thoughts", || {
+        let t = thoughts(&h, "s30");
+        (t.contains(&"Codex run r1 started".to_string())
+            && t.contains(&"Codex run r1 finished".to_string()))
+        .then_some(())
+    })
+    .await
+}
+
+/// Stopping the session kills a Codex run it asked for along with the agent.
+async fn host_run_dies_with_the_turn(ctx: Ctx) -> Result<()> {
+    let h = Harness::start(&ctx, Setup::default()).await?;
+    let issue = issue(31, "Review it slowly.");
+    h.mock.add_issue(&issue);
+    let prompt = format!("check {HOST_RUN} {HOLD} {RELEASE}");
+    ensure!(h.linear(created("s31", &issue, &prompt)).await? == 200);
+    let codex = eventually("codex run", || h.calls("codex").into_iter().next()).await?;
+    ensure!(h.linear(stop("s31", &issue)).await? == 200);
+    let response = h.activity("s31", "response", 1).await?;
+    ensure!(body(&response) == "Stopped.", "{response}");
+    exited(codex["pid"].as_u64().unwrap_or_default()).await
+}
+
+/// A command the repository names in `repos.json` runs in the worktree when the session asks,
+/// under the session's profile, and the session's system prompt lists it.
+async fn host_run_runs_a_repository_command(ctx: Ctx) -> Result<()> {
+    let h = Harness::start(&ctx, Setup::default()).await?;
+    std::fs::write(
+        h.home.join(".mothership/repos.json"),
+        json!([{
+            "name": "app",
+            "path": h.home.join("src/app"),
+            "commands": {"setup": "echo made > made.txt && echo set up"},
+        }])
+        .to_string(),
+    )?;
+    let issue = issue(32, "Set it up.");
+    h.mock.add_issue(&issue);
+    let prompt = format!("prepare {HOST_COMMAND}");
+    ensure!(h.linear(created("s32", &issue, &prompt)).await? == 200);
+    let response = h.activity("s32", "response", 1).await?;
+    ensure!(
+        body(&response) == r#"Host: {"result":"set up"}"#,
+        "{response}"
+    );
+    let worktree = h.home.join(".mothership/worktrees/SH-32");
+    ensure!(std::fs::read_to_string(worktree.join("made.txt"))? == "made\n");
+    let sandbox = h.calls("sandbox-exec");
+    ensure!(
+        sandbox.len() == 1 && sandbox[0]["program"] == "/bin/sh",
+        "{sandbox:#?}"
+    );
+    let args = argv(&h.prompt_with(&prompt).await?);
+    let system_prompt = flag(&args, "--append-system-prompt")?;
+    ensure!(
+        system_prompt.contains("- `setup`: `echo made > made.txt && echo set up`"),
+        "{system_prompt}"
     );
     Ok(())
 }

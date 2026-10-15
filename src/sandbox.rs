@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 
 /// Home paths every agent's commands need besides its own workspace: toolchains, package
 /// caches, git config.
+#[derive(Clone)]
 pub struct Paths {
     /// `SANDBOX_READ`: left out of the deny rules, so files work as well as directories.
     pub read: Vec<PathBuf>,
@@ -44,9 +45,7 @@ pub fn settings(
     paths: &Paths,
 ) -> Value {
     let git_dir = worktree_git_dir(workspace);
-    let clone_git = git_dir
-        .as_deref()
-        .and_then(|d| Some(d.parent()?.parent()?.to_path_buf()));
+    let clone_git = clone_git(git_dir.as_deref());
     let writable: Vec<PathBuf> = std::iter::once(workspace.to_path_buf())
         .chain(clone_git.clone())
         .chain(paths.write.iter().cloned())
@@ -78,6 +77,17 @@ pub fn settings(
             },
         },
     })
+}
+
+/// The clone's `.git` of a linked worktree whose git directory is `git_dir`
+/// (`<clone>/.git/worktrees/<name>`).
+fn clone_git(git_dir: Option<&Path>) -> Option<PathBuf> {
+    Some(git_dir?.parent()?.parent()?.to_path_buf())
+}
+
+/// The clone's `.git` that a commit from `workspace` writes, when it is a linked worktree.
+pub fn workspace_clone_git(workspace: &Path) -> Option<PathBuf> {
+    clone_git(worktree_git_dir(workspace).as_deref())
 }
 
 /// The git directory of `workspace` when it is a linked worktree: its `.git` is a file naming

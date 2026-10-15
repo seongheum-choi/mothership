@@ -18,6 +18,12 @@ pub const RELEASE: &str = "[release]";
 pub const PROGRESS: &str = "[progress]";
 pub const PROGRESS_LINE: &str = "Phase 1 of 2";
 
+/// A prompt containing this has the fake claude ask mothership for a Codex run the way the
+/// implement skill does: a request in `MOTHERSHIP_RUNS`, then its answer as the result.
+pub const HOST_RUN: &str = "[host-run]";
+/// Like [`HOST_RUN`], for the repository command named `setup`.
+pub const HOST_COMMAND: &str = "[host-command]";
+
 /// With `FAKE_HANG` set, the fake starts a tool and then never announces a session, the way
 /// Claude Code hangs on a macOS privacy dialog nobody can answer.
 pub const HANG: &str = "FAKE_HANG";
@@ -107,9 +113,18 @@ pub fn claude() -> ExitCode {
             &mut out,
             &assistant(json!({"type": "text", "text": "Looking into it."})),
         );
+        let result = if text.contains(HOST_COMMAND) {
+            host_run(&json!({"kind": "command", "name": "setup"}))
+        } else if text.contains(HOST_RUN) {
+            host_run(
+                &json!({"kind": "codex", "prompt": text, "schema": {"type": "object"}, "effort": "high"}),
+            )
+        } else {
+            format!("Done: {text}")
+        };
         emit(
             &mut out,
-            &json!({"type": "result", "subtype": "success", "is_error": false, "result": format!("Done: {text}")}),
+            &json!({"type": "result", "subtype": "success", "is_error": false, "result": result}),
         );
     }
     ExitCode::SUCCESS
@@ -146,6 +161,25 @@ pub fn codex() -> ExitCode {
     }));
     let thread = resume.unwrap_or_else(|| format!("thread-{pid}"));
     let log = std::path::PathBuf::from(std::env::var("FAKE_LOG").unwrap_or_default());
+    // A run mothership starts for a session: the final message goes to `-o`, as JSON when a
+    // schema shapes it.
+    if let Some(last) = args.windows(2).find(|w| w[0] == "-o").map(|w| w[1].clone()) {
+        if prompt.contains(HOLD) {
+            let release = log.with_file_name(CODEX_RELEASE);
+            while !release.exists() {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+        }
+        let answer = if args.iter().any(|a| a == "--output-schema") {
+            json!({"findings": [], "cwd": std::env::current_dir().unwrap_or_default()}).to_string()
+        } else {
+            format!("Reviewed: {prompt}")
+        };
+        return match std::fs::write(last, answer) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(_) => ExitCode::FAILURE,
+        };
+    }
     let mut out = std::io::stdout().lock();
     emit(
         &mut out,
@@ -168,6 +202,44 @@ pub fn codex() -> ExitCode {
         let _ = writeln!(out, "{line}").and_then(|()| out.flush());
     }
     ExitCode::SUCCESS
+}
+
+/// Asks mothership for `request` and waits for the answer file.
+fn host_run(request: &Value) -> String {
+    let runs = std::path::PathBuf::from(std::env::var("MOTHERSHIP_RUNS").unwrap_or_default());
+    let tmp = runs.join("r1.tmp");
+    if std::fs::write(&tmp, request.to_string())
+        .and_then(|()| std::fs::rename(&tmp, runs.join("r1.json")))
+        .is_err()
+    {
+        return format!("cannot ask in {}", runs.display());
+    }
+    for _ in 0..1000 {
+        if let Ok(answer) = std::fs::read_to_string(runs.join("r1.out.json")) {
+            return format!("Host: {answer}");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    "Host: no answer".into()
+}
+
+/// `sandbox-exec -p <profile> <program> <args>…`: records the profile, then runs the program
+/// unconfined with the same stdio and exits as it did.
+pub fn sandbox_exec() -> ExitCode {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let [flag, profile, program, rest @ ..] = args.as_slice() else {
+        return ExitCode::FAILURE;
+    };
+    if flag != "-p" {
+        return ExitCode::FAILURE;
+    }
+    record(&json!({"tool": "sandbox-exec", "profile": profile, "program": program}));
+    let status = std::process::Command::new(program).args(rest).status();
+    match status.ok().and_then(|s| s.code()) {
+        Some(0) => ExitCode::SUCCESS,
+        Some(code) => ExitCode::from(u8::try_from(code).unwrap_or(1)),
+        None => ExitCode::FAILURE,
+    }
 }
 
 /// The `resetsAt` of the usage limit [`CLAUDE_LIMIT`] sets, while that file is there.

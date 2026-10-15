@@ -4,7 +4,11 @@
 use super::Update;
 use crate::agent::Event;
 use anyhow::Result;
-use std::path::PathBuf;
+use std::{
+    fs::{File, OpenOptions},
+    os::unix::fs::FileExt,
+    path::PathBuf,
+};
 
 /// Turns agent events into surface updates. The newest text is held back because the
 /// final one comes again as the result.
@@ -58,9 +62,13 @@ impl Relay {
 }
 
 /// New complete lines of a progress file that tools in the agent's process tree append to.
+/// The file is created fresh and read through the handle opened then: the agent may write
+/// its directory, and a link put in the file's place must not make mothership read or write
+/// something else.
 pub(super) struct ProgressTail {
     pub(super) path: PathBuf,
-    offset: usize,
+    file: File,
+    offset: u64,
 }
 
 impl ProgressTail {
@@ -68,27 +76,53 @@ impl ProgressTail {
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir)?;
         }
-        std::fs::write(&path, "")?;
-        Ok(Self { path, offset: 0 })
+        match std::fs::remove_file(&path) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e.into()),
+            _ => {}
+        }
+        let file = OpenOptions::new()
+            .read(true)
+            .append(true)
+            .create_new(true)
+            .open(&path)?;
+        Ok(Self {
+            path,
+            file,
+            offset: 0,
+        })
+    }
+
+    /// Another handle on the same file, appending: for what mothership reports itself.
+    pub(super) fn handle(&self) -> Result<File> {
+        Ok(self.file.try_clone()?)
     }
 
     pub(super) fn read_new(&mut self) -> Vec<String> {
-        let Ok(bytes) = std::fs::read(&self.path) else {
+        /// At most this much is read per call; anything older that a burst (or a file grown
+        /// sparse to gigabytes) pushed past it is skipped rather than held in memory.
+        const WINDOW: u64 = 1 << 20;
+        let Ok(len) = self.file.metadata().map(|m| m.len()) else {
             return Vec::new();
         };
+        self.offset = self.offset.max(len.saturating_sub(WINDOW));
+        let Ok(size) = usize::try_from(len.saturating_sub(self.offset)) else {
+            return Vec::new();
+        };
+        let mut bytes = vec![0; size];
+        // A positioned read: appends through the other handle move the shared offset.
+        if size == 0 || self.file.read_exact_at(&mut bytes, self.offset).is_err() {
+            return Vec::new();
+        }
         let Some(end) = bytes.iter().rposition(|&b| b == b'\n').map(|i| i + 1) else {
             return Vec::new();
         };
-        if end <= self.offset {
-            return Vec::new();
-        }
-        let lines = String::from_utf8_lossy(&bytes[self.offset..end])
+        let lines = String::from_utf8_lossy(&bytes[..end])
             .lines()
             .map(str::trim)
             .filter(|l| !l.is_empty())
             .map(String::from)
             .collect();
-        self.offset = end;
+        self.offset += end as u64;
         lines
     }
 }
@@ -97,6 +131,7 @@ impl ProgressTail {
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::io::Write;
 
     #[test]
     fn relay_holds_back_the_final_text() {
@@ -141,6 +176,14 @@ mod tests {
         std::fs::write(&path, "phase: build\nhalf done\n").unwrap();
         assert_eq!(tail.read_new(), vec!["half done"]);
         assert_eq!(tail.read_new(), Vec::<String>::new());
+        // A file grown sparse to gigabytes is skipped to its last window, not read whole.
+        let file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap();
+        file.set_len(1 << 34).unwrap();
+        writeln!(&file, "\nlast").unwrap();
+        assert_eq!(tail.read_new().last().map(String::as_str), Some("last"));
         std::fs::remove_file(&path).unwrap();
     }
 }

@@ -57,6 +57,8 @@ pub struct AgentConfig {
     /// `AGENT_START_TIMEOUT`: how long an agent may run without announcing its session
     /// before it is killed.
     pub start_timeout: Duration,
+    /// `HOST_SANDBOX`: the `sandbox-exec` that confines what mothership runs for a session.
+    pub host_sandbox: String,
 }
 
 impl Config {
@@ -100,7 +102,7 @@ impl Config {
                     .map(|list| parse_list(&list))
                     .unwrap_or_default(),
             ),
-            sandbox: sandbox_paths(&vars, &user_home, &home)?,
+            sandbox: sandbox_paths(&vars, &user_home)?,
             linear: LinearConfig::from_vars(&vars, seed_tokens)?,
             zulip,
             github,
@@ -114,6 +116,9 @@ impl Config {
                     .get("CHAT_PERMISSION_MODE")
                     .unwrap_or_else(|| "auto".into()),
                 start_timeout: start_timeout(&vars)?,
+                host_sandbox: vars
+                    .get("HOST_SANDBOX")
+                    .unwrap_or_else(|| "/usr/bin/sandbox-exec".into()),
             },
             mcp_configs: vars
                 .get("MCP_CONFIGS")
@@ -136,9 +141,9 @@ impl Config {
         })
     }
 
-    /// Where each turn's `MOTHERSHIP_PROGRESS_FILE` lives.
+    /// Where each session's directory (its progress file and host runs) lives.
     pub fn progress_dir(&self) -> PathBuf {
-        progress_dir(&self.home)
+        self.home.join("progress")
     }
 
     /// Claude Code plugins installed by dropping a directory into `<home>/plugins`.
@@ -156,20 +161,19 @@ impl Config {
     }
 }
 
-/// `SANDBOX_READ` and `SANDBOX_WRITE`, and the progress directory, since tools append to
-/// `MOTHERSHIP_PROGRESS_FILE` from inside Bash's sandbox.
-fn sandbox_paths(vars: &Vars, user_home: &Path, home: &Path) -> Result<sandbox::Paths> {
+/// `SANDBOX_READ`, `SANDBOX_WRITE` and `SANDBOX_SKIP_DENY`; each session adds its own directory
+/// under the progress directory (see [`crate::app::App::session_dir`]).
+fn sandbox_paths(vars: &Vars, user_home: &Path) -> Result<sandbox::Paths> {
     let read = parse_paths(
         "SANDBOX_READ",
         vars.get("SANDBOX_READ").as_deref(),
         user_home,
     )?;
-    let mut write = parse_paths(
+    let write = parse_paths(
         "SANDBOX_WRITE",
         vars.get("SANDBOX_WRITE").as_deref(),
         user_home,
     )?;
-    write.push(progress_dir(home));
     let skip_deny = parse_home_entries(
         "SANDBOX_SKIP_DENY",
         vars.get("SANDBOX_SKIP_DENY").as_deref(),
@@ -192,8 +196,4 @@ fn start_timeout(vars: &Vars) -> Result<Duration> {
             anyhow::bail!("AGENT_START_TIMEOUT must be a positive number of seconds, not {value:?}")
         }
     }
-}
-
-fn progress_dir(home: &Path) -> PathBuf {
-    home.join("progress")
 }

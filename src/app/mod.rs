@@ -1,4 +1,6 @@
-//! Shared state and the HTTP surface.
+//! Shared state and the HTTP surface; what each agent process gets is in `agent.rs`.
+
+mod agent;
 
 use crate::{
     agent::{Runner, limit},
@@ -6,7 +8,6 @@ use crate::{
     github::GitHub,
     linear::Linear,
     repos::Repo,
-    sandbox,
     session::Registry,
     store::Store,
     zulip::Zulip,
@@ -131,7 +132,7 @@ impl App {
 
     /// The `PATH` agent processes get, when `AGENT_ENV` carries one. Without it they inherit this
     /// process's, which [`limit::installed`] falls back to.
-    fn agent_path(&self) -> Option<String> {
+    pub fn agent_path(&self) -> Option<String> {
         self.cfg
             .agent_env
             .iter()
@@ -155,43 +156,6 @@ impl App {
             .or_default()
             .clone();
         lock.lock_owned().await
-    }
-
-    /// Environment every agent process gets: the `MOTHERSHIP_*` markers so hooks and skills know
-    /// where they run, plus the `AGENT_ENV` keys resolved from the environment or `<home>/.env`.
-    /// With GitHub feedback on, `gh-reply` comes first on `PATH`.
-    pub fn agent_env(&self, surface: &str) -> Vec<(String, String)> {
-        let mut env = vec![
-            ("MOTHERSHIP_AGENT".into(), self.cfg.agent_name.clone()),
-            ("MOTHERSHIP_SURFACE".into(), surface.into()),
-        ];
-        env.extend(self.cfg.agent_env.iter().cloned());
-        if let Some(github) = &self.github {
-            let path = env
-                .iter()
-                .rev()
-                .find(|(k, _)| k == "PATH")
-                .map(|(_, v)| v.clone())
-                .or_else(|| std::env::var("PATH").ok())
-                .unwrap_or_default();
-            env.push((
-                "PATH".into(),
-                format!("{}:{path}", github.bin_dir.display()),
-            ));
-        }
-        env
-    }
-
-    /// The `--settings` for an agent working in `workspace`: see [`sandbox::settings`].
-    pub fn agent_settings(&self, workspace: &Path, readable: &[PathBuf], deny: &[String]) -> Value {
-        sandbox::settings(
-            &self.home_dir,
-            &self.cfg.home,
-            workspace,
-            readable,
-            deny,
-            &self.cfg.sandbox,
-        )
     }
 
     fn busy(&self) -> bool {
