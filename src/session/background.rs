@@ -2,9 +2,9 @@
 //! them.
 //!
 //! Claude Code wakes the agent when a background task (an `Agent` call, a background `Bash`)
-//! finishes and answers again, but only while its input is open: with input closed, `claude -p`
-//! stops them about ten minutes after its last answer and exits. So input stays open past an
-//! answer while any task runs, up to a limit.
+//! finishes and answers again. With input closed, Claude Code 2.1.304 stops a background agent
+//! still running ten minutes in and exits, so input stays open past an answer while any task
+//! runs, up to a limit.
 
 use std::time::Duration;
 use tokio::time::Instant;
