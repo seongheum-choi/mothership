@@ -57,6 +57,9 @@ pub struct AgentConfig {
     /// `AGENT_START_TIMEOUT`: how long an agent may run without announcing its session
     /// before it is killed.
     pub start_timeout: Duration,
+    /// `AGENT_BACKGROUND_TIMEOUT`: how long an agent that answered may keep running for its
+    /// background tasks before its input closes.
+    pub background_timeout: Duration,
     /// `HOST_SANDBOX`: the `sandbox-exec` that confines what mothership runs for a session.
     pub host_sandbox: String,
 }
@@ -115,7 +118,8 @@ impl Config {
                 chat_permission_mode: vars
                     .get("CHAT_PERMISSION_MODE")
                     .unwrap_or_else(|| "auto".into()),
-                start_timeout: start_timeout(&vars)?,
+                start_timeout: seconds(&vars, "AGENT_START_TIMEOUT", 120)?,
+                background_timeout: seconds(&vars, "AGENT_BACKGROUND_TIMEOUT", 7200)?,
                 host_sandbox: vars
                     .get("HOST_SANDBOX")
                     .unwrap_or_else(|| "/usr/bin/sandbox-exec".into()),
@@ -186,14 +190,12 @@ fn sandbox_paths(vars: &Vars, user_home: &Path) -> Result<sandbox::Paths> {
     })
 }
 
-fn start_timeout(vars: &Vars) -> Result<Duration> {
-    let Some(value) = vars.get("AGENT_START_TIMEOUT") else {
-        return Ok(Duration::from_secs(120));
+fn seconds(vars: &Vars, name: &str, default: u64) -> Result<Duration> {
+    let Some(value) = vars.get(name) else {
+        return Ok(Duration::from_secs(default));
     };
     match value.parse::<u64>() {
         Ok(secs) if secs > 0 => Ok(Duration::from_secs(secs)),
-        _ => {
-            anyhow::bail!("AGENT_START_TIMEOUT must be a positive number of seconds, not {value:?}")
-        }
+        _ => anyhow::bail!("{name} must be a positive number of seconds, not {value:?}"),
     }
 }

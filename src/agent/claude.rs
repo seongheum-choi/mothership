@@ -85,6 +85,11 @@ impl Stream {
                 })
                 .into_iter()
                 .collect(),
+            Some("system") if v["subtype"] == "background_tasks_changed" => {
+                vec![Event::Background {
+                    live: v["tasks"].as_array().map_or(0, Vec::len),
+                }]
+            }
             Some("assistant") => {
                 if v["api_error"] == USAGE_LIMIT {
                     let info = &v["api_error_params"]["rate_limit_info"];
@@ -177,6 +182,16 @@ mod tests {
             }]
         );
         assert_eq!(parse("not json"), vec![]);
+        assert_eq!(
+            parse(
+                r#"{"type":"system","subtype":"background_tasks_changed","tasks":[{"task_id":"a1","task_type":"local_agent"},{"task_id":"b2","task_type":"local_bash","parent_task_id":"a1"}]}"#
+            ),
+            vec![Event::Background { live: 2 }]
+        );
+        assert_eq!(
+            parse(r#"{"type":"system","subtype":"background_tasks_changed","tasks":[]}"#),
+            vec![Event::Background { live: 0 }]
+        );
     }
 
     /// The lines Claude Code 2.1.296 writes when the account's usage limit refuses the turn.

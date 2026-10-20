@@ -24,6 +24,15 @@ pub const HOST_RUN: &str = "[host-run]";
 /// Like [`HOST_RUN`], for the repository command named `setup`.
 pub const HOST_COMMAND: &str = "[host-command]";
 
+/// A prompt containing this starts a background task, the way an `Agent` or background `Bash`
+/// call does, and ends the turn while it runs. The task finishes shortly after; if input is still
+/// open then, the fake wakes on its notification and answers [`BACKGROUND_DONE`] in a second
+/// result. Closing input first exits the fake with the task lost.
+pub const BACKGROUND: &str = "[background]";
+/// Like [`BACKGROUND`], with a task that never finishes.
+pub const BACKGROUND_HANG: &str = "[background-hang]";
+pub const BACKGROUND_DONE: &str = "Background work done.";
+
 /// With `FAKE_HANG` set, the fake starts a tool and then never announces a session, the way
 /// Claude Code hangs on a macOS privacy dialog nobody can answer.
 pub const HANG: &str = "FAKE_HANG";
@@ -56,7 +65,8 @@ pub fn claude() -> ExitCode {
             std::thread::park();
         }
     }
-    let mut out = std::io::stdout().lock();
+    // Not locked: a background task writes its follow-up turn from another thread.
+    let mut out = std::io::stdout();
     emit(
         &mut out,
         &json!({"type": "system", "subtype": "init", "session_id": format!("fake-{pid}")}),
@@ -113,7 +123,10 @@ pub fn claude() -> ExitCode {
             &mut out,
             &assistant(json!({"type": "text", "text": "Looking into it."})),
         );
-        let result = if text.contains(HOST_COMMAND) {
+        let result = if text.contains(BACKGROUND) || text.contains(BACKGROUND_HANG) {
+            background(&mut out, pid, text.contains(BACKGROUND));
+            "Started in the background.".to_string()
+        } else if text.contains(HOST_COMMAND) {
             host_run(&json!({"kind": "command", "name": "setup"}))
         } else if text.contains(HOST_RUN) {
             host_run(
@@ -319,8 +332,36 @@ fn pull_request(path: &str) -> Option<(String, u64)> {
 }
 
 fn emit(out: &mut impl Write, line: &Value) {
+    // One write, so a background task's lines never split the main turn's.
     // A closed pipe means mothership is gone; nothing is left to answer.
-    let _ = writeln!(out, "{line}").and_then(|()| out.flush());
+    let _ = out
+        .write_all(format!("{line}\n").as_bytes())
+        .and_then(|()| out.flush());
+}
+
+/// Starts a background task with the events Claude Code 2.1.304 writes for one. When `finishes`,
+/// a thread reports it done after a moment and runs the turn its notification wakes.
+fn background(out: &mut impl Write, pid: u32, finishes: bool) {
+    let task = json!({"task_id": "t1", "task_type": "local_agent", "description": "Build"});
+    emit(
+        out,
+        &json!({"type": "system", "subtype": "background_tasks_changed", "tasks": [task]}),
+    );
+    if !finishes {
+        return;
+    }
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        let mut out = std::io::stdout();
+        for line in [
+            json!({"type": "system", "subtype": "task_notification", "task_id": "t1", "status": "completed"}),
+            json!({"type": "system", "subtype": "background_tasks_changed", "tasks": []}),
+            json!({"type": "system", "subtype": "init", "session_id": format!("fake-{pid}")}),
+            json!({"type": "result", "subtype": "success", "is_error": false, "result": BACKGROUND_DONE}),
+        ] {
+            emit(&mut out, &line);
+        }
+    });
 }
 
 /// One line per call, written at once so concurrent fakes do not interleave.
