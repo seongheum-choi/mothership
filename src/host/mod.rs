@@ -182,7 +182,10 @@ impl Host {
         let outcome = match process::RunDir::create(&self.run_root) {
             Ok(dir) => match req {
                 Request::Codex(run) => self.codex(&dir.0, run).await,
-                Request::Command(name) => self.command(&dir.0, name).await,
+                Request::Command(name) => {
+                    self.command(&dir.0, name, &request::log(&self.runs, id))
+                        .await
+                }
             },
             Err(e) => Err(format!("cannot make a directory for the run: {e}")),
         };
