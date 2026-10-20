@@ -40,6 +40,7 @@ impl Relay {
             Event::Started { .. }
             | Event::Result { .. }
             | Event::Usage(_)
+            | Event::Background { .. }
             | Event::Limited { .. } => {}
         }
         out
