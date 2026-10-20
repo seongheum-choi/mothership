@@ -190,6 +190,8 @@ async fn status(State(app): State<Arc<App>>) -> Json<Value> {
     let models = app.models();
     Json(json!({
         "status": if app.busy() { "busy" } else { "idle" },
+        // Set by `contrib/deploy.sh`, so a deploy can tell the new binary answers.
+        "commit": option_env!("MOTHERSHIP_COMMIT"),
         "runner": app.runner(),
         "claude_limited_until": app.claude_limited_until(),
         "model": models.model,

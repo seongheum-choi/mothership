@@ -19,7 +19,9 @@ idle_timeout=${IDLE_TIMEOUT:-1800}
 
 cd "$src"
 git pull --ff-only
-cargo build --release --locked
+commit=$(git rev-parse --short HEAD)
+# Reported by `/status` as `commit`, to check below that the new binary is the one answering.
+MOTHERSHIP_COMMIT=$commit cargo build --release --locked
 
 if [[ -r $keychain_pw ]]; then
     if [[ $(stat -f %Lp "$keychain_pw") != 600 ]]; then
@@ -58,4 +60,12 @@ mkdir -p "$(dirname "$bin")"
 cp target/release/mothership "$bin.new"
 mv -f "$bin.new" "$bin"
 launchctl kickstart -k "gui/$(id -u)/$label"
-echo "deployed $(git rev-parse --short HEAD) to $bin"
+for _ in {1..30}; do
+    if curl -fsS "$status_url" 2>/dev/null | grep -q "\"commit\":\"$commit\""; then
+        echo "deployed $commit to $bin"
+        exit 0
+    fi
+    sleep 1
+done
+echo "$bin was replaced, but $status_url does not report commit $commit within 30s" >&2
+exit 1
