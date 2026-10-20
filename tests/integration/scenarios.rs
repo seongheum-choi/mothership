@@ -1851,7 +1851,7 @@ async fn host_run_runs_a_repository_command(ctx: Ctx) -> Result<()> {
         json!([{
             "name": "app",
             "path": h.home.join("src/app"),
-            "commands": {"setup": "echo made > made.txt && echo set up"},
+            "commands": {"setup": "echo made > made.txt && echo set up && echo warned >&2"},
         }])
         .to_string(),
     )?;
@@ -1860,10 +1860,17 @@ async fn host_run_runs_a_repository_command(ctx: Ctx) -> Result<()> {
     let prompt = format!("prepare {HOST_COMMAND}");
     ensure!(h.linear(created("s32", &issue, &prompt)).await? == 200);
     let response = h.activity("s32", "response", 1).await?;
-    ensure!(
-        body(&response) == r#"Host: {"result":"set up"}"#,
-        "{response}"
-    );
+    let answer: Value = serde_json::from_str(
+        body(&response)
+            .strip_prefix("Host: ")
+            .context("a host answer")?,
+    )?;
+    let result = answer["result"].as_str().context("a result")?;
+    let log = result
+        .strip_prefix("set up\nwarned\n\nWhole output: ")
+        .context(format!("{result:?}"))?;
+    ensure!(log.starts_with(&*h.home.to_string_lossy()), "{log}");
+    ensure!(std::fs::read_to_string(log)? == "set up\nwarned\n");
     let worktree = h.home.join(".mothership/worktrees/SH-32");
     ensure!(std::fs::read_to_string(worktree.join("made.txt"))? == "made\n");
     let sandbox = h.calls("sandbox-exec");
@@ -1874,7 +1881,8 @@ async fn host_run_runs_a_repository_command(ctx: Ctx) -> Result<()> {
     let args = argv(&h.prompt_with(&prompt).await?);
     let system_prompt = flag(&args, "--append-system-prompt")?;
     ensure!(
-        system_prompt.contains("- `setup`: `echo made > made.txt && echo set up`"),
+        system_prompt
+            .contains("- `setup`: `echo made > made.txt && echo set up && echo warned >&2`"),
         "{system_prompt}"
     );
     Ok(())

@@ -102,6 +102,11 @@ pub fn answer(dir: &Path, id: &str) -> PathBuf {
     dir.join(format!("{id}.out.json"))
 }
 
+/// A command's whole output, beside its answer.
+pub fn log(dir: &Path, id: &str) -> PathBuf {
+    dir.join(format!("{id}.log"))
+}
+
 /// Writes the answer whole, since the agent polls for it: created fresh under a name nobody
 /// can predict, then renamed into place, which replaces whatever is at the answer's name, a
 /// symlink too, without following it.
