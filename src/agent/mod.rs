@@ -116,6 +116,11 @@ pub enum Event {
         text: String,
         is_error: bool,
     },
+    /// How many background tasks (`Agent` calls, background `Bash`) are still running. Claude
+    /// Code wakes the agent when one finishes only while its input is open.
+    Background {
+        live: usize,
+    },
     /// Token counts of a finished turn, as the runner reports them.
     Usage(Value),
     /// Comes right before the failed `Result` of a Claude turn that ended on the account's

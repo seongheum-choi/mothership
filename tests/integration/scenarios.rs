@@ -2,8 +2,8 @@
 
 use crate::{
     fake::{
-        CLAUDE_LIMIT, CODEX_RELEASE, CODEX_SCRIPT, HANG, HOLD, HOST_COMMAND, HOST_RUN, PROGRESS,
-        PROGRESS_LINE, RELEASE,
+        BACKGROUND, BACKGROUND_DONE, BACKGROUND_HANG, CLAUDE_LIMIT, CODEX_RELEASE, CODEX_SCRIPT,
+        HANG, HOLD, HOST_COMMAND, HOST_RUN, PROGRESS, PROGRESS_LINE, RELEASE,
     },
     harness::{Ctx, Harness, Setup, ZULIP_TOKEN, create_repo, eventually, exited, git},
     mock::{self, ORG},
@@ -45,6 +45,8 @@ pub const ALL: &[(&str, Scenario)] = scenarios![
     linear_prompt_joins_the_running_turn,
     linear_stop_kills_the_agent,
     linear_agent_that_never_starts_is_stopped,
+    linear_background_work_outlives_the_turn,
+    linear_background_work_past_the_limit_is_given_up,
     github_feedback_continues_the_session,
     github_fork_conversation_comment_is_ignored,
     github_feedback_reaches_a_lost_worktree_session,
@@ -950,6 +952,62 @@ async fn linear_agent_that_never_starts_is_stopped(ctx: Ctx) -> Result<()> {
         .context("fake agent call")?;
     exited(call["pid"].as_u64().context("fake agent pid")?).await?;
     exited(call["tool_pid"].as_u64().context("fake tool pid")?).await
+}
+
+/// A turn that ends while its background task runs keeps the agent until the task finishes, and
+/// the answer it wakes up to reaches the thread with nobody prompting it.
+async fn linear_background_work_outlives_the_turn(ctx: Ctx) -> Result<()> {
+    let h = Harness::start(&ctx, Setup::default()).await?;
+    let issue = issue(62, "Build it in the background.");
+    h.mock.add_issue(&issue);
+    let context = format!("context of SH-62 {BACKGROUND}");
+    ensure!(h.linear(created("s62", &issue, &context)).await? == 200);
+
+    let first = h.activity("s62", "response", 1).await?;
+    ensure!(body(&first) == "Started in the background.", "{first}");
+    let second = h.activity("s62", "response", 2).await?;
+    ensure!(body(&second) == BACKGROUND_DONE, "{second}");
+    ensure!(
+        thoughts(&h, "s62").contains(&waiting_note(1)),
+        "{:?}",
+        thoughts(&h, "s62")
+    );
+    let call = h.prompt_with(&context).await?;
+    ensure!(h.calls("claude").len() == 1, "no relaunch was needed");
+    exited(call["pid"].as_u64().context("fake agent pid")?).await
+}
+
+/// Background work still running after `AGENT_BACKGROUND_TIMEOUT` is given up on: the agent's
+/// input closes so it can exit, and the thread is told.
+async fn linear_background_work_past_the_limit_is_given_up(ctx: Ctx) -> Result<()> {
+    let env = vec![("AGENT_BACKGROUND_TIMEOUT", "1".into())];
+    let h = Harness::start(
+        &ctx,
+        Setup {
+            env,
+            ..Setup::default()
+        },
+    )
+    .await?;
+    let issue = issue(63, "Never finishes.");
+    h.mock.add_issue(&issue);
+    let context = format!("context of SH-63 {BACKGROUND_HANG}");
+    ensure!(h.linear(created("s63", &issue, &context)).await? == 200);
+
+    h.activity("s63", "response", 1).await?;
+    eventually("give-up thought", || {
+        thoughts(&h, "s63")
+            .iter()
+            .any(|t| t.starts_with("Background work is still running after 1s"))
+            .then_some(())
+    })
+    .await?;
+    let call = h.prompt_with(&context).await?;
+    exited(call["pid"].as_u64().context("fake agent pid")?).await
+}
+
+fn waiting_note(tasks: usize) -> String {
+    format!("Waiting for {tasks} background task(s) to finish before the agent exits.")
 }
 
 fn pull_request(head_repo: &str) -> Value {

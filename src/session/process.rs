@@ -3,6 +3,7 @@
 
 use super::{
     Msg, Outcome, Surface, Update,
+    background::{Background, Next},
     relay::{ProgressTail, Relay},
     turn::Turn,
 };
@@ -51,6 +52,7 @@ impl<S: Surface> Turn<'_, S> {
         let start_deadline = tokio::time::sleep(start_timeout);
         tokio::pin!(start_deadline);
         let mut started = false;
+        let mut background = Background::new(app.cfg.agent.background_timeout);
         let mut limited = None;
         let mut switching = false;
         loop {
@@ -77,16 +79,17 @@ impl<S: Surface> Turn<'_, S> {
                                 agent.close_input();
                                 switching = true;
                             }
+                            Event::Background { live } => background.set_live(live),
                             Event::Result { text, is_error } => {
-                                agent.close_input();
                                 for update in relay.flush_except(&text) {
                                     surface.update(app, key, update).await;
                                 }
-                                let outcome = match (is_error, pinned && limited.is_some()) {
-                                    (true, true) => Outcome::Failed(format!("{text}\n\n{}", limit::PINNED)),
-                                    (true, false) => Outcome::Failed(text),
-                                    (false, _) => Outcome::Reply(text),
-                                };
+                                match background.answered() {
+                                    Next::Close => agent.close_input(),
+                                    Next::Wait(text) => surface.update(app, key, Update::Thought { text, nested: false }).await,
+                                    Next::KeepWaiting => {}
+                                }
+                                let outcome = outcome(text, is_error, pinned && limited.is_some());
                                 surface.finish(app, key, std::mem::take(tickets), outcome).await;
                             }
                             Event::Usage(usage) => tracing::info!("[{key}] {runner} usage: {usage}"),
@@ -98,22 +101,17 @@ impl<S: Surface> Turn<'_, S> {
                         }
                     }
                 }
-                Some(msg) = rx.recv() => match msg {
-                    Msg::Prompt { text, ticket } if agent.accepts_input() => {
-                        agent.send(&text).await?;
-                        prompt.push_str("\n\n");
-                        prompt.push_str(&text);
-                        tickets.push(ticket);
-                        surface.update(app, key, Update::Noted).await;
-                    }
-                    Msg::Prompt { text, ticket } => queued.push((text, ticket)),
-                    Msg::Stop(note) => {
-                        agent.kill().await;
-                        tickets.extend(queued.drain(..).map(|(_, ticket)| ticket));
-                        surface.finish(app, key, std::mem::take(tickets), Outcome::Stopped(note)).await;
+                Some(msg) = rx.recv() => {
+                    if self.on_msg(&mut agent, msg, prompt, tickets, queued).await? {
                         return Ok(Ended::Done);
                     }
-                },
+                }
+                () = tokio::time::sleep_until(background.deadline()), if background.waiting() => {
+                    agent.close_input();
+                    let text = background.give_up();
+                    tracing::warn!("[{key}] {text}");
+                    surface.update(app, key, Update::Thought { text, nested: false }).await;
+                }
                 () = &mut start_deadline, if !started => {
                     agent.kill().await;
                     return Err(not_started(runner, start_timeout));
@@ -136,6 +134,49 @@ impl<S: Surface> Turn<'_, S> {
             bail!("{runner} exited ({status}) without answering");
         }
         Ok(Ended::Done)
+    }
+
+    /// Passes a prompt that arrives mid-turn to the agent, or queues it once input closed. A stop
+    /// kills the agent and returns true.
+    async fn on_msg(
+        &self,
+        agent: &mut Agent,
+        msg: Msg<S::Ticket>,
+        prompt: &mut String,
+        tickets: &mut Vec<S::Ticket>,
+        queued: &mut Vec<(String, S::Ticket)>,
+    ) -> Result<bool> {
+        let (app, surface, key) = (self.app, &self.reg.surface, self.key);
+        match msg {
+            Msg::Prompt { text, ticket } if agent.accepts_input() => {
+                agent.send(&text).await?;
+                prompt.push_str("\n\n");
+                prompt.push_str(&text);
+                tickets.push(ticket);
+                surface.update(app, key, Update::Noted).await;
+            }
+            Msg::Prompt { text, ticket } => queued.push((text, ticket)),
+            Msg::Stop(note) => {
+                agent.kill().await;
+                tickets.extend(queued.drain(..).map(|(_, ticket)| ticket));
+                let outcome = Outcome::Stopped(note);
+                surface
+                    .finish(app, key, std::mem::take(tickets), outcome)
+                    .await;
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+}
+
+/// How an answer is reported. A failure on the usage limit of a session pinned to Claude says
+/// why it did not move to Codex.
+fn outcome(text: String, is_error: bool, pinned_at_limit: bool) -> Outcome {
+    match (is_error, pinned_at_limit) {
+        (true, true) => Outcome::Failed(format!("{text}\n\n{}", limit::PINNED)),
+        (true, false) => Outcome::Failed(text),
+        (false, _) => Outcome::Reply(text),
     }
 }
 
