@@ -5,6 +5,7 @@
 #
 # Every path and name is a variable; override any of them in the environment:
 #   MOTHERSHIP_SRC=~/src/mothership MOTHERSHIP_BIN=~/.local/bin/mothership contrib/deploy.sh
+# FORCE=1 restarts without waiting for idle, killing any running turn.
 set -euo pipefail
 
 src=${MOTHERSHIP_SRC:-$HOME/mothership}
@@ -43,7 +44,7 @@ codesign --verify target/release/mothership
 
 # A restart kills running agents, so wait until no turn is running.
 deadline=$((SECONDS + idle_timeout))
-while :; do
+while [[ ${FORCE:-} != 1 ]]; do
     if ! status=$(curl -fsS "$status_url" 2>/dev/null); then
         echo "mothership is not answering on $status_url; nothing to wait for" >&2
         break
