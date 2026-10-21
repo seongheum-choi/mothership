@@ -47,6 +47,7 @@ pub const ALL: &[(&str, Scenario)] = scenarios![
     linear_agent_that_never_starts_is_stopped,
     linear_background_work_outlives_the_turn,
     linear_background_work_past_the_limit_is_given_up,
+    linear_turns_wait_while_draining,
     github_feedback_continues_the_session,
     github_fork_conversation_comment_is_ignored,
     github_feedback_reaches_a_lost_worktree_session,
@@ -1003,6 +1004,45 @@ async fn linear_background_work_past_the_limit_is_given_up(ctx: Ctx) -> Result<(
     })
     .await?;
     let call = h.prompt_with(&context).await?;
+    exited(call["pid"].as_u64().context("fake agent pid")?).await
+}
+
+/// A drained instance (SIGUSR1) keeps a new session's prompt in `state.json` and says so instead
+/// of starting a turn; SIGUSR2 runs it, and `/status` lists the running turn.
+async fn linear_turns_wait_while_draining(ctx: Ctx) -> Result<()> {
+    let mut h = Harness::start(&ctx, Setup::default()).await?;
+    h.signal("-USR1")?;
+    h.logged("draining: new turns wait for the restart").await?;
+    ensure!(h.status().await?["draining"] == true);
+    let issue = issue(64, "Wait for the restart.");
+    h.mock.add_issue(&issue);
+    let context = format!("context of SH-64 {BACKGROUND_HANG}");
+    ensure!(h.linear(created("s64", &issue, &context)).await? == 200);
+
+    let held = "mothership is restarting for an update; this turn starts as soon as it is back.";
+    eventually("held note", || {
+        thoughts(&h, "s64").iter().any(|t| t == held).then_some(())
+    })
+    .await?;
+    ensure!(h.calls("claude").is_empty(), "no turn ran while draining");
+    let kept = h.sessions()?["s64"]["held"].take();
+    ensure!(
+        kept.as_str().is_some_and(|p| p.contains(&context)),
+        "{kept}"
+    );
+
+    h.signal("-USR2")?;
+    h.activity("s64", "response", 1).await?;
+    let status = h.status().await?;
+    let turn = &status["sessions"][0];
+    ensure!(status["draining"] == false, "{status}");
+    ensure!(
+        turn["workspace"] == "SH-64" && turn["background_tasks"] == 1,
+        "{status}"
+    );
+    ensure!(h.sessions()?["s64"]["held"].is_null(), "released once");
+    let call = h.prompt_with(&context).await?;
+    h.terminate().await?;
     exited(call["pid"].as_u64().context("fake agent pid")?).await
 }
 

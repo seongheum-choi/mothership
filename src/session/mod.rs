@@ -39,6 +39,28 @@ pub trait Surface: Send + Sync + Sized + 'static {
         tickets: Vec<Self::Ticket>,
         outcome: Outcome,
     ) -> impl Future<Output = ()> + Send;
+
+    /// Keeps `text` to run once the instance has restarted, while it drains. A surface that
+    /// cannot keep prompts returns false, and its turn runs anyway.
+    fn hold(&self, _app: &Arc<App>, _key: &str, _text: &str) -> bool {
+        false
+    }
+}
+
+/// Posted on a turn held while the instance drains for a restart.
+const HELD: &str =
+    "mothership is restarting for an update; this turn starts as soon as it is back.";
+
+/// A running turn as `/status` shows it.
+#[derive(Clone)]
+pub struct Activity {
+    /// The name of the directory the agent works in, once the turn has one.
+    pub workspace: Option<String>,
+    /// Unix seconds when the turn started and when its agent last sent an event.
+    pub started: u64,
+    pub last_event: u64,
+    /// Background tasks the agent still runs.
+    pub background: usize,
 }
 
 #[derive(Debug, PartialEq)]
@@ -75,6 +97,7 @@ pub enum Msg<T> {
 pub struct Registry<S: Surface> {
     pub surface: S,
     live: Mutex<HashMap<String, mpsc::UnboundedSender<Msg<S::Ticket>>>>,
+    activity: Mutex<HashMap<String, Activity>>,
 }
 
 impl<S: Surface> Registry<S> {
@@ -82,6 +105,7 @@ impl<S: Surface> Registry<S> {
         Self {
             surface,
             live: Mutex::default(),
+            activity: Mutex::default(),
         }
     }
 
@@ -98,6 +122,11 @@ impl<S: Surface> Registry<S> {
             },
             None => msg,
         };
+        if let Msg::Prompt { text, .. } = &msg
+            && self.held(app, key, text)
+        {
+            return;
+        }
         let (tx, rx) = mpsc::unbounded_channel();
         let _ = tx.send(msg);
         live.insert(key.to_string(), tx);
@@ -123,5 +152,51 @@ impl<S: Surface> Registry<S> {
 
     pub fn busy(&self) -> bool {
         !self.live.lock().expect("live lock poisoned").is_empty()
+    }
+
+    /// While the instance drains, keeps `text` for after the restart instead of starting a turn,
+    /// and says so on the conversation. False when it does not drain or the surface cannot keep
+    /// prompts.
+    fn held(self: &Arc<Self>, app: &Arc<App>, key: &str, text: &str) -> bool {
+        if !app.draining() || !self.surface.hold(app, key, text) {
+            return false;
+        }
+        tracing::info!("[{key}] held for the restart");
+        let (reg, app, key) = (self.clone(), app.clone(), key.to_string());
+        tokio::spawn(async move {
+            let note = Update::Thought {
+                text: HELD.into(),
+                nested: false,
+            };
+            reg.surface.update(&app, &key, note).await;
+        });
+        true
+    }
+
+    /// Starts showing `key`'s new turn in `/status`.
+    fn started(&self, key: &str) {
+        let now = crate::store::now_secs();
+        let activity = Activity {
+            workspace: None,
+            started: now,
+            last_event: now,
+            background: 0,
+        };
+        let mut map = self.activity.lock().expect("activity lock poisoned");
+        map.insert(key.to_string(), activity);
+    }
+
+    /// Changes what `/status` shows about `key`'s running turn.
+    fn note(&self, key: &str, change: impl FnOnce(&mut Activity)) {
+        let mut map = self.activity.lock().expect("activity lock poisoned");
+        if let Some(activity) = map.get_mut(key) {
+            change(activity);
+        }
+    }
+
+    /// The running turns, for `/status`.
+    pub fn activities(&self) -> Vec<Activity> {
+        let map = self.activity.lock().expect("activity lock poisoned");
+        map.values().cloned().collect()
     }
 }

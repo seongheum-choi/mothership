@@ -83,10 +83,24 @@ pub(super) async fn start_turn(
     app.linear.submit(app, sid, prompt, ());
 }
 
+/// Runs every prompt held while the instance drained for a restart.
+pub fn release(app: &Arc<App>) {
+    let held: Vec<(String, String)> = app.store.update(|s| {
+        s.sessions
+            .iter_mut()
+            .filter_map(|(sid, rec)| Some((sid.clone(), rec.held.take()?)))
+            .collect()
+    });
+    for (sid, prompt) in held {
+        tracing::info!("[{sid}] running the prompt held for the restart");
+        app.linear.submit(app, &sid, prompt, ());
+    }
+}
+
 /// Adds `prompt` to what a session that cannot start yet keeps for its first turn: Linear's
 /// issue context, then every reply in order, including those that did not settle anything,
 /// except replies whose directives were refused.
-fn hold(pending: &mut Option<String>, prompt: String) {
+pub(super) fn hold(pending: &mut Option<String>, prompt: String) {
     *pending = Some(match pending.take() {
         Some(held) => format!("{held}\n\n{prompt}"),
         None => prompt,

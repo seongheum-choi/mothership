@@ -49,6 +49,9 @@ pub struct SessionRec {
     /// Linear: the first prompt and every reply since, kept while the session waits for its
     /// repository, mode or a corrected directive; run together once it can start.
     pub pending_prompt: Option<String>,
+    /// Linear: prompts that arrived while the instance drained for a restart; they run once it
+    /// starts again or the drain ends.
+    pub held: Option<String>,
     /// Zulip: id of the newest topic message the agent has already seen.
     pub cursor: Option<u64>,
     /// Unix seconds of the newest prompt, so GitHub feedback on a branch that several

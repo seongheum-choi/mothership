@@ -59,6 +59,7 @@ impl<S: Surface> Turn<'_, S> {
             tokio::select! {
                 events = agent.next() => {
                     let Some(events) = events? else { break };
+                    self.reg.note(key, |a| a.last_event = crate::store::now_secs());
                     for event in events {
                         match event {
                             Event::Started { session_id } => {
@@ -79,16 +80,15 @@ impl<S: Surface> Turn<'_, S> {
                                 agent.close_input();
                                 switching = true;
                             }
-                            Event::Background { live } => background.set_live(live),
+                            Event::Background { live } => {
+                                background.set_live(live);
+                                self.reg.note(key, |a| a.background = live);
+                            }
                             Event::Result { text, is_error } => {
                                 for update in relay.flush_except(&text) {
                                     surface.update(app, key, update).await;
                                 }
-                                match background.answered() {
-                                    Next::Close => agent.close_input(),
-                                    Next::Wait(text) => surface.update(app, key, Update::Thought { text, nested: false }).await,
-                                    Next::KeepWaiting => {}
-                                }
+                                self.answered(&mut agent, &mut background).await;
                                 let outcome = outcome(text, is_error, pinned && limited.is_some());
                                 surface.finish(app, key, std::mem::take(tickets), outcome).await;
                             }
@@ -134,6 +134,23 @@ impl<S: Surface> Turn<'_, S> {
             bail!("{runner} exited ({status}) without answering");
         }
         Ok(Ended::Done)
+    }
+
+    /// After an answer: closes the agent's input, or keeps it open for the background tasks it
+    /// still runs and says so the first time.
+    async fn answered(&self, agent: &mut Agent, background: &mut Background) {
+        match background.answered() {
+            Next::Close => agent.close_input(),
+            Next::Wait(text) => {
+                tracing::info!("[{}] {text}", self.key);
+                let note = Update::Thought {
+                    text,
+                    nested: false,
+                };
+                self.reg.surface.update(self.app, self.key, note).await;
+            }
+            Next::KeepWaiting => {}
+        }
     }
 
     /// Passes a prompt that arrives mid-turn to the agent, or queues it once input closed. A stop

@@ -26,6 +26,10 @@ pub(super) async fn worker<S: Surface>(
                     msg
                 } else {
                     live.remove(&key);
+                    reg.activity
+                        .lock()
+                        .expect("activity lock poisoned")
+                        .remove(&key);
                     return;
                 }
             };
@@ -38,6 +42,11 @@ pub(super) async fn worker<S: Surface>(
                     continue;
                 }
             }
+        }
+        let texts: Vec<&str> = queued.iter().map(|(text, _)| text.as_str()).collect();
+        if reg.held(&app, &key, &texts.join("\n\n")) {
+            queued.clear();
+            continue;
         }
         let (texts, mut tickets): (Vec<String>, Vec<S::Ticket>) =
             std::mem::take(&mut queued).into_iter().unzip();
@@ -75,6 +84,7 @@ impl<S: Surface> Turn<'_, S> {
         queued: &mut Vec<(String, S::Ticket)>,
     ) -> Result<()> {
         let (app, surface, key) = (self.app, &self.reg.surface, self.key);
+        self.reg.started(key);
         surface.update(app, key, Update::Working).await;
         let mut launch = surface.launch(app, key).await?;
         let _workspace = match app.lock_workspace(&launch.cwd).await {
@@ -86,6 +96,11 @@ impl<S: Surface> Turn<'_, S> {
                 app.lock_workspace(&launch.cwd).await
             }
         };
+        let workspace = launch
+            .cwd
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned());
+        self.reg.note(key, |a| a.workspace = workspace);
         if let Some(text) = launch.note.take() {
             let note = Update::Thought {
                 text,
