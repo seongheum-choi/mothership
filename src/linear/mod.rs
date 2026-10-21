@@ -15,6 +15,7 @@ mod webhook;
 mod worktree;
 
 pub use mcp::config as mcp_config;
+pub use start::release;
 
 use crate::{
     agent::Launch,
@@ -54,6 +55,14 @@ pub fn routes() -> Router<Arc<App>> {
 
 impl Surface for Linear {
     type Ticket = ();
+
+    fn hold(&self, app: &Arc<App>, key: &str, text: &str) -> bool {
+        app.store.update(|s| {
+            let rec = s.sessions.entry(key.to_string()).or_default();
+            start::hold(&mut rec.held, text.to_string());
+        });
+        true
+    }
 
     async fn launch(&self, app: &Arc<App>, key: &str) -> Result<Launch> {
         let rec = app

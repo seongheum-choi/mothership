@@ -296,6 +296,10 @@ Before a restart, check the server is not mid-turn, or `kickstart -k` will kill 
 curl -s localhost:3456/status   # restart only when this reports {"status":"idle"}
 ```
 
+`status` alone says only whether anything runs; `sessions` lists each running turn with its `workspace` (the worktree's name, which is the issue identifier), `turn_secs` since it started, `quiet_secs` since its agent last sent an event, and the `background_tasks` it still runs. A turn whose `quiet_secs` keeps growing is the one to look at. Session ids are left out because a tunnel makes `/status` public.
+
+To restart without killing work while sessions overlap, drain first: `launchctl kill SIGUSR1 gui/$UID/com.mothership.agent` (or `kill -USR1`) makes new turns wait for the restart instead of starting, and `/status` reports `"draining":true`. Prompts that arrive meanwhile go on to a turn that is still running as usual; a Linear session with no running turn keeps its prompt in `state.json`, is told "mothership is restarting for an update; this turn starts as soon as it is back.", and runs it when mothership starts again. `SIGUSR2` ends the drain without a restart and runs the held turns at once. Zulip chat turns are short and keep starting while it drains.
+
 On Linux, run it as a systemd user service instead — see [`contrib/systemd/mothership.service`](contrib/systemd/mothership.service), whose header lists the matching `systemctl --user` commands.
 
 ### Agent does not start (macOS privacy prompts)
@@ -331,7 +335,7 @@ trash dev.key dev.p12
 
 `security find-identity -v` lists no *valid* identity for a self-signed certificate; that is expected. `codesign` still signs with it, and TCC compares the certificate, not its trust. Keep all three extensions: LibreSSL adds none by default, and with only `extendedKeyUsage` `find-identity` still lists the certificate but `codesign` answers `Mothership Dev: no identity found`.
 
-[`contrib/deploy.sh`](contrib/deploy.sh) then pulls, builds, signs (`codesign -s "Mothership Dev" -i mothership`), waits for `/status` to report idle (`FORCE=1` skips the wait and kills running turns), replaces the binary, kickstarts the agent and fails unless `/status` then reports the commit it built. Its paths, launchd label and keychain are variables at the top of the script; put the keychain password in `~/.mothership/.keychain-pw` (mode 0600) to run it unattended. The first signed binary needs the approval once; later rebuilds keep it. If the first session after a deploy hangs, check the signature with `codesign -dv` first.
+[`contrib/deploy.sh`](contrib/deploy.sh) then pulls, builds, signs (`codesign -s "Mothership Dev" -i mothership`), drains (above) and waits for `/status` to report idle (`FORCE=1` skips the wait and kills running turns; if the wait times out or the script stops, `SIGUSR2` ends the drain), replaces the binary, kickstarts the agent and fails unless `/status` then reports the commit it built. Its paths, launchd label and keychain are variables at the top of the script; put the keychain password in `~/.mothership/.keychain-pw` (mode 0600) to run it unattended. The first signed binary needs the approval once; later rebuilds keep it. If the first session after a deploy hangs, check the signature with `codesign -dv` first.
 
 With the native installer, `CLAUDE_BIN` pointing at the `ClaudeCode.app` bundle (see [Settings](#settings)) gives Claude Code its own stable identity for its own prompts; the folder dialog is still attributed to mothership.
 

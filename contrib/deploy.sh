@@ -42,14 +42,24 @@ codesign --force --sign "$identity" --keychain "$keychain" --identifier mothersh
     target/release/mothership
 codesign --verify target/release/mothership
 
-# A restart kills running agents, so wait until no turn is running.
+# A restart kills running agents, so wait until no turn is running. Meanwhile a mothership that
+# reports `draining` holds new turns (SIGUSR1) and runs them after the restart, so the running
+# ones are the last; if this script stops before restarting, SIGUSR2 lets the held turns start.
+service=gui/$(id -u)/$label
+drained=
+trap '[[ $drained == 1 ]] && launchctl kill SIGUSR2 "$service"' EXIT
 deadline=$((SECONDS + idle_timeout))
 while [[ ${FORCE:-} != 1 ]]; do
     if ! status=$(curl -fsS "$status_url" 2>/dev/null); then
         echo "mothership is not answering on $status_url; nothing to wait for" >&2
         break
     fi
-    grep -q '"idle"' <<<"$status" && break
+    if [[ -z $drained ]] && grep -q '"draining"' <<<"$status"; then
+        launchctl kill SIGUSR1 "$service"
+        drained=1
+        continue
+    fi
+    grep -q '"status":"idle"' <<<"$status" && break
     if ((SECONDS > deadline)); then
         echo "mothership still busy after ${idle_timeout}s; not restarting" >&2
         exit 1
@@ -60,7 +70,9 @@ done
 mkdir -p "$(dirname "$bin")"
 cp target/release/mothership "$bin.new"
 mv -f "$bin.new" "$bin"
-launchctl kickstart -k "gui/$(id -u)/$label"
+# The new process starts undrained and runs the held turns itself.
+drained=restarted
+launchctl kickstart -k "$service"
 for _ in {1..30}; do
     if curl -fsS "$status_url" 2>/dev/null | grep -q "\"commit\":\"$commit\""; then
         echo "deployed $commit to $bin"

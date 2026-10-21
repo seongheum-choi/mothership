@@ -307,6 +307,11 @@ impl Harness {
         .await
     }
 
+    /// Sends `which` (`-USR1`, ...) to mothership.
+    pub fn signal(&self, which: &str) -> Result<()> {
+        signal(which, self.child.id().context("mothership already exited")?)
+    }
+
     /// Sends SIGTERM and waits for mothership to exit.
     pub async fn terminate(&mut self) -> Result<ExitStatus> {
         let pid = self.child.id().context("mothership already exited")?;
