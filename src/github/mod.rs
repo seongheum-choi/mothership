@@ -163,8 +163,9 @@ async fn webhook(State(app): State<Arc<App>>, headers: HeaderMap, body: Bytes) -
     };
     app.refresh();
     if let Err(reason) = feedback.screen(!github.origins().names(&feedback.repo).is_empty(), cfg) {
-        // Who and what kind only: the text is untrusted and may be long.
-        tracing::info!(
+        // Who and what kind only: the text is untrusted and may be long. Debug: most review
+        // traffic is not for the agent, and at info it buried everything else in the log.
+        tracing::debug!(
             "github {} by @{} ({}): {reason}, ignored",
             feedback.kind.label(),
             feedback.author,
