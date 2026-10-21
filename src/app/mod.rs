@@ -18,7 +18,10 @@ use serde_json::{Value, json};
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
     time::Duration,
 };
 
@@ -36,6 +39,8 @@ pub struct App {
     pub github: Option<GitHub>,
     /// Sessions on the same issue share a worktree; one agent at a time per workspace.
     workspace_locks: Mutex<HashMap<PathBuf, Arc<tokio::sync::Mutex<()>>>>,
+    /// New turns wait for a restart instead of starting (SIGUSR1, until SIGUSR2).
+    draining: AtomicBool,
 }
 
 impl App {
@@ -65,6 +70,7 @@ impl App {
             zulip: cfg.zulip.as_ref().map(|_| Arc::new(Registry::new(Zulip))),
             github,
             workspace_locks: Mutex::default(),
+            draining: AtomicBool::new(false),
             cfg,
         }))
     }
@@ -158,6 +164,14 @@ impl App {
         lock.lock_owned().await
     }
 
+    pub fn draining(&self) -> bool {
+        self.draining.load(Ordering::Relaxed)
+    }
+
+    pub fn set_draining(&self, on: bool) {
+        self.draining.store(on, Ordering::Relaxed);
+    }
+
     fn busy(&self) -> bool {
         self.linear.busy() || self.zulip.as_ref().is_some_and(|z| z.busy())
     }
@@ -190,6 +204,9 @@ async fn status(State(app): State<Arc<App>>) -> Json<Value> {
     let models = app.models();
     Json(json!({
         "status": if app.busy() { "busy" } else { "idle" },
+        // Also tells `contrib/deploy.sh` that this binary handles SIGUSR1 rather than dying of it.
+        "draining": app.draining(),
+        "sessions": sessions(&app),
         // Set by `contrib/deploy.sh`, so a deploy can tell the new binary answers.
         "commit": option_env!("MOTHERSHIP_COMMIT"),
         "runner": app.runner(),
@@ -198,4 +215,28 @@ async fn status(State(app): State<Arc<App>>) -> Json<Value> {
         "fallback_model": models.fallback_model,
         "effort": models.effort,
     }))
+}
+
+/// Each running turn: where it works, how long it has run, how long its agent has been quiet
+/// and the background tasks it still runs. No session ids, since a tunnel exposes `/status`.
+fn sessions(app: &App) -> Vec<Value> {
+    let now = crate::store::now_secs();
+    let linear = app.linear.activities().into_iter().map(|a| ("linear", a));
+    let zulip = app
+        .zulip
+        .iter()
+        .flat_map(|z| z.activities())
+        .map(|a| ("zulip", a));
+    linear
+        .chain(zulip)
+        .map(|(surface, a)| {
+            json!({
+                "surface": surface,
+                "workspace": a.workspace,
+                "turn_secs": now.saturating_sub(a.started),
+                "quiet_secs": now.saturating_sub(a.last_event),
+                "background_tasks": a.background,
+            })
+        })
+        .collect()
 }

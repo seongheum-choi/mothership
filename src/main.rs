@@ -36,6 +36,8 @@ async fn main() -> Result<()> {
     cfg.sandbox.read.extend(stops);
     let tunnel = cfg.tunnel.take();
     let app = app::App::new(cfg)?;
+    // Before `/status` reports `draining`: without a handler, SIGUSR1 would end the process.
+    tokio::spawn(drain_signals(app.clone(), drain_signal_streams()?));
 
     if app.cfg.linear.workspace.is_none() {
         tracing::warn!(
@@ -53,6 +55,8 @@ async fn main() -> Result<()> {
             .pin_current(&app)
             .await
             .context("pinning the Linear workspace")?;
+        // Prompts held for the restart that started this process.
+        linear::release(&app);
     }
     if let Some(tunnel) = tunnel {
         tokio::spawn(tunnel.supervise());
@@ -78,6 +82,33 @@ async fn main() -> Result<()> {
     app.shutdown(Duration::from_secs(10)).await;
     tracing::info!("shutdown complete");
     Ok(())
+}
+
+type Signals = (tokio::signal::unix::Signal, tokio::signal::unix::Signal);
+
+fn drain_signal_streams() -> Result<Signals> {
+    use tokio::signal::unix::{SignalKind, signal};
+    let drain = signal(SignalKind::user_defined1()).context("listening for SIGUSR1")?;
+    let resume = signal(SignalKind::user_defined2()).context("listening for SIGUSR2")?;
+    Ok((drain, resume))
+}
+
+/// SIGUSR1 holds new turns for a restart (`contrib/deploy.sh` sends it while it waits for the
+/// running ones); SIGUSR2 ends that and runs what was held.
+async fn drain_signals(app: std::sync::Arc<app::App>, (mut drain, mut resume): Signals) {
+    loop {
+        tokio::select! {
+            _ = drain.recv() => {
+                app.set_draining(true);
+                tracing::info!("draining: new turns wait for the restart");
+            }
+            _ = resume.recv() => {
+                app.set_draining(false);
+                tracing::info!("drain ended; running the turns it held");
+                linear::release(&app);
+            }
+        }
+    }
 }
 
 /// Resolves on the first SIGTERM (launchd, pm2, systemd) or SIGINT (Ctrl-C).
