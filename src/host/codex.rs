@@ -3,7 +3,7 @@
 use super::{Host, request, seatbelt};
 use request::CodexRun;
 use serde_json::Value;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// What a run may write in Codex's home: its sessions, logs, caches, state databases and a
 /// refreshed login. Not its config, hooks, rules, skills, memories or binaries, which later
@@ -40,6 +40,19 @@ pub fn home_writes(home: &Path) -> Vec<String> {
         seatbelt::escape(&home.to_string_lossy())
     )));
     writes
+}
+
+/// Codex's binary and the code-mode host it starts its tools through, which it looks for
+/// beside the path it was started as, each as named and as resolved. Without the host,
+/// every tool call fails with "Operation not permitted".
+pub fn binaries(bin: &Path) -> Vec<PathBuf> {
+    let host = bin.with_file_name("codex-code-mode-host");
+    [bin.to_path_buf(), host]
+        .into_iter()
+        .filter(|p| p.exists())
+        .flat_map(|p| [std::fs::canonicalize(&p).ok(), Some(p)])
+        .flatten()
+        .collect()
 }
 
 impl Host {
@@ -94,6 +107,34 @@ impl Host {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reads_the_code_mode_host_beside_the_binary() {
+        let dir = std::env::temp_dir().join(format!("mothership-codex-{}", std::process::id()));
+        let real = dir.join("release");
+        std::fs::create_dir_all(&real).unwrap();
+        let bin = dir.join("codex");
+        std::fs::write(real.join("codex"), "").unwrap();
+        std::fs::write(real.join("codex-code-mode-host"), "").unwrap();
+        std::os::unix::fs::symlink(real.join("codex"), &bin).unwrap();
+        let host = dir.join("codex-code-mode-host");
+        std::os::unix::fs::symlink(real.join("codex-code-mode-host"), &host).unwrap();
+        let real = std::fs::canonicalize(&real).unwrap();
+
+        let paths = binaries(&bin);
+        for want in [
+            &bin,
+            &host,
+            &real.join("codex"),
+            &real.join("codex-code-mode-host"),
+        ] {
+            assert!(paths.contains(want), "{want:?} missing from {paths:?}");
+        }
+
+        std::fs::remove_file(&host).unwrap();
+        assert_eq!(binaries(&bin), vec![real.join("codex"), bin]);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     #[test]
     fn writes_codex_state_but_not_its_config() {
