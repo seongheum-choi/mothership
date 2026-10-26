@@ -58,14 +58,13 @@ pub struct Host {
 }
 
 /// Paths a Codex run reads besides the session's: Codex's home (its login and config) and
-/// its binary, found on the agent's `PATH`, both as named and as resolved.
+/// its binaries, found on the agent's `PATH` (see [`codex::binaries`]).
 pub fn codex_paths(app: &App) -> Vec<PathBuf> {
     let mut paths = vec![codex_home(app)];
     if let Some(bin) =
         crate::agent::limit::locate(&app.cfg.agent.codex_bin, app.agent_path().as_deref())
     {
-        paths.extend(std::fs::canonicalize(&bin).ok());
-        paths.push(bin);
+        paths.extend(codex::binaries(&bin));
     }
     paths
 }
