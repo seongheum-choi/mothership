@@ -58,14 +58,16 @@ impl App {
         let mut paths = self.cfg.sandbox.clone();
         paths.write.push(self.session_dir(key));
         let settings = |readable: &[PathBuf]| {
-            sandbox::settings(
+            let mut settings = sandbox::settings(
                 &self.home_dir,
                 &self.cfg.home,
                 workspace,
                 readable,
                 deny,
                 &paths,
-            )
+            );
+            sandbox::restrict_network(&mut settings, &self.cfg.home);
+            settings
         };
         let mut host_readable = readable.to_vec();
         host_readable.extend(crate::host::codex_paths(self));

@@ -36,7 +36,7 @@ One file, one responsibility. A file's logic, everything before `#[cfg(test)]` m
 | `github/` | GitHub surface: `GitHub` state and webhook intake (`mod.rs`), what an event says and its prompt (`feedback.rs`), which session it continues (`route.rs`), delivery dedup and hourly prompt cap (`guard.rs`), `gh-reply` and origin resolution (`reply.rs`) |
 | `sessions.rs` | Session lookups shared by surfaces: a pre-routing session's repository, the session that owns a branch |
 | `worktree.rs` | Git worktrees per issue |
-| `sandbox.rs` | Home directory read restrictions and `MOTHERSHIP_HOME` edit restrictions |
+| `sandbox.rs` | Home directory read restrictions, `MOTHERSHIP_HOME` edit restrictions and Bash's network allowlist |
 | `tunnel.rs`, `review.rs` | Extension points for ingress and review systems |
 
 ## Git
