@@ -196,9 +196,63 @@ pub fn dotenv_stops(state: &Path, dirs: &[PathBuf]) -> Vec<PathBuf> {
         .collect()
 }
 
+/// Limits Bash's network to the hosts in `<state>/allowed-domains`, one per line with `#`
+/// comments, when that file exists; read per turn, so adding a host needs no restart. Without
+/// the file, `bypassPermissions` lets Bash reach any host through the sandbox's proxy. An
+/// unreadable file allows no host rather than every one.
+pub fn restrict_network(settings: &mut Value, state: &Path) {
+    let file = state.join("allowed-domains");
+    let domains = match std::fs::read_to_string(&file) {
+        Ok(text) => parse_domains(&text),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return,
+        Err(err) => {
+            tracing::warn!("cannot read {}, allowing no host: {err}", file.display());
+            Vec::new()
+        }
+    };
+    let network = &mut settings["sandbox"]["network"];
+    network["strictAllowlist"] = json!(true);
+    network["allowedDomains"] = json!(domains);
+}
+
+fn parse_domains(text: &str) -> Vec<String> {
+    text.lines()
+        .map(|line| line.split('#').next().unwrap_or_default().trim())
+        .filter(|domain| !domain.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reads_allowed_domains_without_comments() {
+        let text = "# Anthropic\napi.anthropic.com\n\n*.npmjs.org  # npm\n  nodejs.org\n";
+        assert_eq!(
+            parse_domains(text),
+            ["api.anthropic.com", "*.npmjs.org", "nodejs.org"]
+        );
+    }
+
+    #[test]
+    fn allowed_domains_file_turns_on_the_strict_allowlist() {
+        let state = std::env::temp_dir().join(format!("mothership-net-{}", std::process::id()));
+        std::fs::create_dir_all(&state).unwrap();
+        let mut open = json!({ "sandbox": { "network": { "allowLocalBinding": true } } });
+        restrict_network(&mut open, &state);
+        assert!(open["sandbox"]["network"].get("strictAllowlist").is_none());
+
+        std::fs::write(state.join("allowed-domains"), "github.com\n").unwrap();
+        let mut strict = open.clone();
+        restrict_network(&mut strict, &state);
+        let network = &strict["sandbox"]["network"];
+        assert_eq!(network["strictAllowlist"], true);
+        assert_eq!(network["allowedDomains"], json!(["github.com"]));
+        assert_eq!(network["allowLocalBinding"], true);
+        std::fs::remove_dir_all(&state).unwrap();
+    }
 
     #[test]
     fn stops_dotenv_searches_below_the_state_dir() {
