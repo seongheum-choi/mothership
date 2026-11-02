@@ -8,7 +8,7 @@ mod vars;
 
 pub use model::{EFFORTS, ModelDefaults, ModelFields, check_effort};
 pub use reload::Live;
-pub use surfaces::{GitHubConfig, LinearConfig, ZulipConfig};
+pub use surfaces::{GitHubAppConfig, GitHubConfig, LinearConfig, ZulipConfig};
 
 use crate::{review::ReviewBackend, sandbox, store::Tokens, tunnel::Tunnel};
 use anyhow::{Context, Result};
@@ -42,6 +42,8 @@ pub struct Config {
     pub linear: LinearConfig,
     pub zulip: Option<ZulipConfig>,
     pub github: Option<GitHubConfig>,
+    /// `GITHUB_APP_CLIENT_ID`: the app whose user token agents get as `GH_TOKEN`.
+    pub github_app: Option<GitHubAppConfig>,
     pub worktrees_dir: PathBuf,
     pub agent: AgentConfig,
     /// Extra MCP config files for every session, next to the Linear one.
@@ -119,6 +121,7 @@ impl Config {
             linear: LinearConfig::from_vars(&vars, seed_tokens)?,
             zulip,
             github,
+            github_app: GitHubAppConfig::from_vars(&vars),
             worktrees_dir: vars
                 .get("WORKTREES_DIR")
                 .map_or_else(|| home.join("worktrees"), PathBuf::from),
