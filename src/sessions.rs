@@ -1,9 +1,9 @@
 //! Session lookups shared by the surfaces: which repository a pre-routing session works in, and
-//! which session owns a branch.
+//! which session owns a pull request.
 
 use crate::{
     repos::{self, Repo},
-    store::{SessionRec, Store},
+    store::{PullRequestRef, SessionRec, Store},
     worktree,
 };
 use std::path::Path;
@@ -62,7 +62,7 @@ pub fn mark_prompted(store: &Store, sid: &str) {
     });
 }
 
-/// The session that owns a branch.
+/// The session that owns a pull request.
 #[derive(Debug, PartialEq)]
 pub enum Found {
     Open(String),
@@ -70,23 +70,21 @@ pub enum Found {
     Closed(String),
 }
 
-/// The session that owns `branch` in one of `names` (repository names); see [`find`]. A
-/// pre-routing session's repository is worked out from its worktree or branch, and recorded for the
-/// session found, as Linear does on its next turn; the turn the caller starts needs it.
-pub async fn for_branch(
+/// The session that owns the pull request `pr`, whose head is `branch`, in one of `names`
+/// (repository names); see [`find`]. A pre-routing session's repository is worked out from its
+/// worktree or branch, and recorded for the session found, as Linear does on its next turn; the
+/// turn the caller starts needs it.
+pub async fn for_pull_request(
     store: &Store,
     repos: &[Repo],
+    pr: &PullRequestRef,
     branch: &str,
     names: &[&str],
 ) -> Option<Found> {
     let mut candidates: Vec<(String, SessionRec)> = store.read(|s| {
         s.sessions
             .iter()
-            .filter(|(_, rec)| {
-                rec.branch
-                    .as_deref()
-                    .is_some_and(|b| on_branch(b, branch).is_some())
-            })
+            .filter(|(_, rec)| owns(rec, pr, branch).is_some())
             .map(|(sid, rec)| (sid.clone(), rec.clone()))
             .collect()
     });
@@ -97,6 +95,7 @@ pub async fn for_branch(
     }
     let found = find(
         candidates.iter().map(|(sid, rec)| (sid, rec)),
+        pr,
         branch,
         names,
     )?;
@@ -119,24 +118,24 @@ pub async fn for_branch(
     Some(found)
 }
 
-/// Whether a session on `branch` owns the PR head `head`: `Some(true)` for the same branch,
-/// `Some(false)` for a branch stacked on it (`acme-593` owns `acme-593-3`).
-fn on_branch(branch: &str, head: &str) -> Option<bool> {
-    if branch == head {
-        return Some(true);
+/// Whether `rec` owns the pull request `pr` with head `branch`: `Some(true)` for the session a
+/// mention opened for it, `Some(false)` for a session on its head branch that no other pull
+/// request opened. A branch stacked on the session's (`acme-593-3` on `acme-593`) is not its own:
+/// the first mention there opens a session for that pull request.
+fn owns(rec: &SessionRec, pr: &PullRequestRef, branch: &str) -> Option<bool> {
+    match &rec.pull_request {
+        Some(own) => own.is(pr).then_some(true),
+        None => (rec.branch.as_deref() == Some(branch)).then_some(false),
     }
-    head.strip_prefix(branch)
-        .and_then(|rest| rest.strip_prefix('-'))
-        .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
-        .then_some(false)
 }
 
-/// The newest session in one of `repos` (names) whose branch owns `head`. An exact match wins
-/// over a stacked one, then an open session over a closed one, so feedback on a closed issue's
-/// branch never wakes the issue it is stacked on. Branch names repeat across
-/// repositories, so a session in another repository, or with none recorded, never matches.
+/// The newest session in one of `repos` (names) that owns the pull request `pr` with head
+/// `head`. The session opened for the pull request wins over one on its branch, then an open
+/// session over a closed one. Branch names repeat across repositories, so a session in another
+/// repository, or with none recorded, never matches.
 pub fn find<'a>(
     sessions: impl IntoIterator<Item = (&'a String, &'a SessionRec)>,
+    pr: &PullRequestRef,
     head: &str,
     repos: &[&str],
 ) -> Option<Found> {
@@ -148,8 +147,8 @@ pub fn find<'a>(
                 .is_some_and(|r| repos.iter().any(|n| n.eq_ignore_ascii_case(r)))
         })
         .filter_map(|(sid, rec)| {
-            let exact = on_branch(rec.branch.as_deref()?, head)?;
-            Some((exact, !rec.closed, rec.prompted_at, sid))
+            let opened_for = owns(rec, pr, head)?;
+            Some((opened_for, !rec.closed, rec.prompted_at, sid))
         })
         .max()
         .map(|(_, open, _, sid)| {
@@ -192,81 +191,94 @@ mod tests {
         }
     }
 
-    #[test]
-    fn closed_sessions_get_no_feedback() {
-        let rec = |closed, prompted_at| SessionRec {
-            repo: Some("app".into()),
-            branch: Some("acme-593".into()),
-            prompted_at,
-            closed,
-            ..SessionRec::default()
-        };
-        let closed = HashMap::from([("done".to_string(), rec(true, 9))]);
-        assert_eq!(
-            find(&closed, "acme-593", &["app"]),
-            Some(Found::Closed("done".into()))
-        );
-        let reopened = HashMap::from([
-            ("done".to_string(), rec(true, 9)),
-            ("again".to_string(), rec(false, 1)),
-        ]);
-        assert_eq!(
-            find(&reopened, "acme-593", &["app"]),
-            Some(Found::Open("again".into())),
-            "an open session wins over a newer closed one"
-        );
-        let stacked = HashMap::from([
-            (
-                "s12".to_string(),
-                SessionRec {
-                    branch: Some("acme-5-2".into()),
-                    ..rec(true, 1)
-                },
-            ),
-            (
-                "s13".to_string(),
-                SessionRec {
-                    branch: Some("acme-5".into()),
-                    ..rec(false, 9)
-                },
-            ),
-        ]);
-        assert_eq!(
-            find(&stacked, "acme-5-2", &["app"]),
-            Some(Found::Closed("s12".into())),
-            "a closed exact match wins over an open stacked one"
-        );
-        assert_eq!(
-            find(&stacked, "acme-5", &["app"]),
-            Some(Found::Open("s13".into()))
-        );
+    fn pr(number: u64) -> PullRequestRef {
+        PullRequestRef {
+            repo: "o/r".into(),
+            number,
+            url: format!("https://github.com/o/r/pull/{number}"),
+        }
     }
 
-    #[test]
-    fn finds_the_newest_session_on_the_branch_or_its_stack() {
-        let rec = |branch: &str, prompted_at| SessionRec {
+    fn rec(branch: &str, prompted_at: u64) -> SessionRec {
+        SessionRec {
             repo: Some("app".into()),
             branch: Some(branch.into()),
             prompted_at,
             ..SessionRec::default()
-        };
+        }
+    }
+
+    fn opened_for(number: u64, branch: &str, prompted_at: u64) -> SessionRec {
+        SessionRec {
+            pull_request: Some(pr(number)),
+            ..rec(branch, prompted_at)
+        }
+    }
+
+    #[test]
+    fn closed_sessions_get_no_feedback() {
+        let closed = |r: SessionRec| SessionRec { closed: true, ..r };
+        let done = HashMap::from([("done".to_string(), closed(rec("acme-593", 9)))]);
+        assert_eq!(
+            find(&done, &pr(7), "acme-593", &["app"]),
+            Some(Found::Closed("done".into()))
+        );
+        let reopened = HashMap::from([
+            ("done".to_string(), closed(rec("acme-593", 9))),
+            ("again".to_string(), rec("acme-593", 1)),
+        ]);
+        assert_eq!(
+            find(&reopened, &pr(7), "acme-593", &["app"]),
+            Some(Found::Open("again".into())),
+            "an open session wins over a newer closed one"
+        );
+        let opened = HashMap::from([
+            ("pr".to_string(), closed(opened_for(7, "acme-593", 1))),
+            ("issue".to_string(), rec("acme-593", 9)),
+        ]);
+        assert_eq!(
+            find(&opened, &pr(7), "acme-593", &["app"]),
+            Some(Found::Closed("pr".into())),
+            "the pull request's own session wins even closed"
+        );
+    }
+
+    #[test]
+    fn each_pull_request_has_its_own_session() {
         let sessions = HashMap::from([
             ("old".to_string(), rec("acme-593", 1)),
             ("new".to_string(), rec("acme-593", 2)),
-            ("stack".to_string(), rec("acme-593-3", 0)),
-            ("other".to_string(), rec("acme-59", 9)),
+            ("pr8".to_string(), opened_for(8, "acme-593-3", 0)),
+            ("pr9".to_string(), opened_for(9, "acme-593", 0)),
             ("chat".to_string(), SessionRec::default()),
         ]);
-        let find = |head| open(find(&sessions, head, &["app"]));
-        assert_eq!(find("acme-593").as_deref(), Some("new"));
+        let find = |number, head| open(find(&sessions, &pr(number), head, &["app"]));
         assert_eq!(
-            find("acme-593-3").as_deref(),
-            Some("stack"),
-            "exact beats stacked"
+            find(7, "acme-593").as_deref(),
+            Some("new"),
+            "newest on the branch"
         );
-        assert_eq!(find("acme-593-4").as_deref(), Some("new"));
-        assert_eq!(find("acme-593-x"), None, "suffix must be a number");
-        assert_eq!(find("acme-593-"), None);
-        assert_eq!(find("main"), None);
+        assert_eq!(find(9, "acme-593").as_deref(), Some("pr9"), "opened for it");
+        assert_eq!(find(8, "acme-593-3").as_deref(), Some("pr8"));
+        assert_eq!(find(10, "acme-593-3"), None, "pr8's branch is not its own");
+        assert_eq!(find(11, "acme-593-4"), None, "stacked branches are not owned");
+        assert_eq!(find(12, "main"), None);
+        let other_repo = PullRequestRef {
+            repo: "o/lib".into(),
+            ..pr(9)
+        };
+        assert_eq!(
+            open(super::find(&sessions, &other_repo, "x", &["app"])),
+            None,
+            "same number in another repository"
+        );
+        let any_case = PullRequestRef {
+            repo: "O/R".into(),
+            ..pr(9)
+        };
+        assert_eq!(
+            open(super::find(&sessions, &any_case, "x", &["app"])).as_deref(),
+            Some("pr9")
+        );
     }
 }
