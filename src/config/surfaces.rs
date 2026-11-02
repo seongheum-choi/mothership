@@ -83,6 +83,25 @@ impl GitHubConfig {
     }
 }
 
+/// The GitHub App agents log in to with the device flow, so their `GH_TOKEN` acts as the user
+/// within the app's installations and permissions.
+#[derive(Clone)]
+pub struct GitHubAppConfig {
+    pub client_id: String,
+    /// Sent with refresh grants when set; GitHub's documentation lists it as required there.
+    pub client_secret: Option<String>,
+}
+
+impl GitHubAppConfig {
+    /// On when `GITHUB_APP_CLIENT_ID` is set.
+    pub(super) fn from_vars(vars: &Vars) -> Option<Self> {
+        Some(Self {
+            client_id: vars.get("GITHUB_APP_CLIENT_ID")?,
+            client_secret: vars.get("GITHUB_APP_CLIENT_SECRET"),
+        })
+    }
+}
+
 /// `LINEAR_API_URL` without trailing slashes, or Linear's own host when it is unset.
 fn linear_api_url(setting: Option<String>) -> String {
     setting.map_or_else(

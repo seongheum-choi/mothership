@@ -93,6 +93,7 @@ Settings come from the process environment or `<home>/.env`, and the environment
 | `GITHUB_WEBHOOK_SECRET` | | Turns on GitHub PR feedback (`POST /github-webhook`); the GitHub App's webhook secret |
 | `GITHUB_MENTION_LOGIN` | required with `GITHUB_WEBHOOK_SECRET` | The agent's GitHub login (`alean-impala`); PR feedback that does not mention `@<login>` is ignored |
 | `GITHUB_TRUSTED_LOGINS` | | Comma-separated GitHub logins heard besides the repository owner. On an organisation repository GitHub reports even the owner's own account as `MEMBER`, so list it here |
+| `GITHUB_APP_CLIENT_ID`, `GITHUB_APP_CLIENT_SECRET` | | A GitHub App whose user access token agents get as `GH_TOKEN`; see [GitHub auth](#github-auth) |
 | `ZULIP_SITE`, `ZULIP_BOT_EMAIL`, `ZULIP_API_KEY`, `ZULIP_WEBHOOK_TOKEN` | | Turn on Zulip (`POST /zulip-webhook`) |
 | `CLOUDFLARE_TOKEN`, `CLOUDFLARED_BIN` | | Supervise a remotely-managed Cloudflare tunnel |
 | `LINEAR_ACCESS_TOKEN`, `LINEAR_REFRESH_TOKEN` | | Seed tokens, used only while `state.json` has none |
@@ -273,6 +274,16 @@ The switch only applies to a runner a label, a mode, a repository or the instanc
 Open `<BASE_URL>/oauth/authorize` to install the app with `actor=app`. It works only while no token is stored, because the endpoint is public. To install again, clear `linear` in `state.json` and restart. Tokens refresh by themselves when Linear rejects them.
 
 One instance serves one Linear workspace, and its repository settings belong to that instance, so run a separate instance per workspace (a company one and a personal one, say). At startup, and whenever a token is stored or refreshed, mothership asks Linear which workspace the token belongs to and pins it. Webhooks whose `organizationId` is not the pinned workspace get `403` and a warning naming the organizations and the event type, never the body. Until a token is stored, every webhook is refused. Set `LINEAR_WORKSPACE` so that a stray install from the wrong workspace cannot become the pinned one; mothership warns at startup when it is unset.
+
+## GitHub auth
+
+A fine-grained PAT can be limited to some repositories but has no Checks permission, so `gh pr checks` and a bare `gh pr view` fail with it. A GitHub App's user access token acts as the user who logged in (pull requests stay theirs, `--author @me` works) and is limited to the repositories the app is installed on and the app's permissions, Checks included.
+
+1. In the instance's GitHub App, turn on **Enable Device Flow**, give it the repository permissions agents need (Contents, Pull requests, Checks, Actions, Issues…), and install it on the repositories they work in only.
+2. Set `GITHUB_APP_CLIENT_ID` and `GITHUB_APP_CLIENT_SECRET` (a client secret from the app's page; GitHub asks for it to refresh tokens) in `.env` and restart.
+3. With no login stored, startup logs `GitHub App login: open https://github.com/login/device and enter XXXX-XXXX`. Enter the code there, signed in as the account agents should act as, within the 15 minutes the code lasts. An unused code is not renewed: restart to get a new one.
+
+The token and its refresh token are kept in `state.json` (`github_user`). Before each turn, a token with less than four hours left of its eight is refreshed, and the turn's `GH_TOKEN` is the user token, in place of the one `AGENT_ENV` forwards. When there is no login yet or a refresh fails, the turn keeps `AGENT_ENV`'s `GH_TOKEN` (the PAT), so keep it there as the fallback. A refresh token GitHub refuses (expired after six months unused, or revoked) is dropped, and the next start asks for a login again.
 
 ## Tunnel
 

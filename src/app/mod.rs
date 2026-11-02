@@ -5,7 +5,7 @@ mod agent;
 use crate::{
     agent::{Runner, limit},
     config::{Config, Live, ModelDefaults},
-    github::GitHub,
+    github::{GitHub, UserToken},
     linear::Linear,
     repos::Repo,
     session::Registry,
@@ -37,6 +37,8 @@ pub struct App {
     pub linear: Arc<Registry<Linear>>,
     pub zulip: Option<Arc<Registry<Zulip>>>,
     pub github: Option<GitHub>,
+    /// The GitHub App user token agents get as `GH_TOKEN`, when `GITHUB_APP_CLIENT_ID` is set.
+    pub github_user: Option<UserToken>,
     /// Sessions on the same issue share a worktree; one agent at a time per workspace.
     workspace_locks: Mutex<HashMap<PathBuf, Arc<tokio::sync::Mutex<()>>>>,
     /// New turns wait for a restart instead of starting (SIGUSR1, until SIGUSR2).
@@ -69,6 +71,7 @@ impl App {
             linear: Arc::new(Registry::new(Linear::default())),
             zulip: cfg.zulip.as_ref().map(|_| Arc::new(Registry::new(Zulip))),
             github,
+            github_user: cfg.github_app.clone().map(UserToken::new),
             workspace_locks: Mutex::default(),
             draining: AtomicBool::new(false),
             cfg,
