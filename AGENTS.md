@@ -13,6 +13,7 @@ mothership is a long-running service that other people's work depends on, so cha
 - **Dependencies:** add one only when the standard library or an existing dependency can't do the job in a few lines.
 - **Tests:** every branch-heavy pure function (parsers, mappings, path logic) has a unit test next to it. No mocking frameworks. Network and process boundaries are checked by running the binary.
 - **Docs:** each module starts with a `//!` line saying what it is for. Comments explain why, not what.
+- **Language:** everything in this repository is in English: code comments, docs, commit messages, and pull request titles and bodies. Linear issues may be written in Korean; translate an issue's title when it becomes a pull request title, keeping the key (`SH-123: ...`).
 
 ## Layout
 
