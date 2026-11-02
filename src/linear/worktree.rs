@@ -1,4 +1,4 @@
-//! The issue's git worktree: cut on the first turn, remembered, and cut again when it is gone.
+//! The session's git worktree: cut on the first turn, remembered, and cut again when it is gone.
 
 use super::Linear;
 use crate::{app::App, repos::Repo, store::SessionRec, worktree};
@@ -30,7 +30,7 @@ impl Linear {
                 }
             },
         };
-        let dir = app.cfg.worktrees_dir.join(&rec.identifier);
+        let dir = app.cfg.worktrees_dir.join(dir_name(rec));
         let workspace = worktree::ensure(&repo.path, &dir, &branch, &repo.base_branch).await?;
         let branch = worktree::current_branch(&workspace).await.unwrap_or(branch);
         app.store.update(|s| {
@@ -51,9 +51,33 @@ fn recorded_branch(rec: &SessionRec) -> Option<&str> {
     rec.branch.as_deref().filter(|b| !b.is_empty())
 }
 
+/// The worktree's directory under `WORKTREES_DIR`: the issue's identifier, and for a session
+/// opened for a pull request, its number after it, since the issue's own worktree is on
+/// another branch.
+fn dir_name(rec: &SessionRec) -> String {
+    match &rec.pull_request {
+        Some(pr) => format!("{}-pr{}", rec.identifier, pr.number),
+        None => rec.identifier.clone(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_pull_request_session_has_a_directory_of_its_own() {
+        let mut rec = SessionRec {
+            identifier: "SH-7".into(),
+            ..SessionRec::default()
+        };
+        assert_eq!(dir_name(&rec), "SH-7");
+        rec.pull_request = Some(crate::store::PullRequestRef {
+            number: 12,
+            ..Default::default()
+        });
+        assert_eq!(dir_name(&rec), "SH-7-pr12");
+    }
 
     #[test]
     fn a_lost_worktree_is_cut_again_on_its_branch() {

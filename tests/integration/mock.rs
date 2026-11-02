@@ -24,12 +24,14 @@ pub const FRESH_TOKEN: &str = "fresh";
 
 #[derive(Default)]
 pub struct Recorded {
-    /// Issues by id, as `issue(id:)` queries return them.
+    /// Issues by id, as `issue(id:)` queries return them, by id or identifier.
     pub issues: HashMap<String, Value>,
     /// `agentActivityCreate` inputs.
     pub activities: Vec<Value>,
     /// `agentSessionUpdate` variables.
     pub session_updates: Vec<Value>,
+    /// `agentSessionCreateOnIssue` inputs; the n-th (from 1) creates session `opened-<n>`.
+    pub opened_sessions: Vec<Value>,
     /// `issueUpdate` variables.
     pub issue_updates: Vec<Value>,
     /// `/oauth/token` forms.
@@ -115,6 +117,10 @@ async fn graphql(
     } else if query.contains("agentActivityCreate") {
         recorded.activities.push(variables["input"].clone());
         json!({"agentActivityCreate": {"success": true}})
+    } else if query.contains("agentSessionCreateOnIssue") {
+        recorded.opened_sessions.push(variables["input"].clone());
+        let id = format!("opened-{}", recorded.opened_sessions.len());
+        json!({"agentSessionCreateOnIssue": {"success": true, "agentSession": {"id": id}}})
     } else if query.contains("agentSessionUpdate") {
         recorded.session_updates.push(variables.clone());
         json!({"agentSessionUpdate": {"success": true}})
@@ -123,7 +129,13 @@ async fn graphql(
         json!({"issueUpdate": {"success": true}})
     } else if query.contains("issue(") {
         let id = variables["id"].as_str().unwrap_or_default();
-        json!({"issue": recorded.issues.get(id)})
+        let issue = recorded.issues.get(id).or_else(|| {
+            recorded
+                .issues
+                .values()
+                .find(|i| i["identifier"].as_str() == Some(id))
+        });
+        json!({ "issue": issue })
     } else {
         let errors = json!({"errors": [{"message": format!("mock: unknown query {query}")}]});
         return (StatusCode::BAD_REQUEST, Json(errors)).into_response();

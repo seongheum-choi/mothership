@@ -53,6 +53,8 @@ pub const ALL: &[(&str, Scenario)] = scenarios![
     github_feedback_continues_the_session,
     github_fork_conversation_comment_is_ignored,
     github_feedback_reaches_a_lost_worktree_session,
+    github_mention_opens_a_session_per_pull_request,
+    github_mention_without_an_issue_is_answered_on_github,
     zulip_mention_gets_a_reply,
     sigterm_stops_running_agents,
     reload_routes_to_a_repository_added_between_turns,
@@ -1185,6 +1187,139 @@ async fn github_feedback_reaches_a_lost_worktree_session(ctx: Ctx) -> Result<()>
     let cwd = Path::new(call["cwd"].as_str().context("cwd")?);
     ensure!(main_clone(cwd)? == lib.display().to_string());
     ensure!(git(cwd, &["branch", "--show-current"])?.trim() == "nate/sh-41");
+    Ok(())
+}
+
+/// The owner's line comment mentioning the agent on pull request `number` of `o/r`, whose head
+/// is `head` and whose description is `body`.
+fn pr_comment(number: u64, head: &str, body: &str, id: u64, text: &str) -> Value {
+    json!({
+        "action": "created",
+        "repository": {"full_name": "o/r"},
+        "pull_request": {
+            "number": number, "title": "Stack\npart 2", "body": body,
+            "html_url": format!("https://github.com/o/r/pull/{number}"),
+            "head": {"ref": head, "repo": {"full_name": "o/r"}},
+        },
+        "comment": {
+            "id": id, "user": {"login": "someone", "type": "User"},
+            "author_association": "OWNER", "body": text,
+            "path": "src/lib.rs", "line": 3, "html_url": format!("https://github.com/o/r/pull/{number}#r{id}"),
+        },
+    })
+}
+
+/// A mention on a pull request no session owns, a branch stacked on the issue's among them,
+/// opens a Linear session for it on the issue its branch names, in a worktree of its own on its
+/// head branch. Linear's `created` webhook for it starts nothing, and later feedback on each
+/// pull request goes to that pull request's session only.
+async fn github_mention_opens_a_session_per_pull_request(ctx: Ctx) -> Result<()> {
+    let h = Harness::start(
+        &ctx,
+        Setup {
+            github: true,
+            ..Setup::default()
+        },
+    )
+    .await?;
+    let issue = issue(8, "Ship it.");
+    h.mock.add_issue(&issue);
+    ensure!(h.linear(created("s8", &issue, "context of SH-8")).await? == 200);
+    h.activity("s8", "response", 1).await?;
+
+    let event = "pull_request_review_comment";
+    let stacked = pr_comment(9, "nate/sh-8-2", "", 91, "@impala second pull request");
+    ensure!(h.github(event, "d-91", &stacked).await? == 200);
+    let call = h.prompt_with("second pull request").await?;
+    let prompt = call["prompt"].as_str().context("prompt")?;
+    ensure!(prompt.starts_with("SH-8: Issue 8 ("), "{prompt}");
+    ensure!(prompt.contains("opened from GitHub for pull request https://github.com/o/r/pull/9"));
+    let cwd = Path::new(call["cwd"].as_str().context("cwd")?);
+    ensure!(cwd.ends_with("SH-8-pr9"), "{}", cwd.display());
+    ensure!(git(cwd, &["branch", "--show-current"])?.trim() == "nate/sh-8-2");
+    let opened = h.mock.read(|r| r.opened_sessions.clone());
+    let link = json!({"label": "o/r#9", "url": "https://github.com/o/r/pull/9"});
+    ensure!(
+        opened == [json!({"issueId": "issue-8", "externalUrls": [link]})],
+        "{opened:?}"
+    );
+    let named = h.mock.read(|r| r.session_updates.clone());
+    ensure!(
+        named
+            .iter()
+            .any(|u| u["id"] == "opened-1" && u["input"]["summary"] == "PR #9: Stack part 2"),
+        "{named:?}"
+    );
+    h.activity("opened-1", "response", 1).await?;
+    ensure!(
+        h.linear(created("opened-1", &issue, "context of SH-8"))
+            .await?
+            == 200
+    );
+    h.logged("[opened-1] linear created: opened by mothership")
+        .await?;
+
+    let again = pr_comment(9, "nate/sh-8-2", "", 92, "@impala more on the second");
+    ensure!(h.github(event, "d-92", &again).await? == 200);
+    h.activity("opened-1", "response", 2).await?;
+    let first = pr_comment(7, "nate/sh-8", "", 71, "@impala on the first");
+    ensure!(h.github(event, "d-71", &first).await? == 200);
+    h.activity("s8", "response", 2).await?;
+    ensure!(h.mock.read(|r| r.opened_sessions.len()) == 1, "opened once");
+    ensure!(
+        h.prompts_with("context of SH-8").len() == 1,
+        "created ignored"
+    );
+    ensure!(
+        h.activities("opened-1")
+            .iter()
+            .filter(|a| a["type"] == "response")
+            .count()
+            == 2
+    );
+    Ok(())
+}
+
+/// A mention on a pull request whose description and branch name no Linear issue is answered on
+/// GitHub, with the marker that keeps the answer from coming back, and opens nothing.
+async fn github_mention_without_an_issue_is_answered_on_github(ctx: Ctx) -> Result<()> {
+    let h = Harness::start(
+        &ctx,
+        Setup {
+            github: true,
+            ..Setup::default()
+        },
+    )
+    .await?;
+    let body = "See https://linear.app/acme/issue/SH-404";
+    let comment = pr_comment(7, "feature/login", body, 1, "@impala look at this");
+    ensure!(
+        h.github("pull_request_review_comment", "d-1", &comment)
+            .await?
+            == 200
+    );
+    h.logged("no Linear issue in its description or branch")
+        .await?;
+    let gh = eventually("a gh pr comment", || {
+        h.calls("gh").into_iter().find(|c| c["args"][0] == "pr")
+    })
+    .await?;
+    let args: Vec<&str> = gh["args"]
+        .as_array()
+        .context("args")?
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
+    ensure!(
+        args[..6] == ["pr", "comment", "7", "--repo", "o/r", "--body"],
+        "{args:?}"
+    );
+    ensure!(
+        args[6].contains("couldn't find the Linear issue")
+            && args[6].ends_with("<!-- mothership -->")
+    );
+    ensure!(h.mock.read(|r| r.opened_sessions.is_empty()));
+    ensure!(h.prompts_with("look at this").is_empty());
     Ok(())
 }
 
