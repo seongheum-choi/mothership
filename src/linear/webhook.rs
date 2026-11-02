@@ -85,6 +85,10 @@ async fn handle(app: Arc<App>, p: Value) {
         return;
     }
     let (prompt, request) = match p["action"].as_str() {
+        Some("created") if app.linear.surface.opened_here(&app, sid).await => {
+            tracing::info!("[{sid}] linear created: opened by mothership, already started");
+            return;
+        }
         Some("created") => {
             // A delegated session starts work on the issue. A mention may be just a question,
             // so the agent moves those issues itself when it starts work (see the prompt).

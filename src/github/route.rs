@@ -1,9 +1,11 @@
-//! Which session a piece of GitHub feedback continues, and starting its turn.
+//! Which session a piece of GitHub feedback continues, and starting its turn; a pull request
+//! no session owns gets one of its own.
 
 use super::{
     GitHub,
     feedback::{Feedback, Head},
     guard::{Allowance, PROMPTS_PER_WINDOW},
+    open,
 };
 use crate::{
     app::App,
@@ -42,7 +44,10 @@ pub(super) async fn handle(app: Arc<App>, feedback: Feedback) {
     }
     let origins = github.origins();
     let names = origins.names(&feedback.repo);
-    let sid = match sessions::for_branch(&app.store, &app.repos(), &head.branch, &names).await {
+    let pr = feedback.pull_request();
+    let found =
+        sessions::for_pull_request(&app.store, &app.repos(), &pr, &head.branch, &names).await;
+    let sid = match found {
         Some(Found::Open(sid)) => sid,
         Some(Found::Closed(sid)) => {
             tracing::info!(
@@ -52,14 +57,7 @@ pub(super) async fn handle(app: Arc<App>, feedback: Feedback) {
             );
             return;
         }
-        None => {
-            tracing::info!(
-                "github {} on {}: no session for this branch in this repository, ignored",
-                feedback.pr_url,
-                head.branch
-            );
-            return;
-        }
+        None => return open::open(app.clone(), feedback, head, &names).await,
     };
     let allowed = github
         .budget
@@ -149,7 +147,15 @@ mod tests {
             ("unknown".to_string(), rec(None, 9)),
         ]);
         let gh = origins();
-        let find = |full_name| open(sessions::find(&sessions, "fix-login", &gh.names(full_name)));
+        let pr = crate::store::PullRequestRef::default();
+        let find = |full_name| {
+            open(sessions::find(
+                &sessions,
+                &pr,
+                "fix-login",
+                &gh.names(full_name),
+            ))
+        };
         assert_eq!(find("o/r").as_deref(), Some("app"));
         assert_eq!(find("o/lib").as_deref(), Some("lib"), "names ignore case");
         assert_eq!(find("o/other"), None);
