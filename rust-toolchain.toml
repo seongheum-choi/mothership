@@ -1,0 +1,4 @@
+# The same compiler as mise.toml; corgi reads its pin from here and would otherwise write this file.
+[toolchain]
+channel = "1.99.0"
+components = ["rustfmt", "clippy"]
