@@ -149,8 +149,9 @@ mod tests {
 
     #[test]
     fn bundled_modes_parse() {
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("contrib/modes");
-        let modes = load_all(&dir).unwrap();
+        // Tests run from the package root; a build-time path would tie the binary to this checkout.
+        let dir = Path::new("contrib/modes");
+        let modes = load_all(dir).unwrap();
         let names: Vec<&str> = modes.iter().map(|m| m.name.as_str()).collect();
         assert_eq!(names, ["debug", "implement", "research"]);
         assert!(modes.iter().all(|m| !m.labels.is_empty()));
