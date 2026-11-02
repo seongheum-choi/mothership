@@ -64,6 +64,7 @@ async fn main() -> Result<()> {
         // Prompts held for the restart that started this process.
         linear::release(&app);
     }
+    github::start_login(&app);
     if let Some(tunnel) = tunnel {
         tokio::spawn(tunnel.supervise());
     }

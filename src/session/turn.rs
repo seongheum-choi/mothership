@@ -108,6 +108,9 @@ impl<S: Surface> Turn<'_, S> {
             };
             surface.update(app, key, note).await;
         }
+        if let Some(token) = crate::github::user_token::for_turn(app).await {
+            crate::github::user_token::set_gh_token(&mut launch.env, token);
+        }
         let (mut progress, mut host) = prepare(app, key, &mut launch)?;
         let driven = self
             .drive_all(launch, prompt, tickets, rx, queued, &mut progress)

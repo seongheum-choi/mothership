@@ -1,6 +1,6 @@
-//! Durable state: Linear OAuth tokens and per-session bookkeeping, in `<home>/state.json`.
+//! Durable state: Linear OAuth tokens, the GitHub App user token and per-session bookkeeping, in `<home>/state.json`.
 
-use crate::agent::Runner;
+use crate::{agent::Runner, github::UserTokens};
 use serde::{Deserialize, Serialize};
 use std::fmt::Write as _;
 use std::{
@@ -129,6 +129,9 @@ pub struct State {
     /// then turns run on Codex; the whole instance shares the one account.
     #[serde(default)]
     pub claude_resets_at: Option<u64>,
+    /// The GitHub App user token agents get as `GH_TOKEN`, from the device flow login.
+    #[serde(default)]
+    pub github_user: Option<UserTokens>,
 }
 
 pub struct Store {

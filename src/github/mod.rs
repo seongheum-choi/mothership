@@ -7,10 +7,15 @@
 //! account, only on same-repository PRs of this instance's git repositories, and each delivery
 //! at most once.
 
+mod device;
 mod feedback;
 mod guard;
 mod reply;
 mod route;
+pub mod user_token;
+
+pub use device::start as start_login;
+pub use user_token::{UserToken, UserTokens};
 
 use crate::{app::App, repos::Repo};
 use anyhow::{Result, bail};
