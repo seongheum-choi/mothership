@@ -302,12 +302,14 @@ fn busy_tool() -> Option<std::process::Child> {
 }
 
 /// `gh api repos/<owner>/<name>/pulls/<n>`: a pull request whose head is `FAKE_GH_HEAD_REF` in
-/// `FAKE_GH_HEAD_REPO`, by default the same repository. Anything else fails.
+/// `FAKE_GH_HEAD_REPO`, by default the same repository. `gh pr comment` succeeds. Anything else
+/// fails.
 pub fn gh() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     record(&json!({ "tool": "gh", "args": args }));
     let pull = match args.as_slice() {
         [api, path] if api == "api" => pull_request(path),
+        [pr, comment, ..] if pr == "pr" && comment == "comment" => return ExitCode::SUCCESS,
         _ => None,
     };
     let Some((repo, number)) = pull else {
