@@ -97,7 +97,7 @@ async fn run(filter: Option<&str>) -> ExitCode {
             (name, ctx, task)
         })
         .collect();
-    let (mut passed, mut failed) = (0, 0);
+    let (mut passed, mut skipped, mut failed) = (0, 0, 0);
     for (name, ctx, task) in running {
         let result = match task.await {
             Ok(Ok(result)) => result,
@@ -110,6 +110,11 @@ async fn run(filter: Option<&str>) -> ExitCode {
                 println!("scenario {name} ... ok");
                 ctx.clean_up();
             }
+            Err(e) if e.downcast_ref::<harness::Skipped>().is_some() => {
+                skipped += 1;
+                println!("scenario {name} ... skipped: {e}");
+                ctx.clean_up();
+            }
             Err(e) => {
                 failed += 1;
                 println!("scenario {name} ... FAILED\n  {e:#}");
@@ -118,7 +123,7 @@ async fn run(filter: Option<&str>) -> ExitCode {
         }
     }
     println!(
-        "\nintegration: {passed} passed; {failed} failed; finished in {:.1}s\n",
+        "\nintegration: {passed} passed; {skipped} skipped; {failed} failed; finished in {:.1}s\n",
         started.elapsed().as_secs_f64()
     );
     if failed == 0 {
