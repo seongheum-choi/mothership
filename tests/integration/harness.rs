@@ -387,6 +387,38 @@ pub async fn exited(pid: u64) -> Result<()> {
     .await
 }
 
+/// Waits for the tool the fake agent ran in a process group of its own to be gone. Mothership
+/// finds such a tool by listing the agent's children; where this process may not list processes
+/// (an agent's Seatbelt sandbox), mothership cannot either, so the check is skipped.
+pub async fn tool_exited(pid: u64) -> Result<()> {
+    if !can_list_processes() {
+        return Err(Skipped("this sandbox does not allow listing processes (`pgrep -P`)").into());
+    }
+    exited(pid).await
+}
+
+/// Whether `pgrep` can read the process list: it exits 3 when it cannot, 0 or 1 when it can.
+fn can_list_processes() -> bool {
+    std::process::Command::new("pgrep")
+        .args(["-P", &std::process::id().to_string()])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|s| matches!(s.code(), Some(0 | 1)))
+}
+
+/// A scenario that stopped short because this environment lacks something it needs.
+#[derive(Debug)]
+pub struct Skipped(pub &'static str);
+
+impl std::fmt::Display for Skipped {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.0)
+    }
+}
+
+impl std::error::Error for Skipped {}
+
 fn signal(which: &str, pid: u32) -> Result<()> {
     let status = std::process::Command::new("kill")
         .args([which, &pid.to_string()])

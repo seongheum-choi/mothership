@@ -278,6 +278,18 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn seatbelt_enforces_the_profile() {
+        // Seatbelt refuses to apply a profile inside another one, so under an agent's own
+        // sandbox nothing here could pass. Only that refusal skips; any other failure fails.
+        let nested = std::process::Command::new("/usr/bin/sandbox-exec")
+            .args(["-p", "(version 1)(allow default)", "/usr/bin/true"])
+            .output()
+            .unwrap();
+        if String::from_utf8_lossy(&nested.stderr)
+            .contains("sandbox_apply: Operation not permitted")
+        {
+            eprintln!("skipped: sandbox-exec cannot apply a profile inside this sandbox");
+            return;
+        }
         let base = std::env::temp_dir().join(format!("mothership-sbx-{}", std::process::id()));
         for dir in ["ws/sub/.git/hooks", "secret/own", "sess", "outside"] {
             std::fs::create_dir_all(base.join(dir)).unwrap();
