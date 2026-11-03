@@ -18,13 +18,20 @@ struct TokenResponse {
 
 /// One GraphQL request with `token`; `None` when Linear rejects the token.
 async fn request(app: &App, token: &str, query: &str, variables: Value) -> Result<Option<Value>> {
-    let res = app
-        .http
-        .post(format!("{}/graphql", app.cfg.linear.api_url))
-        .bearer_auth(token)
-        .json(&json!({ "query": query, "variables": variables }))
-        .send()
-        .await?;
+    let payload = json!({ "query": query, "variables": variables });
+    let send = || {
+        app.http
+            .post(format!("{}/graphql", app.cfg.linear.api_url))
+            .bearer_auth(token)
+            .json(&payload)
+            .send()
+    };
+    // A pooled connection Linear has already closed fails with a reset before the request is
+    // read; the retry gets a fresh connection.
+    let res = match send().await {
+        Err(e) if e.is_request() => send().await?,
+        res => res?,
+    };
     let status = res.status();
     let text = res.text().await?;
     let body: Value = serde_json::from_str(&text).unwrap_or_default();
