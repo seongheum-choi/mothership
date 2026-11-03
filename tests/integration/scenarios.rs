@@ -5,7 +5,9 @@ use crate::{
         BACKGROUND, BACKGROUND_DONE, BACKGROUND_HANG, CLAUDE_LIMIT, CODEX_RELEASE, CODEX_SCRIPT,
         HANG, HOLD, HOST_COMMAND, HOST_RUN, PROGRESS, PROGRESS_LINE, RELEASE,
     },
-    harness::{Ctx, Harness, Setup, ZULIP_TOKEN, create_repo, eventually, exited, git},
+    harness::{
+        Ctx, Harness, Setup, ZULIP_TOKEN, create_repo, eventually, exited, git, tool_exited,
+    },
     mock::{self, ORG},
 };
 use anyhow::{Context, Result, ensure};
@@ -921,7 +923,7 @@ async fn linear_stop_kills_the_agent(ctx: Ctx) -> Result<()> {
     let response = h.activity("s6", "response", 1).await?;
     ensure!(body(&response) == "Stopped.", "{response}");
     exited(pid).await?;
-    exited(tool).await
+    tool_exited(tool).await
 }
 
 /// An agent that announces no session within `AGENT_START_TIMEOUT` is killed with the tool it
@@ -952,7 +954,7 @@ async fn linear_agent_that_never_starts_is_stopped(ctx: Ctx) -> Result<()> {
         .cloned()
         .context("fake agent call")?;
     exited(call["pid"].as_u64().context("fake agent pid")?).await?;
-    exited(call["tool_pid"].as_u64().context("fake tool pid")?).await
+    tool_exited(call["tool_pid"].as_u64().context("fake tool pid")?).await
 }
 
 /// A turn that ends while its background task runs keeps the agent until the task finishes, and
@@ -1275,7 +1277,7 @@ async fn sigterm_stops_running_agents(ctx: Ctx) -> Result<()> {
     let response = h.activity("s9", "response", 1).await?;
     ensure!(body(&response) == "Stopped.", "{response}");
     exited(pid).await?;
-    exited(tool).await
+    tool_exited(tool).await
 }
 
 /// Writes `repos.json` with the git repositories under `<home>/src` named in `names`.

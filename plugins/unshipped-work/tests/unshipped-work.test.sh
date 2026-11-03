@@ -3,7 +3,9 @@
 set -euo pipefail
 
 hook="$(cd "$(dirname "$0")/.." && pwd)/hooks/unshipped-work.sh"
-tmp=$(mktemp -d)
+# macOS `mktemp -d` ignores TMPDIR and uses the per-user temp directory, which a sandbox may not
+# let it write; an explicit template keeps it in TMPDIR.
+tmp=$(mktemp -d "${TMPDIR:-/tmp}/unshipped-work.XXXXXX")
 trap 'rm -rf "$tmp"' EXIT
 
 # Run as part of a pre-commit hook, git exports GIT_INDEX_FILE and friends; without this the
