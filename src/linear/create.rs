@@ -9,7 +9,10 @@ use crate::{
 };
 use anyhow::{Context, Result};
 use serde_json::{Value, json};
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
+
+/// How long opening a session may hold the lock `created` webhooks wait on.
+const CREATE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// What a session for a pull request starts from.
 pub struct Opening<'a> {
@@ -72,17 +75,21 @@ impl Linear {
                 start_turn(app, &sid, issue, prompt, None).await;
                 return Ok(sid);
             }
-            let data = self
-                .graphql(
-                    app,
-                    "mutation($input: AgentSessionCreateOnIssue!) { \
-                     agentSessionCreateOnIssue(input: $input) { success agentSession { id } } }",
-                    json!({ "input": {
-                        "issueId": field("id"),
-                        "externalUrls": [{ "label": label, "url": pr.url }],
-                    } }),
-                )
-                .await?;
+            // Every `created` webhook waits on this lock, so a call that hangs must not hold it.
+            // Should Linear still create the session after the timeout, its `created` webhook
+            // starts it as any other.
+            let create = self.graphql(
+                app,
+                "mutation($input: AgentSessionCreateOnIssue!) { \
+                 agentSessionCreateOnIssue(input: $input) { success agentSession { id } } }",
+                json!({ "input": {
+                    "issueId": field("id"),
+                    "externalUrls": [{ "label": label, "url": pr.url }],
+                } }),
+            );
+            let data = tokio::time::timeout(CREATE_TIMEOUT, create)
+                .await
+                .context("agentSessionCreateOnIssue timed out")??;
             let sid = data["agentSessionCreateOnIssue"]["agentSession"]["id"]
                 .as_str()
                 .context("agentSessionCreateOnIssue returned no session")?
