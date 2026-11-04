@@ -6,7 +6,7 @@ use crate::{
     store::{PullRequestRef, SessionRec, Store},
     worktree,
 };
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// The repository of a session that has a worktree but predates routing: the one whose main
 /// clone the worktree was cut from, or with a single repository, that one as before.
@@ -81,14 +81,20 @@ pub async fn for_pull_request(
     branch: &str,
     names: &[&str],
 ) -> Option<Found> {
+    let checkouts = checkouts_of(repos, names, branch).await;
     let mut candidates: Vec<(String, SessionRec)> = store.read(|s| {
         s.sessions
             .iter()
-            .filter(|(_, rec)| owns(rec, pr, branch).is_some())
+            .filter(|(_, rec)| owns(rec, pr, branch).is_some() || on_checkout(rec, &checkouts))
             .map(|(sid, rec)| (sid.clone(), rec.clone()))
             .collect()
     });
     for (_, rec) in &mut candidates {
+        // A session whose worktree a skill moved onto the head branch (a stacked one) works
+        // there now; a session opened for the pull request could only share that worktree.
+        if on_checkout(rec, &checkouts) {
+            rec.branch = Some(branch.to_string());
+        }
         if rec.repo.is_none() {
             rec.repo = pre_routing_repo(repos, rec).await.map(|r| r.name.clone());
         }
@@ -118,10 +124,36 @@ pub async fn for_pull_request(
     Some(found)
 }
 
+/// Where `branch` is checked out in the clones of the repositories in `names`, resolved so
+/// they compare with a session's recorded workspace.
+async fn checkouts_of(repos: &[Repo], names: &[&str], branch: &str) -> Vec<PathBuf> {
+    let mut found = Vec::new();
+    for repo in repos
+        .iter()
+        .filter(|r| r.git && names.iter().any(|n| n.eq_ignore_ascii_case(&r.name)))
+    {
+        if let Some(dir) = worktree::checkout_of(&repo.path, branch).await {
+            found.push(dir.canonicalize().unwrap_or(dir));
+        }
+    }
+    found
+}
+
+/// Whether `rec`, a session not opened for a pull request, works in one of `checkouts`.
+fn on_checkout(rec: &SessionRec, checkouts: &[PathBuf]) -> bool {
+    rec.pull_request.is_none()
+        && rec
+            .workspace
+            .as_deref()
+            .and_then(|w| w.canonicalize().ok())
+            .is_some_and(|w| checkouts.contains(&w))
+}
+
 /// Whether `rec` owns the pull request `pr` with head `branch`: `Some(true)` for the session a
 /// mention opened for it, `Some(false)` for a session on its head branch that no other pull
-/// request opened. A branch stacked on the session's (`en-593-3` on `en-593`) is not its own:
-/// the first mention there opens a session for that pull request.
+/// request opened. A branch stacked on the session's (`en-593-3` on `en-593`) is not its own
+/// unless its worktree is on it now: the first mention there opens a session for that pull
+/// request.
 fn owns(rec: &SessionRec, pr: &PullRequestRef, branch: &str) -> Option<bool> {
     match &rec.pull_request {
         Some(own) => own.is(pr).then_some(true),
