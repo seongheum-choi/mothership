@@ -115,6 +115,12 @@ async fn has_ref(repo: &Path, name: &str) -> bool {
         .is_ok()
 }
 
+/// The worktree of the clone at `repo` that has `branch` checked out.
+pub async fn checkout_of(repo: &Path, branch: &str) -> Option<PathBuf> {
+    let porcelain = git(repo, &["worktree", "list", "--porcelain"]).await.ok()?;
+    checked_out_at(&porcelain, branch)
+}
+
 /// Path of the worktree that has `branch` checked out, from `git worktree list --porcelain`.
 fn checked_out_at(porcelain: &str, branch: &str) -> Option<PathBuf> {
     let want = format!("branch refs/heads/{branch}");

@@ -54,6 +54,7 @@ pub const ALL: &[(&str, Scenario)] = scenarios![
     github_fork_conversation_comment_is_ignored,
     github_feedback_reaches_a_lost_worktree_session,
     github_mention_opens_a_session_per_pull_request,
+    github_mention_on_a_branch_a_session_moved_to_continues_it,
     github_mention_without_an_issue_is_answered_on_github,
     zulip_mention_gets_a_reply,
     sigterm_stops_running_agents,
@@ -1277,6 +1278,42 @@ async fn github_mention_opens_a_session_per_pull_request(ctx: Ctx) -> Result<()>
             .count()
             == 2
     );
+    Ok(())
+}
+
+/// A mention on a stacked pull request whose head branch the issue's worktree was moved to
+/// continues the issue's session there, rather than opening a second session that would have to
+/// share that worktree.
+async fn github_mention_on_a_branch_a_session_moved_to_continues_it(ctx: Ctx) -> Result<()> {
+    let h = Harness::start(
+        &ctx,
+        Setup {
+            github: true,
+            ..Setup::default()
+        },
+    )
+    .await?;
+    let issue = issue(8, "Ship it.");
+    h.mock.add_issue(&issue);
+    ensure!(h.linear(created("s8", &issue, "context of SH-8")).await? == 200);
+    h.activity("s8", "response", 1).await?;
+    let first = h.prompt_with("context of SH-8").await?;
+    let worktree = PathBuf::from(first["cwd"].as_str().context("cwd")?);
+    git(&worktree, &["checkout", "-q", "-b", "nate/sh-8-2"])?;
+
+    let stacked = pr_comment(9, "nate/sh-8-2", "", 91, "@impala second pull request");
+    ensure!(
+        h.github("pull_request_review_comment", "d-91", &stacked)
+            .await?
+            == 200
+    );
+    h.activity("s8", "response", 2).await?;
+    let call = h.prompt_with("second pull request").await?;
+    ensure!(
+        Path::new(call["cwd"].as_str().context("cwd")?) == worktree,
+        "{call}"
+    );
+    ensure!(h.mock.read(|r| r.opened_sessions.is_empty()), "opened none");
     Ok(())
 }
 
