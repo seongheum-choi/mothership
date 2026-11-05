@@ -1,4 +1,4 @@
-//! Running a confined process for a session: under `HOST_SANDBOX` with the run's profile, only
+//! Running a confined process for a session: under `HOST_SANDBOX` with the run's rules, only
 //! its own environment, in a process group of its own, with a time limit, and nothing it
 //! started left running afterwards.
 
@@ -27,12 +27,12 @@ pub(super) struct Output {
 }
 
 impl Host {
-    /// Runs `program` with `args` in the workspace under `HOST_SANDBOX` and `profile`, with
-    /// `input` on stdin, only [`super::env`]'s environment and `TMPDIR` in `run_dir`, until it
-    /// exits or [`TIMEOUT`] passes. Its process group is killed either way.
+    /// Runs `program` with `args` in the workspace under `HOST_SANDBOX` and its `profile`
+    /// arguments (see [`Host::profile`]), with `input` on stdin, only the environment of
+    /// [`super::env`] and `TMPDIR` in `run_dir`, until it exits or [`TIMEOUT`] passes. Its process group is killed either way.
     pub(super) async fn confined(
         &self,
-        profile: String,
+        profile: Vec<String>,
         run_dir: &Path,
         program: &str,
         args: &[String],
@@ -41,7 +41,8 @@ impl Host {
         let tmp = run_dir.join("tmp");
         std::fs::create_dir(&tmp).map_err(|e| e.to_string())?;
         let mut child = Command::new(&self.sandbox)
-            .args(["-p".to_string(), profile, program.to_string()])
+            .args(profile)
+            .arg(program)
             .args(args)
             .current_dir(&self.cwd)
             .env_clear()

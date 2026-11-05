@@ -5,41 +5,86 @@ use request::CodexRun;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 
-/// What a run may write in Codex's home: its sessions, logs, caches, state databases and a
-/// refreshed login. Not its config, hooks, rules, skills, memories or binaries, which later
-/// runs, the Codex runner and the user's own Codex would pick up.
+/// The directories a run may write in Codex's home: its sessions, logs and caches.
+const HOME_DIRS: [&str; 8] = [
+    "sessions",
+    "thread-writer-locks",
+    "archived_sessions",
+    "log",
+    "cache",
+    "shell_snapshots",
+    ".tmp",
+    "tmp",
+];
+
+/// The files a run may write there besides its state databases: a refreshed login, its caches
+/// and state.
+const HOME_FILES: [&str; 7] = [
+    "auth.json",
+    "models_cache.json",
+    "history.jsonl",
+    "installation_id",
+    ".codex-global-state.json",
+    ".codex-global-state.json.bak",
+    ".sqlite-maintenance.lock",
+];
+
+/// Of [`HOME_FILES`], what a run under bubblewrap writes through to Codex's home: a login
+/// refreshed and not kept would leave the home's login with a spent refresh token.
+const SHARED_FILES: [&str; 2] = ["auth.json", "installation_id"];
+
+/// What a run may write in Codex's home, as Seatbelt filters: [`HOME_DIRS`], [`HOME_FILES`]
+/// and its state databases. Not its config, hooks, rules, skills, memories or binaries, which
+/// later runs, the Codex runner and the user's own Codex would pick up.
 pub fn home_writes(home: &Path) -> Vec<String> {
-    let mut writes: Vec<String> = [
-        "sessions",
-        "thread-writer-locks",
-        "archived_sessions",
-        "log",
-        "cache",
-        "shell_snapshots",
-        ".tmp",
-        "tmp",
-    ]
-    .iter()
-    .flat_map(|dir| seatbelt::subpath(&home.join(dir)))
-    .collect();
-    writes.extend(
-        [
-            "auth.json",
-            "models_cache.json",
-            "history.jsonl",
-            "installation_id",
-            ".codex-global-state.json",
-            ".codex-global-state.json.bak",
-            ".sqlite-maintenance.lock",
-        ]
+    let mut writes: Vec<String> = HOME_DIRS
         .iter()
-        .flat_map(|file| seatbelt::literal(&home.join(file))),
+        .flat_map(|dir| seatbelt::subpath(&home.join(dir)))
+        .collect();
+    writes.extend(
+        HOME_FILES
+            .iter()
+            .flat_map(|file| seatbelt::literal(&home.join(file))),
     );
     writes.push(seatbelt::regex(&format!(
         "^{}/[^/]*\\.sqlite(-shm|-wal|-journal)?$",
         seatbelt::escape(&home.to_string_lossy())
     )));
     writes
+}
+
+/// Codex's home as bubblewrap mounts: an empty directory in its place, gone after the run,
+/// with the home's entries mounted back in: writable for [`HOME_DIRS`] and [`SHARED_FILES`],
+/// links as links, the rest read-only (config, hooks, rules, skills, memories). The state
+/// databases and the other [`HOME_FILES`] are left out, so the run starts its own: a database
+/// shared with Codex outside the run, its journal in the throwaway directory, would be
+/// corrupted. Whatever else a run writes there goes with it, so it leaves no config behind.
+pub fn home_mounts(home: &Path) -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(home) else {
+        return Vec::new();
+    };
+    let mut entries: Vec<_> = entries.filter_map(Result::ok).collect();
+    entries.sort_by_key(std::fs::DirEntry::file_name);
+    let mut mounts = vec!["--tmpfs".to_string(), home.to_string_lossy().into_owned()];
+    for entry in entries {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let path = entry.path().to_string_lossy().into_owned();
+        if entry.file_type().is_ok_and(|t| t.is_symlink()) {
+            if let Ok(to) = std::fs::read_link(entry.path()) {
+                mounts.extend(["--symlink".into(), to.to_string_lossy().into_owned(), path]);
+            }
+            continue;
+        }
+        let kind = if HOME_DIRS.contains(&name.as_str()) || SHARED_FILES.contains(&name.as_str()) {
+            "--bind"
+        } else if HOME_FILES.contains(&name.as_str()) || name.contains(".sqlite") {
+            continue;
+        } else {
+            "--ro-bind"
+        };
+        mounts.extend([kind.into(), path.clone(), path]);
+    }
+    mounts
 }
 
 /// Codex's binary and the code-mode host it starts its tools through, which it looks for
@@ -81,7 +126,7 @@ impl Host {
             args.extend(["-c".into(), format!("model_reasoning_effort=\"{effort}\"")]);
         }
         args.push("-".into());
-        let profile = self.profile(&self.codex_settings, dir, home_writes(&self.codex_home));
+        let profile = self.profile(&self.codex_settings, dir, Some(&self.codex_home));
         let codex = self.codex.display().to_string();
         let out = self
             .confined(profile, dir, &codex, &args, Some(&run.prompt))
@@ -134,6 +179,40 @@ mod tests {
         std::fs::remove_file(&host).unwrap();
         assert_eq!(binaries(&bin), vec![real.join("codex"), bin]);
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn mounts_codex_state_but_not_its_config() {
+        let home = std::env::temp_dir().join(format!("mothership-ch-{}", std::process::id()));
+        std::fs::create_dir_all(home.join("sessions")).unwrap();
+        std::fs::create_dir_all(home.join("skills")).unwrap();
+        for file in [
+            "auth.json",
+            "config.toml",
+            "models_cache.json",
+            "state_5.sqlite",
+            "state_5.sqlite-wal",
+        ] {
+            std::fs::write(home.join(file), "").unwrap();
+        }
+        std::os::unix::fs::symlink("/elsewhere/AGENTS.md", home.join("AGENTS.md")).unwrap();
+        let h = |rel: &str| home.join(rel).display().to_string();
+        let mut want = vec!["--tmpfs".to_string(), home.display().to_string()];
+        want.extend([
+            "--symlink".into(),
+            "/elsewhere/AGENTS.md".into(),
+            h("AGENTS.md"),
+        ]);
+        for (kind, rel) in [
+            ("--bind", "auth.json"),
+            ("--ro-bind", "config.toml"),
+            ("--bind", "sessions"),
+            ("--ro-bind", "skills"),
+        ] {
+            want.extend([kind.into(), h(rel), h(rel)]);
+        }
+        assert_eq!(home_mounts(&home), want);
+        std::fs::remove_dir_all(&home).unwrap();
     }
 
     #[test]
