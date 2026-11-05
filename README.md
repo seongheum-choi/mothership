@@ -300,7 +300,7 @@ curl -s localhost:3456/status   # restart only when this reports {"status":"idle
 
 To restart without killing work while sessions overlap, drain first: `launchctl kill SIGUSR1 gui/$UID/com.mothership.agent` (or `kill -USR1`) makes new turns wait for the restart instead of starting, and `/status` reports `"draining":true`. Prompts that arrive meanwhile go on to a turn that is still running as usual; a Linear session with no running turn keeps its prompt in `state.json`, is told "mothership is restarting for an update; this turn starts as soon as it is back.", and runs it when mothership starts again. `SIGUSR2` ends the drain without a restart and runs the held turns at once. Zulip chat turns are short and keep starting while it drains.
 
-On Linux, run it as a systemd user service instead — see [`contrib/systemd/mothership.service`](contrib/systemd/mothership.service), whose header lists the matching `systemctl --user` commands.
+On Linux, run it as a systemd user service instead — see [`contrib/systemd/mothership.service`](contrib/systemd/mothership.service), whose header lists the matching `systemctl --user` commands. [`contrib/deploy-linux.sh`](contrib/deploy-linux.sh) pulls, builds, drains with `systemctl --user kill -s USR1 --kill-whom=main` (only the main process, so the agents in the unit's cgroup get no signal), waits for idle, replaces `~/.mothership/bin/mothership`, restarts the unit and checks the commit `/status` reports. Linux has no privacy prompts, so nothing is signed.
 
 ### Agent does not start (macOS privacy prompts)
 
