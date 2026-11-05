@@ -39,6 +39,12 @@ async fn main() -> Result<()> {
     // Before `/status` reports `draining`: without a handler, SIGUSR1 would end the process.
     tokio::spawn(drain_signals(app.clone(), drain_signal_streams()?));
 
+    if app.cfg.agent.host_sandbox.is_none() {
+        tracing::warn!(
+            "HOST_SANDBOX is not a file: host runs are off, so sessions get no MOTHERSHIP_RUNS \
+             and no repository commands"
+        );
+    }
     if app.cfg.linear.workspace.is_none() {
         tracing::warn!(
             "LINEAR_WORKSPACE is not set: whichever workspace installs the app first is pinned"

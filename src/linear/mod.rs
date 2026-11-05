@@ -119,7 +119,9 @@ impl Surface for Linear {
                 .unwrap_or(app.cfg.review.instructions()),
         );
         system_prompt.push_str(&work_instructions(mode.as_ref(), &delivery));
-        system_prompt.extend(crate::host::commands_prompt(&repo.commands));
+        if app.cfg.agent.host_sandbox.is_some() {
+            system_prompt.extend(crate::host::commands_prompt(&repo.commands));
+        }
 
         let scopes = choice::Scopes {
             mode: mode.as_ref().map(|m| (m.name.as_str(), &m.models)),
