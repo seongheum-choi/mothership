@@ -1,29 +1,37 @@
-# systemd user service for mothership on Linux (e.g. a remote server).
+# systemd user service for mothership on Linux.
 #
-# Install as a per-user service so it runs under your login, matching the
-# macOS launchd user agent:
+# Runs under your login, like the macOS launchd user agent. %h is your home
+# directory, so the unit works unedited when the binary is where
+# contrib/deploy-linux.sh puts it (~/.mothership/bin/mothership):
 #
 #   mkdir -p ~/.config/systemd/user
 #   cp contrib/systemd/mothership.service ~/.config/systemd/user/
-#   # edit the paths below, then:
 #   systemctl --user daemon-reload
 #   systemctl --user enable --now mothership
 #   loginctl enable-linger "$USER"   # keep it running after you log out
 #
-# Restart (after /status reports idle):   systemctl --user restart mothership
-# Logs:                                    journalctl --user -u mothership -f
-# Remove:                                  systemctl --user disable --now mothership
+# Deploy (build, drain, restart): contrib/deploy-linux.sh
+# Restart by hand (after /status reports idle):   systemctl --user restart mothership
+# Drain / end a drain:                             systemctl --user kill -s USR1|USR2 mothership
+# Logs:                                            journalctl --user -u mothership -f
+# Remove:                                          systemctl --user disable --now mothership
 #
 # Secrets stay in ~/.mothership/.env, which mothership loads itself; keep them
-# out of this unit. Replace every /home/YOU path before use.
+# out of this unit. A user unit's PATH is minimal and wins over a PATH in .env,
+# so list the directories the tools agents run (claude, codex, gh, git, mise,
+# cloudflared) live in. With mise, its shims directory covers mise-managed
+# tools; CODEX_BIN and CLAUDE_BIN in .env can still name absolute paths.
 
 [Unit]
 Description=mothership agent deployer
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/home/YOU/path/to/mothership
-WorkingDirectory=/home/YOU/.mothership
+ExecStart=%h/.mothership/bin/mothership
+WorkingDirectory=%h/.mothership
+Environment=PATH=%h/.local/share/mise/shims:%h/.local/bin:/usr/local/bin:/usr/bin
 Restart=always
 RestartSec=10
 
