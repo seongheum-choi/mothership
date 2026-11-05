@@ -77,7 +77,7 @@ Settings come from the process environment or `<home>/.env`, and the environment
 | `SANDBOX_READ` | | Comma-separated home paths (files or directories, `~/` allowed) every agent may read besides its workspace and repositories, e.g. `~/.gitconfig,~/.rustup,~/.cargo`. Symlink targets are added; home itself is refused at startup. Without it, git config and toolchains under `$HOME` are unreadable and `git commit` and `cargo` fail Git also needs the targets of any `[include]` in `~/.gitconfig`, and a mise-managed toolchain needs `~/.config/mise` and `~/.local/share/mise` here plus `~/.local/state/mise` and `~/.cache/mise` in `SANDBOX_WRITE`. |
 | `SANDBOX_WRITE` | | Comma-separated paths Bash may write, and every agent may read, besides the working directory, e.g. `~/.cargo/registry,~/.cargo/git`. Symlink targets are added; home itself is refused at startup |
 | `SANDBOX_SKIP_DENY` | | Comma-separated entries directly under home (`~/Documents,~/Desktop`) that get no deny rule, for macOS hosts where the [privacy approval](#agent-does-not-start-macos-privacy-prompts) cannot be given. The trade-off: the Read tool, and every command in Bash, can then read everything in those folders. Paths are not resolved, and anything deeper than one level is refused at startup |
-| `HOST_SANDBOX` | `/usr/bin/sandbox-exec` | What confines [host runs](#host-runs); read at startup. When it is not a file (on Linux), host runs are off: sessions get no `MOTHERSHIP_RUNS` and no list of the repository's `commands`, and startup warns |
+| `HOST_SANDBOX` | `/usr/bin/sandbox-exec` on macOS, `/usr/bin/bwrap` elsewhere | What confines [host runs](#host-runs); read at startup. A file named `bwrap` runs them under bubblewrap, any other under `sandbox-exec`. When it is not a file, host runs are off: sessions get no `MOTHERSHIP_RUNS` and no list of the repository's `commands`, and startup warns |
 | `AGENT_START_TIMEOUT` | `120` | Seconds an agent may run without announcing its session before it is killed and the turn fails |
 | `AGENT_BACKGROUND_TIMEOUT` | `7200` | Seconds an agent that answered may keep running for its [background work](#how-it-works) before its input closes |
 | `BASE_BRANCH` | `main` | Ignored when `repos.json` exists |
@@ -236,7 +236,7 @@ A Claude Code session cannot start Codex from Bash: its sandbox keeps Codex's bi
 
 While the turn lasts, mothership takes one request at a time and writes `<id>.out.json` next to it, either `{"result": …}` or `{"error": "…"}`. Each run's start and end show up as thoughts. A run runs in a process group of its own; the group is killed when the run exits, and the whole tree too when the turn ends or is stopped (before the workspace is released) or after an hour.
 
-Every run happens under `HOST_SANDBOX -p <profile>`, with a profile made from the turn's own settings:
+Every run happens under `HOST_SANDBOX` with rules made from the turn's own settings: on macOS as `sandbox-exec -p <profile>` with a Seatbelt profile, on Linux as `bwrap <mounts> -- <program>` (see [On Linux](#on-linux) for where the two differ):
 
 - the `Read` deny rules deny reading, matched as written and as resolved, globs included;
 - writing is allowed only in the workspace and the clone's `.git` (neither under a mode's bare `Edit` rule), `SANDBOX_WRITE`, the session's directory, `/dev` and the run's own directory under `<home>/host-runs`, which is also its `TMPDIR`; not `/private/tmp` or `/private/var/folders`, where runs could reach each other's files;
@@ -249,7 +249,16 @@ Only a Codex run can read Codex's home and binary; a command runs under the sess
 
 A session can only ask in its own directory. Neither the session nor a run can remove, rename or swap for a link a directory they write in (the session's directory, the workspace, a run's own directory), nor move a `.git` aside, since a sandbox may not touch the directory it writes in and the profile pins these. mothership reads a request or a final message only as a plain file with no other link, of at most a mebibyte, opened without following a link or waiting on a FIFO, and writes its answer fresh under a name nobody can guess before renaming it into place, so nothing a session or a run plants leads mothership elsewhere.
 
-What stays exposed: a Codex run and every command it runs can read Codex's login, since Seatbelt cannot tell Codex from its commands; Codex runs of all sessions share Codex's session history; a process that leaves both the run's tree and its group (`setsid`) outlives it; and a global `AGENTS.md` in Codex's home that links outside what the session may read is not read. Without macOS's `sandbox-exec`, host runs are off: sessions get no `MOTHERSHIP_RUNS`, so workflows that would ask for a Codex run do that step another way, and a request written anyway is answered with an error.
+What stays exposed: a Codex run and every command it runs can read Codex's login, since the sandbox cannot tell Codex from its commands; Codex runs of all sessions share Codex's session history; on macOS, a process that leaves both the run's tree and its group (`setsid`) outlives it; and a global `AGENTS.md` in Codex's home that links outside what the session may read is not read. Without the `HOST_SANDBOX` file, host runs are off: sessions get no `MOTHERSHIP_RUNS`, so workflows that would ask for a Codex run do that step another way, and a request written anyway is answered with an error.
+
+##### On Linux
+
+bubblewrap confines with mounts: `/` read-only, the directories a run may write bound writable over it, what the `Edit` rules and protected names cover bound read-only again inside those, and what the `Read` rules deny behind an empty read-only directory (or `/dev/null` for a file). It needs unprivileged user namespaces, which Arch and most distributions allow. Where it differs from Seatbelt:
+
+- Mounts follow links, so a rule counts for the path it resolves to, and a rule naming nothing that exists confines nothing. Rules with globs (`Read(//**/.env)`) have nothing to mount and are skipped.
+- Protected names and `.git`s are looked for three levels deep under each directory a run may write, and only among what exists when the run starts: a run can create a missing `.envrc` or `.vscode/`, but not change one that is there. Each one found is a mount point, so a `.git` cannot be moved aside either.
+- The run has a PID namespace of its own: signals reach only its processes, and nothing it started, `setsid` or not, outlives it.
+- For a Codex run, Codex's home is an empty directory that goes with the run, with the home's entries mounted back in: `sessions`, logs, caches, `installation_id` and `auth.json` (a refreshed login must reach the home) writable, links as links, the rest read-only. The state databases, `history.jsonl`, the models cache and the global state are left out, so each run starts its own; a database shared with Codex outside the run would be corrupted by a journal kept inside it. Whatever else a run writes there is gone after it, so it cannot leave config, rules or skills for later runs.
 
 #### Claude usage limit
 

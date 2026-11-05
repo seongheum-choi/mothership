@@ -18,6 +18,13 @@ use std::{
 };
 use vars::{Vars, parse_home_entries, parse_list, parse_paths};
 
+/// `HOST_SANDBOX` when unset: the platform's own.
+const DEFAULT_HOST_SANDBOX: &str = if cfg!(target_os = "macos") {
+    "/usr/bin/sandbox-exec"
+} else {
+    "/usr/bin/bwrap"
+};
+
 pub struct Config {
     /// State, worktrees, plugins and per-session files live here.
     pub home: PathBuf,
@@ -60,9 +67,10 @@ pub struct AgentConfig {
     /// `AGENT_BACKGROUND_TIMEOUT`: how long an agent that answered may keep running for its
     /// background tasks before its input closes.
     pub background_timeout: Duration,
-    /// `HOST_SANDBOX`: the `sandbox-exec` that confines what mothership runs for a session.
-    /// `None` when it is not a file at startup (on Linux, say): sessions are then not told
-    /// about host runs, so their workflows keep that work instead of asking for it.
+    /// `HOST_SANDBOX`: the `sandbox-exec` (macOS) or `bwrap` (Linux) that confines what
+    /// mothership runs for a session. `None` when it is not a file at startup: sessions are
+    /// then not told about host runs, so their workflows keep that work instead of asking for
+    /// it.
     pub host_sandbox: Option<String>,
 }
 
@@ -124,7 +132,7 @@ impl Config {
                 background_timeout: seconds(&vars, "AGENT_BACKGROUND_TIMEOUT", 7200)?,
                 host_sandbox: Some(
                     vars.get("HOST_SANDBOX")
-                        .unwrap_or_else(|| "/usr/bin/sandbox-exec".into()),
+                        .unwrap_or_else(|| DEFAULT_HOST_SANDBOX.into()),
                 )
                 .filter(|path| std::path::Path::new(path).is_file()),
             },
