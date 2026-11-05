@@ -61,7 +61,9 @@ pub struct AgentConfig {
     /// background tasks before its input closes.
     pub background_timeout: Duration,
     /// `HOST_SANDBOX`: the `sandbox-exec` that confines what mothership runs for a session.
-    pub host_sandbox: String,
+    /// `None` when it is not a file at startup (on Linux, say): sessions are then not told
+    /// about host runs, so their workflows keep that work instead of asking for it.
+    pub host_sandbox: Option<String>,
 }
 
 impl Config {
@@ -120,9 +122,11 @@ impl Config {
                     .unwrap_or_else(|| "auto".into()),
                 start_timeout: seconds(&vars, "AGENT_START_TIMEOUT", 120)?,
                 background_timeout: seconds(&vars, "AGENT_BACKGROUND_TIMEOUT", 7200)?,
-                host_sandbox: vars
-                    .get("HOST_SANDBOX")
-                    .unwrap_or_else(|| "/usr/bin/sandbox-exec".into()),
+                host_sandbox: Some(
+                    vars.get("HOST_SANDBOX")
+                        .unwrap_or_else(|| "/usr/bin/sandbox-exec".into()),
+                )
+                .filter(|path| std::path::Path::new(path).is_file()),
             },
             mcp_configs: vars
                 .get("MCP_CONFIGS")
