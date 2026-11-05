@@ -169,9 +169,11 @@ fn prepare(app: &Arc<App>, key: &str, launch: &mut Launch) -> Result<(ProgressTa
         "MOTHERSHIP_PROGRESS_FILE".into(),
         progress.path.display().to_string(),
     ));
-    launch
-        .env
-        .push(("MOTHERSHIP_RUNS".into(), dir.display().to_string()));
+    if app.cfg.agent.host_sandbox.is_some() {
+        launch
+            .env
+            .push(("MOTHERSHIP_RUNS".into(), dir.display().to_string()));
+    }
     let codex = &app.cfg.agent.codex_bin;
     let codex_home = host::codex_home(app);
     let host = host::Host {
@@ -185,7 +187,8 @@ fn prepare(app: &Arc<App>, key: &str, launch: &mut Launch) -> Result<(ProgressTa
         commands: launch.commands.clone(),
         codex: limit::locate(codex, app.agent_path().as_deref()).unwrap_or_else(|| codex.into()),
         codex_home: std::fs::canonicalize(&codex_home).unwrap_or(codex_home),
-        sandbox: app.cfg.agent.host_sandbox.clone(),
+        // Without one, a request still gets an answer: the error that the sandbox cannot start.
+        sandbox: app.cfg.agent.host_sandbox.clone().unwrap_or_default(),
     };
     Ok((progress, host::watch(key.to_string(), host)))
 }
