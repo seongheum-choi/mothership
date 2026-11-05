@@ -1,10 +1,12 @@
 //! Runs mothership starts on a session's behalf, for what the agent's own sandbox cannot:
 //! Codex, whose login and binary are out of Bash's reach and whose sandbox cannot nest inside
 //! Claude Code's (`codex.rs`), and the repository's named commands (`command.rs`). The agent
-//! writes a request into its session directory; mothership runs it under a Seatbelt
-//! profile made from the session's own rules (`seatbelt.rs`) and writes the answer next to it
-//! (`request.rs`); `process.rs` runs the confined process.
+//! writes a request into its session directory; mothership runs it confined by the session's
+//! own rules, as a Seatbelt profile on macOS (`seatbelt.rs`) or bubblewrap mounts on Linux
+//! (`bwrap.rs`), and writes the answer next to it (`request.rs`); `process.rs` runs the
+//! confined process.
 
+mod bwrap;
 mod codex;
 mod command;
 mod process;
@@ -53,7 +55,7 @@ pub struct Host {
     pub codex: PathBuf,
     /// Codex's home, resolved: see [`codex::home_writes`].
     pub codex_home: PathBuf,
-    /// `HOST_SANDBOX`.
+    /// `HOST_SANDBOX`: bubblewrap when its file name is `bwrap`, else `sandbox-exec`.
     pub sandbox: String,
 }
 
@@ -201,15 +203,21 @@ impl Host {
         outcome
     }
 
-    /// The profile for a run under `settings` (see [`seatbelt::profile`]), writing also
-    /// `/dev`, `run_dir` (its `TMPDIR` too) and `extra`. Not the shared temporary directories,
-    /// where one run could reach another's files or plant some for unconfined tools.
-    fn profile(&self, settings: &Value, run_dir: &Path, extra: Vec<String>) -> String {
+    /// `HOST_SANDBOX`'s arguments before the program for a run under `settings` (see
+    /// [`seatbelt::profile`] and [`bwrap::args`]), writing also `/dev`, `run_dir` (its `TMPDIR`
+    /// too) and, for a Codex run, Codex's state in `codex_home`. Not the shared temporary
+    /// directories, where one run could reach another's files or plant some for unconfined
+    /// tools.
+    fn profile(&self, settings: &Value, run_dir: &Path, codex_home: Option<&Path>) -> Vec<String> {
         let mut workspace = vec![self.cwd.clone()];
         workspace.extend(crate::sandbox::workspace_clone_git(&self.cwd));
+        if Path::new(&self.sandbox).file_name() == Some("bwrap".as_ref()) {
+            return bwrap::args(settings, &workspace, run_dir, codex_home);
+        }
         let mut always = seatbelt::subpath(Path::new("/dev"));
-        always.extend(extra);
-        seatbelt::profile(settings, &workspace, &always, run_dir)
+        always.extend(codex_home.map(codex::home_writes).unwrap_or_default());
+        let profile = seatbelt::profile(settings, &workspace, &always, run_dir);
+        vec!["-p".into(), profile]
     }
 
     fn report(&self, line: &str) {

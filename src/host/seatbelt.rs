@@ -13,7 +13,7 @@ use std::{
 ///   the session read-only), its `allowWrite` paths and the `always` filters;
 /// - its `Edit(…)` deny rules deny writing again inside those (a clone's `config` and
 ///   `hooks`, other sessions' worktrees), and so do the names Claude Code's sandbox never lets
-///   Bash write ([`PROTECTED`]), but for `.idea`;
+///   Bash write ([`PROTECTED_FILES`], [`PROTECTED_DIRS`]), but for `.idea`;
 /// - `own` (the run's own directory) is readable and writable whatever the rules say;
 /// - no directory it may write in can itself be removed, renamed or replaced, nor any `.git`
 ///   moved away, since mothership reads and writes those paths again after the run, and a
@@ -24,24 +24,8 @@ use std::{
 /// network and other services stay open, as under Claude Code's sandbox with
 /// `bypassPermissions`.
 pub fn profile(settings: &Value, workspace: &[PathBuf], always: &[String], own: &Path) -> String {
-    let deny: Vec<&str> = settings["permissions"]["deny"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_str)
-        .collect();
-    let read_only = deny.contains(&"Edit");
-    let allow_write = settings["sandbox"]["filesystem"]["allowWrite"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_str)
-        .map(PathBuf::from);
-    let roots: Vec<PathBuf> = (if read_only { &[][..] } else { workspace })
-        .iter()
-        .cloned()
-        .chain(allow_write)
-        .collect();
+    let deny = denied(settings);
+    let roots = writable_roots(settings, workspace);
     let mut writable: Vec<String> = roots.iter().flat_map(|p| subpath(p)).collect();
     writable.extend(always.iter().cloned());
     let mut fixed: Vec<String> = roots.iter().flat_map(|p| literal(p)).collect();
@@ -62,7 +46,7 @@ pub fn profile(settings: &Value, workspace: &[PathBuf], always: &[String], own: 
     sb.push_str("(deny file-write*)\n");
     rule(&mut sb, "allow file-write*", &writable);
     let mut protected = rules("Edit");
-    protected.extend(PROTECTED.iter().map(|re| format!("(regex #\"{re}\")")));
+    protected.extend(protected_filters());
     rule(&mut sb, "deny file-write*", &protected);
     rule(&mut sb, "allow file-read* file-write*", &subpath(own));
     rule(&mut sb, "deny file-write*", &fixed);
@@ -70,14 +54,95 @@ pub fn profile(settings: &Value, workspace: &[PathBuf], always: &[String], own: 
     sb
 }
 
+/// The `permissions.deny` rules of `settings`.
+pub(super) fn denied(settings: &Value) -> Vec<&str> {
+    settings["permissions"]["deny"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .collect()
+}
+
+/// Where `settings` let a run write: `workspace`, unless the bare `Edit` rule makes the
+/// session read-only, and the `allowWrite` paths.
+pub(super) fn writable_roots(settings: &Value, workspace: &[PathBuf]) -> Vec<PathBuf> {
+    let read_only = denied(settings).contains(&"Edit");
+    let allow_write = settings["sandbox"]["filesystem"]["allowWrite"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(PathBuf::from);
+    (if read_only { &[][..] } else { workspace })
+        .iter()
+        .cloned()
+        .chain(allow_write)
+        .collect()
+}
+
 /// What Claude Code 2.1's sandbox refuses Bash to write anywhere (its protected files, git
-/// hooks and config, editor and agent config directories), as regexes. `.idea`, which it also
-/// refuses, is left out: dependencies ship it, and refusing it is what fails `pnpm install`.
-pub const PROTECTED: [&str; 3] = [
-    "/\\.(gitconfig|gitmodules|bashrc|bash_profile|zshrc|zprofile|profile|zshenv|zlogin|zlogout|bash_login|bash_aliases|bash_logout|envrc|ripgreprc|mcp\\.json|claude\\.json|npmrc|yarnrc|yarnrc\\.yml|pnp\\.cjs|pnp\\.loader\\.mjs|pnpmfile\\.cjs|bunfig\\.toml|bazelrc|bazelversion|bazeliskrc|pre-commit-config\\.yaml|lefthook\\.yml|lefthook\\.yaml|devcontainer\\.json)$",
-    "/(bunfig\\.toml|lefthook\\.ya?ml|gradle-wrapper\\.properties|maven-wrapper\\.properties|pyrightconfig\\.json)$",
-    "/\\.(git/hooks(/|$)|git/config$|claude(/|$)|vscode(/|$)|devcontainer(/|$))",
+/// hooks and config, editor and agent config directories), as the path's last components.
+/// `.idea`, which it also refuses, is left out: dependencies ship it, and refusing it is what
+/// fails `pnpm install`.
+pub const PROTECTED_FILES: [&str; 38] = [
+    ".gitconfig",
+    ".gitmodules",
+    ".bashrc",
+    ".bash_profile",
+    ".zshrc",
+    ".zprofile",
+    ".profile",
+    ".zshenv",
+    ".zlogin",
+    ".zlogout",
+    ".bash_login",
+    ".bash_aliases",
+    ".bash_logout",
+    ".envrc",
+    ".ripgreprc",
+    ".mcp.json",
+    ".claude.json",
+    ".npmrc",
+    ".yarnrc",
+    ".yarnrc.yml",
+    ".pnp.cjs",
+    ".pnp.loader.mjs",
+    ".pnpmfile.cjs",
+    ".bunfig.toml",
+    ".bazelrc",
+    ".bazelversion",
+    ".bazeliskrc",
+    ".pre-commit-config.yaml",
+    ".lefthook.yml",
+    ".lefthook.yaml",
+    ".devcontainer.json",
+    "bunfig.toml",
+    "lefthook.yml",
+    "lefthook.yaml",
+    "gradle-wrapper.properties",
+    "maven-wrapper.properties",
+    "pyrightconfig.json",
+    ".git/config",
 ];
+
+/// The same for directories, everything in them included.
+pub const PROTECTED_DIRS: [&str; 4] = [".git/hooks", ".claude", ".vscode", ".devcontainer"];
+
+/// [`PROTECTED_FILES`] and [`PROTECTED_DIRS`] as `(regex …)` filters.
+fn protected_filters() -> [String; 2] {
+    let any = |names: &[&str]| {
+        names
+            .iter()
+            .map(|n| escape(n))
+            .collect::<Vec<_>>()
+            .join("|")
+    };
+    [
+        regex(&format!("/({})$", any(&PROTECTED_FILES))),
+        regex(&format!("/({})(/|$)", any(&PROTECTED_DIRS))),
+    ]
+}
 
 /// One `(<action> <filter>…)` line; none when there are no filters, since an empty list
 /// would apply to everything.
@@ -90,12 +155,7 @@ fn rule(sb: &mut String, action: &str, filters: &[String]) {
 /// The filters of a `<tool>(//abs/path)`, `<tool>(//abs/dir/**)` or `<tool>(//abs/**/glob)`
 /// rule; other rules (`Bash(git push:*)`, project-relative patterns) have no path to confine.
 fn filters(rule: &str, tool: &str) -> Vec<String> {
-    let Some(path) = rule
-        .strip_prefix(tool)
-        .and_then(|r| r.strip_prefix("(/"))
-        .and_then(|r| r.strip_suffix(')'))
-        .filter(|p| p.starts_with('/'))
-    else {
+    let Some(path) = rule_path(rule, tool) else {
         return Vec::new();
     };
     match path.strip_suffix("/**") {
@@ -103,6 +163,14 @@ fn filters(rule: &str, tool: &str) -> Vec<String> {
         _ if path.contains('*') => vec![regex(&glob(path))],
         _ => literal(Path::new(path)),
     }
+}
+
+/// The absolute path or glob of a `<tool>(//…)` rule.
+pub(super) fn rule_path<'a>(rule: &'a str, tool: &str) -> Option<&'a str> {
+    rule.strip_prefix(tool)
+        .and_then(|r| r.strip_prefix("(/"))
+        .and_then(|r| r.strip_suffix(')'))
+        .filter(|p| p.starts_with('/'))
 }
 
 /// `(subpath …)` for `path` and, when it differs, for what it resolves to.
@@ -204,10 +272,7 @@ mod tests {
             &["(subpath \"/h/.codex/sessions\")".into()],
             Path::new("/h/.m/host-runs/r1"),
         );
-        let protected: Vec<String> = PROTECTED
-            .iter()
-            .map(|re| format!("(regex #\"{re}\")"))
-            .collect();
+        let protected = protected_filters();
         assert_eq!(
             made,
             format!(
