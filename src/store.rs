@@ -62,6 +62,9 @@ pub struct SessionRec {
     pub closed: bool,
     /// Linear: pull request URLs already added to the session's external URLs.
     pub pull_requests: Vec<String>,
+    /// Linear: the pull request a GitHub mention opened this session for. GitHub feedback on
+    /// that pull request comes here before it goes to a session on its head branch.
+    pub pull_request: Option<PullRequestRef>,
     /// `[runner=…]`, `[model=…]` and `[effort=…]` from the session's messages; `None` follows
     /// the labels, the mode, the repository and the instance defaults. A runner set here also
     /// keeps the session off Claude Code's usage limit switch.
@@ -98,6 +101,21 @@ impl SessionRec {
             let runner = self.agent_runner.take().unwrap_or_default();
             self.agent_sessions.entry(runner).or_insert(id);
         }
+    }
+}
+
+/// A GitHub pull request: `owner/name`, number and URL.
+#[derive(Serialize, Deserialize, Clone, Default, Debug, PartialEq)]
+pub struct PullRequestRef {
+    pub repo: String,
+    pub number: u64,
+    pub url: String,
+}
+
+impl PullRequestRef {
+    /// Same repository (in any letter case) and number.
+    pub fn is(&self, other: &Self) -> bool {
+        self.number == other.number && self.repo.eq_ignore_ascii_case(&other.repo)
     }
 }
 

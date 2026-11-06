@@ -4,6 +4,7 @@
 mod activity;
 mod api;
 mod cleanup;
+mod create;
 mod mcp;
 mod oauth;
 mod pin;
@@ -14,6 +15,7 @@ mod start;
 mod webhook;
 mod worktree;
 
+pub use create::Opening;
 pub use mcp::config as mcp_config;
 pub use start::release;
 
@@ -38,6 +40,8 @@ use std::{
 #[derive(Default)]
 pub struct Linear {
     refresh_lock: tokio::sync::Mutex<()>,
+    /// Held while mothership opens a session itself, until the session is recorded.
+    opening: tokio::sync::Mutex<()>,
     oauth_state: Mutex<Option<String>>,
     /// The one workspace this instance serves; `None` until a token has been checked.
     workspace: Mutex<Option<Workspace>>,

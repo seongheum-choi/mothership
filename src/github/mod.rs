@@ -1,6 +1,7 @@
-//! GitHub App webhooks: reviews and comments on an agent's pull request continue the Linear
-//! session that owns the PR's head branch. Results still go to Linear; the agent answers on
-//! GitHub itself through the `gh-reply` wrapper.
+//! GitHub App webhooks: reviews and comments on a pull request continue the Linear session that
+//! owns it, the one opened for it or else the one on its head branch, or open a session for it
+//! on its Linear issue. Results still go to Linear; the agent answers on GitHub itself through
+//! the `gh-reply` wrapper.
 //!
 //! Comment text reaches an agent that runs without permission prompts, so only the repository
 //! owner (and `GITHUB_TRUSTED_LOGINS`) is heard, only when they address the agent's GitHub
@@ -9,6 +10,8 @@
 
 mod feedback;
 mod guard;
+mod open;
+mod prompt;
 mod reply;
 mod route;
 
