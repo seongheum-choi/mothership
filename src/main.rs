@@ -45,6 +45,14 @@ async fn main() -> Result<()> {
              and no repository commands"
         );
     }
+    let allowlist = sandbox::allowed_domains(&app.cfg.home);
+    if !allowlist.exists() {
+        tracing::warn!(
+            "{} is missing: agents' Bash may reach any host, so an agent turned by a prompt \
+             injection can send out what it reads; contrib/allowed-domains is a list to start from",
+            allowlist.display()
+        );
+    }
     if app.cfg.linear.workspace.is_none() {
         tracing::warn!(
             "LINEAR_WORKSPACE is not set: whichever workspace installs the app first is pinned"
