@@ -353,22 +353,27 @@ fn thoughts(h: &Harness, sid: &str) -> Vec<String> {
 /// OS sandbox.
 async fn linear_agent_is_launched_in_the_sandbox(ctx: Ctx) -> Result<()> {
     let h = Harness::start(&ctx, Setup::default()).await?;
+    let state = h.home.join(".mothership");
+    // The instance's tokens and secrets: neither the Read tool nor Bash, which the sandbox
+    // holds to the same rules, may read it.
+    std::fs::write(state.join(".env"), "# GH_TOKEN=...\n")?;
     let issue = issue(10, "Fix it.");
     h.mock.add_issue(&issue);
     ensure!(h.linear(created("s10", &issue, "context of SH-10")).await? == 200);
     h.activity("s10", "response", 1).await?;
 
     let args = argv(&h.prompt_with("context of SH-10").await?);
-    let state = h.home.join(".mothership");
     // `HOME` holds `.mothership` and `src/app`; the worktree is `.mothership/worktrees/SH-10`.
     // `host-runs/` holds runs' private directories and `codex/` sessions' parts of Codex's
     // home, which no session may read or write.
     let mut deny = vec![
+        deny_file(&state.join(".env")),
         deny_dir(&state.join("codex")),
         deny_dir(&state.join("host-runs")),
         deny_dir(&state.join("mcp")),
         deny_file(&state.join("state.json")),
     ];
+    deny.push(deny_edit_file(&state.join(".env")));
     deny.push(deny_edit_dir(&state.join("codex")));
     deny.push(deny_edit_dir(&state.join("host-runs")));
     deny.push(deny_edit_dir(&state.join("mcp")));

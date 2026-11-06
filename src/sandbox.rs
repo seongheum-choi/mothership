@@ -201,7 +201,7 @@ pub fn dotenv_stops(state: &Path, dirs: &[PathBuf]) -> Vec<PathBuf> {
 /// the file, `bypassPermissions` lets Bash reach any host through the sandbox's proxy. An
 /// unreadable file allows no host rather than every one.
 pub fn restrict_network(settings: &mut Value, state: &Path) {
-    let file = state.join("allowed-domains");
+    let file = allowed_domains(state);
     let domains = match std::fs::read_to_string(&file) {
         Ok(text) => parse_domains(&text),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return,
@@ -213,6 +213,11 @@ pub fn restrict_network(settings: &mut Value, state: &Path) {
     let network = &mut settings["sandbox"]["network"];
     network["strictAllowlist"] = json!(true);
     network["allowedDomains"] = json!(domains);
+}
+
+/// `<state>/allowed-domains`, whose absence leaves Bash's network open.
+pub fn allowed_domains(state: &Path) -> PathBuf {
+    state.join("allowed-domains")
 }
 
 fn parse_domains(text: &str) -> Vec<String> {
@@ -322,6 +327,45 @@ mod tests {
             deny_rules(&home.join("work"), &[home.join("work/repo")], EDIT),
             vec![format!("Edit(/{h}/work/other/**)")]
         );
+        std::fs::remove_dir_all(&home).unwrap();
+    }
+
+    /// `.env` holds the instance's tokens and secrets. Every workspace sits below `state`, so
+    /// `.env` is a sibling on the way and gets a `Read` deny, which Claude Code applies to the
+    /// Read tool and folds into the OS sandbox around everything Bash runs (`cat`, `python`).
+    #[test]
+    fn denies_reading_and_editing_the_instance_dotenv() {
+        let home = std::env::temp_dir().join(format!("mothership-env-{}", std::process::id()));
+        let state = home.join(".mothership");
+        for dir in ["worktrees/A", "repos/r", "zulip-workspaces/z"] {
+            std::fs::create_dir_all(state.join(dir)).unwrap();
+        }
+        std::fs::write(state.join(".env"), "GH_TOKEN=secret\n").unwrap();
+        let paths = Paths {
+            read: dotenv_stops(&state, &[state.join("worktrees")]),
+            write: vec![state.join("progress/s")],
+            skip_deny: vec![],
+        };
+        let dotenv = state.join(".env").display().to_string();
+        for workspace in ["worktrees/A", "zulip-workspaces/z"] {
+            let made = settings(
+                &home,
+                &state,
+                &state.join(workspace),
+                &[state.join("repos/r")],
+                &[],
+                &paths,
+            );
+            let deny: Vec<String> =
+                serde_json::from_value(made["permissions"]["deny"].clone()).unwrap();
+            assert!(deny.contains(&format!("Read(/{dotenv})")), "{deny:?}");
+            assert!(deny.contains(&format!("Edit(/{dotenv})")), "{deny:?}");
+            assert!(
+                !deny
+                    .iter()
+                    .any(|r| r.starts_with("Read(") && r.contains("worktrees/.env"))
+            );
+        }
         std::fs::remove_dir_all(&home).unwrap();
     }
 

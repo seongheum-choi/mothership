@@ -46,10 +46,18 @@ async fn main() -> Result<()> {
              MOTHERSHIP_RUNS and no repository commands, and Claude's usage limit fails turns"
         );
     }
-    if app.cfg.home.join("allowed-domains").exists() {
+    let allowlist = sandbox::allowed_domains(&app.cfg.home);
+    if allowlist.exists() {
         tracing::warn!(
             "allowed-domains limits only Claude Code's Bash: Codex turns and host runs still \
              reach any host"
+        );
+    } else {
+        tracing::warn!(
+            "{} is missing: Claude Code's Bash, like Codex turns and host runs, may reach any \
+             host, so an agent turned by a prompt injection can send out what it reads; \
+             contrib/allowed-domains is a list to start from",
+            allowlist.display()
         );
     }
     if app.cfg.linear.workspace.is_none() {
