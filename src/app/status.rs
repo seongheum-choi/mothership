@@ -2,6 +2,7 @@
 //! model defaults in effect.
 
 use super::App;
+use crate::session::Activity;
 use axum::{Json, extract::State};
 use serde_json::{Value, json};
 use std::sync::Arc;
@@ -26,15 +27,21 @@ pub(super) async fn status(State(app): State<Arc<App>>) -> Json<Value> {
 }
 
 /// Each running turn: where it works, how long it has run, how long its agent has been quiet
-/// and the background tasks it still runs. No session ids, since a tunnel exposes `/status`.
+/// and the background tasks it still runs. A tunnel exposes `/status`, so it names no session
+/// id and no Zulip workspace, whose name is a topic or the people in a DM; a Linear one is the
+/// issue identifier.
 fn sessions(app: &App) -> Vec<Value> {
     let now = crate::store::now_secs();
     let linear = app.linear.activities().into_iter().map(|a| ("linear", a));
-    let zulip = app
-        .zulip
-        .iter()
-        .flat_map(|z| z.activities())
-        .map(|a| ("zulip", a));
+    let zulip = app.zulip.iter().flat_map(|z| z.activities()).map(|a| {
+        (
+            "zulip",
+            Activity {
+                workspace: None,
+                ..a
+            },
+        )
+    });
     linear
         .chain(zulip)
         .map(|(surface, a)| {
