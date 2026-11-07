@@ -51,6 +51,7 @@ pub const ALL: &[(&str, Scenario)] = scenarios![
     linear_background_work_past_the_limit_is_given_up,
     linear_turns_wait_while_draining,
     github_feedback_continues_the_session,
+    github_feedback_loop_is_paused,
     github_fork_conversation_comment_is_ignored,
     github_feedback_reaches_a_lost_worktree_session,
     github_mention_opens_a_session_per_pull_request,
@@ -201,8 +202,7 @@ async fn linear_session_gets_a_response(ctx: Ctx) -> Result<()> {
     let response = h.activity("s1", "response", 1).await?;
     ensure!(body(&response) == "Done: <issue>SH-1</issue>", "{response}");
     // The service log says what each turn ran and how it ended, by session and issue.
-    h.logged("[s1] turn on SH-1: claude ").await?;
-    h.logged("new session").await?;
+    h.logged("[s1] turn on SH-1: claude opus in ").await?;
     h.logged("[s1] turn answered after ").await?;
     let thoughts: Vec<String> = h
         .activities("s1")
@@ -1085,6 +1085,42 @@ fn line_comment(id: u64, association: &str, text: &str, head_repo: &str) -> Valu
             "path": "src/lib.rs", "line": 3, "html_url": format!("https://github.com/o/r/pull/7#r{id}"),
         },
     })
+}
+
+/// A session that gets more GitHub prompts within the hour than the cap is stopped and told so
+/// once; the comments after that reach no agent.
+async fn github_feedback_loop_is_paused(ctx: Ctx) -> Result<()> {
+    let setup = Setup {
+        github: true,
+        ..Setup::default()
+    };
+    let h = Harness::start(&ctx, setup).await?;
+    let issue = issue(8, "Loop.");
+    h.mock.add_issue(&issue);
+    ensure!(h.linear(created("s8", &issue, "context of SH-8")).await? == 200);
+    h.activity("s8", "response", 1).await?;
+    let event = "pull_request_review_comment";
+    for n in 1..=12 {
+        let comment = line_comment(n, "OWNER", &format!("@impala round {n}."), "o/r");
+        ensure!(h.github(event, &format!("d-{n}"), &comment).await? == 200);
+    }
+    let error = h.activity("s8", "error", 1).await?;
+    ensure!(
+        body(&error).starts_with("Paused GitHub feedback: this session got 10 prompts"),
+        "{error}"
+    );
+    h.logged("[s8] turn stopped after ").await?;
+    h.logged("[s8] github feedback paused, @someone ignored")
+        .await?;
+    ensure!(h.prompts_with("round 11.").is_empty(), "over the cap heard");
+    ensure!(
+        h.prompts_with("round 12.").is_empty(),
+        "paused session heard"
+    );
+    let errors = h.activities("s8");
+    let errors = errors.iter().filter(|a| a["type"] == "error").count();
+    ensure!(errors == 1, "told once, not {errors} times");
+    Ok(())
 }
 
 /// The repository owner's comments addressed to the agent on the session's pull request start

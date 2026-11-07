@@ -2,7 +2,13 @@
 //! so the turns that start after the message run with them. `default` gives the field back to
 //! the wider scopes.
 
-use crate::{agent::Runner, app::App, config::EFFORTS, directive, store::Replaced};
+use crate::{
+    agent::Runner,
+    app::App,
+    config::EFFORTS,
+    directive,
+    store::{Replaced, SessionRec},
+};
 
 /// What one message's directive does to a field.
 #[derive(Debug, Default, PartialEq)]
@@ -76,21 +82,25 @@ pub fn record(app: &App, key: &str, text: &str) -> Result<(), String> {
         return Ok(());
     }
     tracing::info!("[{key}] directives: {directives:?}");
-    app.store.update(|s| {
-        let rec = s.sessions.entry(key.to_string()).or_default();
-        if let Set::To(model) = &directives.model
-            && rec.model.as_ref() != Some(model)
-            && rec.replaced_model.is_none()
-        {
-            rec.replaced_model = Some(Replaced {
-                model: rec.model.clone(),
-            });
-        }
-        directives.runner.apply(&mut rec.runner);
-        directives.model.apply(&mut rec.model);
-        directives.effort.apply(&mut rec.effort);
-    });
+    app.store
+        .update(|s| apply(s.sessions.entry(key.to_string()).or_default(), directives));
     Ok(())
+}
+
+/// Sets what `directives` set on `rec`. A new model keeps the one it replaces until a turn
+/// with it ends; changing it again before then keeps the first one.
+fn apply(rec: &mut SessionRec, directives: Directives) {
+    if let Set::To(model) = &directives.model
+        && rec.model.as_ref() != Some(model)
+        && rec.replaced_model.is_none()
+    {
+        rec.replaced_model = Some(Replaced {
+            model: rec.model.clone(),
+        });
+    }
+    directives.runner.apply(&mut rec.runner);
+    directives.model.apply(&mut rec.model);
+    directives.effort.apply(&mut rec.effort);
 }
 
 #[cfg(test)]
@@ -130,5 +140,27 @@ mod tests {
                 .contains("is not a runner")
         );
         assert!(parse("[runner=]").unwrap_err().contains("is not a runner"));
+    }
+
+    #[test]
+    fn a_new_model_keeps_the_one_it_replaces_until_a_turn_settles_it() {
+        let mut rec = SessionRec::default();
+        apply(&mut rec, parse("[effort=high]").unwrap());
+        assert_eq!(rec.replaced_model, None, "no model chosen");
+        apply(&mut rec, parse("[model=sonnet]").unwrap());
+        assert_eq!(rec.model.as_deref(), Some("sonnet"));
+        assert_eq!(rec.replaced_model, Some(Replaced { model: None }));
+        apply(&mut rec, parse("[model=haiku]").unwrap());
+        assert_eq!(
+            rec.replaced_model,
+            Some(Replaced { model: None }),
+            "the first one is kept"
+        );
+        rec.replaced_model = None;
+        apply(&mut rec, parse("[model=haiku]").unwrap());
+        assert_eq!(rec.replaced_model, None, "the same model replaces nothing");
+        apply(&mut rec, parse("[model=default]").unwrap());
+        assert_eq!(rec.model, None);
+        assert_eq!(rec.replaced_model, None, "only a model set is kept back");
     }
 }
