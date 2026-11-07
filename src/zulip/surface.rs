@@ -3,13 +3,13 @@
 use super::{ANSWERED, RECEIVED, Ticket, Zulip, client};
 use crate::{
     agent::Launch,
-    app::App,
+    app::{App, Place},
     repos::Repo,
     session::{Outcome, Surface, Update, choice},
     store::file_name,
 };
 use anyhow::{Context, Result};
-use std::{path::PathBuf, sync::Arc};
+use std::{collections::BTreeMap, sync::Arc};
 
 /// Zulip rejects longer messages (limit 10000).
 const MAX_REPLY: usize = 9_500;
@@ -40,33 +40,22 @@ fn launch(app: &App, key: &str) -> Result<Launch> {
         location = rec.title,
         repos = repo_list(&repos),
     );
-    let plugin_dirs = app.cfg.plugin_dirs();
-    let mut readable: Vec<PathBuf> = repos.iter().map(|r| r.path.clone()).collect();
-    readable.extend(plugin_dirs.iter().cloned());
     let read_only: Vec<String> = repos
         .iter()
         .map(|r| format!("Edit(/{}/**)", r.path.display()))
         .collect();
-    let mut mcp_configs = vec![crate::linear::mcp_config(app, key)?];
-    mcp_configs.extend(app.cfg.mcp_configs.iter().cloned());
-    let chosen = choice::for_turn(app, key, &rec, &choice::Scopes::default());
-    let settings = app.agent_settings(key, &workspace, &readable, &read_only);
-    Ok(Launch {
-        runner: chosen.runner,
-        pinned: chosen.pinned,
-        settings: settings.agent,
-        host_settings: settings.host,
-        commands: std::collections::BTreeMap::new(),
+    let place = Place {
+        surface: "zulip",
         cwd: workspace,
         system_prompt,
-        resume: rec.resume(chosen.runner),
+        readable: repos.iter().map(|r| r.path.clone()).collect(),
+        deny: &read_only,
+        mcp_configs: Vec::new(),
+        commands: BTreeMap::new(),
         permission_mode: app.cfg.agent.chat_permission_mode.clone(),
-        models: chosen.models,
-        note: chosen.note,
-        mcp_configs,
-        plugin_dirs,
-        env: app.agent_env("zulip"),
-    })
+        scopes: choice::Scopes::default(),
+    };
+    app.launch(key, &rec, place)
 }
 
 /// One line per repository for the chat system prompt.

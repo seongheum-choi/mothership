@@ -1,10 +1,40 @@
-//! What each agent process gets from the instance: its environment, its settings, and its
-//! session's directory.
+//! What each agent process gets from the instance: the [`Launch`] a surface's [`Place`] becomes,
+//! its environment, its settings, and its session's directory.
 
 use super::App;
-use crate::sandbox;
+use crate::{
+    agent::Launch,
+    sandbox,
+    session::choice::{self, Scopes},
+    store::SessionRec,
+};
+use anyhow::Result;
 use serde_json::Value;
-use std::path::{Path, PathBuf};
+use std::{
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+};
+
+/// What a surface decides about its session's next turn; [`App::launch`] adds what every agent
+/// gets.
+pub struct Place<'a> {
+    /// `MOTHERSHIP_SURFACE`: `linear` or `zulip`.
+    pub surface: &'a str,
+    /// Where the agent works.
+    pub cwd: PathBuf,
+    pub system_prompt: String,
+    /// What the agent may read besides its workspace and the plugin directories.
+    pub readable: Vec<PathBuf>,
+    /// Permission deny rules beside the sandbox's own.
+    pub deny: &'a [String],
+    /// MCP configs after the Linear one and `MCP_CONFIGS`.
+    pub mcp_configs: Vec<PathBuf>,
+    /// The repository's commands the session may ask mothership to run.
+    pub commands: BTreeMap<String, String>,
+    pub permission_mode: String,
+    /// The mode and repository a runner or model may come from.
+    pub scopes: Scopes<'a>,
+}
 
 /// An agent's `--settings`, and the same rules for what mothership runs on its behalf.
 #[derive(Clone)]
@@ -14,6 +44,37 @@ pub struct Settings {
 }
 
 impl App {
+    /// The turn session `key` (recorded as `rec`) runs next from `place`: its runner and models,
+    /// its sandbox settings, MCP configs, plugins and environment.
+    pub fn launch(&self, key: &str, rec: &SessionRec, place: Place<'_>) -> Result<Launch> {
+        // First: it records what the turn launched, which `settle` needs even when a later step
+        // fails the turn.
+        let chosen = choice::for_turn(self, key, rec, &place.scopes);
+        let plugin_dirs = self.cfg.plugin_dirs();
+        let mut readable = place.readable;
+        readable.extend(plugin_dirs.iter().cloned());
+        let mut mcp_configs = vec![crate::linear::mcp_config(self, key)?];
+        mcp_configs.extend(self.cfg.mcp_configs.iter().cloned());
+        mcp_configs.extend(place.mcp_configs);
+        let settings = self.agent_settings(key, &place.cwd, &readable, place.deny);
+        Ok(Launch {
+            runner: chosen.runner,
+            pinned: chosen.pinned,
+            settings: settings.agent,
+            host_settings: settings.host,
+            commands: place.commands,
+            cwd: place.cwd,
+            system_prompt: place.system_prompt,
+            resume: rec.resume(chosen.runner),
+            permission_mode: place.permission_mode,
+            models: chosen.models,
+            note: chosen.note,
+            mcp_configs,
+            plugin_dirs,
+            env: self.agent_env(place.surface),
+        })
+    }
+
     /// Environment every agent process gets: the `MOTHERSHIP_*` markers so hooks and skills know
     /// where they run, plus the `AGENT_ENV` keys resolved from the environment or `<home>/.env`.
     /// With GitHub feedback or Gerrit on, `gh-reply` and `gerrit-reply` come first on `PATH`;

@@ -21,7 +21,7 @@ pub use start::release;
 
 use crate::{
     agent::Launch,
-    app::App,
+    app::{App, Place},
     modes,
     session::{Outcome, Surface, Update, choice},
 };
@@ -127,43 +127,26 @@ impl Surface for Linear {
             system_prompt.extend(crate::host::commands_prompt(&repo.commands));
         }
 
-        let scopes = choice::Scopes {
-            mode: mode.as_ref().map(|m| (m.name.as_str(), &m.models)),
-            repo: Some((repo.name.as_str(), &repo.models)),
-        };
-        let chosen = choice::for_turn(app, key, &rec, &scopes);
-        let plugin_dirs = app.cfg.plugin_dirs();
         let mut readable = vec![repo.path.clone()];
-        readable.extend(plugin_dirs.iter().cloned());
         readable.extend(app.bin_dirs());
-        let mut mcp_configs = vec![mcp::config(app, key)?];
-        mcp_configs.extend(app.cfg.mcp_configs.iter().cloned());
-        mcp_configs.extend(repo.mcp_configs.iter().cloned());
-        let settings = app.agent_settings(
-            key,
-            &workspace,
-            &readable,
-            mode.as_ref().map_or(&[], |m| &m.deny),
-        );
-        Ok(Launch {
-            runner: chosen.runner,
-            pinned: chosen.pinned,
-            settings: settings.agent,
-            host_settings: settings.host,
-            commands: repo.commands.clone(),
+        let place = Place {
+            surface: "linear",
             cwd: workspace,
             system_prompt,
-            resume: rec.resume(chosen.runner),
+            readable,
+            deny: mode.as_ref().map_or(&[], |m| &m.deny),
+            mcp_configs: repo.mcp_configs.clone(),
+            commands: repo.commands.clone(),
             permission_mode: mode
                 .as_ref()
                 .and_then(|m| m.permission_mode.clone())
                 .unwrap_or_else(|| "bypassPermissions".into()),
-            models: chosen.models,
-            note: chosen.note,
-            mcp_configs,
-            plugin_dirs,
-            env: app.agent_env("linear"),
-        })
+            scopes: choice::Scopes {
+                mode: mode.as_ref().map(|m| (m.name.as_str(), &m.models)),
+                repo: Some((repo.name.as_str(), &repo.models)),
+            },
+        };
+        app.launch(key, &rec, place)
     }
 
     async fn update(&self, app: &Arc<App>, key: &str, update: Update) {
