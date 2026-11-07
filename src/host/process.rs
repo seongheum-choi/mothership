@@ -27,7 +27,7 @@ pub(super) struct Output {
 }
 
 impl Host {
-    /// Runs `program` with `args` in the workspace under `HOST_SANDBOX` and its `profile`
+    /// Runs `program` with `args` in the workspace after `profile`, `HOST_SANDBOX` and its
     /// arguments (see [`Host::profile`]), with `input` on stdin, only the environment of
     /// [`super::env`] and `TMPDIR` in `run_dir`, until it exits or [`TIMEOUT`] passes. Its process group is killed either way.
     pub(super) async fn confined(
@@ -40,7 +40,8 @@ impl Host {
     ) -> Result<Output, String> {
         let tmp = run_dir.join("tmp");
         std::fs::create_dir(&tmp).map_err(|e| e.to_string())?;
-        let mut child = Command::new(&self.sandbox)
+        let (sandbox, profile) = profile.split_first().ok_or("no sandbox to run in")?;
+        let mut child = Command::new(sandbox)
             .args(profile)
             .arg(program)
             .args(args)

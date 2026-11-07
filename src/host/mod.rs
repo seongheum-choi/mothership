@@ -12,6 +12,7 @@ mod command;
 mod process;
 mod request;
 mod seatbelt;
+mod seccomp;
 
 pub use codex::{CodexHome, runner as codex_runner};
 pub use command::prompt as commands_prompt;
@@ -31,6 +32,9 @@ use std::{
 const TIMEOUT: Duration = Duration::from_hours(1);
 /// Of a process's own environment, what a run gets besides the agent's.
 const INHERITED: [&str; 7] = ["HOME", "USER", "LOGNAME", "SHELL", "LANG", "LC_ALL", "PATH"];
+/// What a run never gets, even from `AGENT_ENV`: where the services that would run something
+/// outside its sandbox listen.
+const SOCKETS: [&str; 2] = ["DBUS_SESSION_BUS_ADDRESS", "SSH_AUTH_SOCK"];
 
 /// What a session's runs need from its turn.
 pub struct Host {
@@ -78,8 +82,8 @@ pub fn run_root(state: &Path) -> PathBuf {
     state.join("host-runs")
 }
 
-/// Empties [`run_root`] of what earlier runs left and makes it private, at startup, and makes
-/// sure sessions' parts of Codex's home ([`codex::state_root`]) have their directory: both
+/// Empties [`run_root`] of what earlier runs left, makes it private and writes bubblewrap's
+/// seccomp filter (see [`seccomp::filter`]) into it, at startup, and makes sure sessions' parts of Codex's home ([`codex::state_root`]) have their directory: both
 /// must exist for sessions' deny rules to name them.
 pub fn reset_run_root(state: &Path) -> std::io::Result<()> {
     use std::os::unix::fs::DirBuilderExt;
@@ -90,6 +94,11 @@ pub fn reset_run_root(state: &Path) -> std::io::Result<()> {
     let mut dirs = std::fs::DirBuilder::new();
     dirs.recursive(true).mode(0o700);
     dirs.create(&root)?;
+    // Here, where no session or run may write, rather than in a run's own directory: a session
+    // could swap the filter in its directory before its next Codex turn.
+    if let Some(filter) = seccomp::filter() {
+        request::write_new(&root.join(seccomp::FILE), &filter)?;
+    }
     dirs.create(codex::state_root(state))
 }
 
@@ -107,7 +116,7 @@ pub fn codex_home(app: &App) -> PathBuf {
 }
 
 /// A run's environment: the agent's, less what `settings` hide from Bash (the Claude Code
-/// login), over a few basics of mothership's own; nothing else of mothership's.
+/// login) and [`SOCKETS`], over a few basics of mothership's own; nothing else of mothership's.
 pub fn env(settings: &Value, agent: &[(String, String)]) -> Vec<(String, String)> {
     let hidden: Vec<&str> = settings["sandbox"]["credentials"]["envVars"]
         .as_array()
@@ -120,26 +129,30 @@ pub fn env(settings: &Value, agent: &[(String, String)]) -> Vec<(String, String)
         .iter()
         .filter_map(|k| Some(((*k).to_string(), std::env::var(k).ok()?)))
         .chain(agent.iter().cloned())
-        .filter(|(k, _)| !hidden.contains(&k.as_str()))
+        .filter(|(k, _)| !hidden.contains(&k.as_str()) && !SOCKETS.contains(&k.as_str()))
         .collect()
 }
 
-/// `sandbox`'s arguments before the program for a process working in `cwd` under `settings`
-/// (see [`seatbelt::profile`] and [`bwrap::args`]), writing also `/dev`, `own` (a run's
-/// directory and `TMPDIR`, or a Codex turn's session directory) and, for Codex, Codex's state
-/// in its home. Not the shared temporary directories, where one run could reach another's
-/// files or plant some for unconfined tools.
+/// The command line before the program for a process working in `cwd` under `settings`:
+/// `sandbox` and its arguments (see [`seatbelt::profile`] and [`bwrap::args`]), writing also
+/// `/dev`, `own` (a run's directory and `TMPDIR`, or a Codex turn's session directory) and, for
+/// Codex, Codex's state in its home. Not the shared temporary directories, where one run could
+/// reach another's files or plant some for unconfined tools. bubblewrap starts with `filter`
+/// (see [`reset_run_root`]) as its seccomp filter, and not at all where there is none.
 pub fn confinement(
     sandbox: &str,
+    filter: &Path,
     settings: &Value,
     cwd: &Path,
     own: &Path,
     codex: Option<&CodexHome>,
-) -> Vec<String> {
+) -> Result<Vec<String>, String> {
     let mut workspace = vec![cwd.to_path_buf()];
     workspace.extend(crate::sandbox::workspace_clone_git(cwd));
     if Path::new(sandbox).file_name() == Some("bwrap".as_ref()) {
-        return bwrap::args(settings, &workspace, own, codex);
+        seccomp::filter().ok_or("no seccomp filter for this architecture")?;
+        let args = bwrap::args(settings, &workspace, own, codex);
+        return Ok(seccomp::wrapped(sandbox, filter, args));
     }
     let mut always = seatbelt::subpath(Path::new("/dev"));
     always.extend(
@@ -148,7 +161,7 @@ pub fn confinement(
             .unwrap_or_default(),
     );
     let profile = seatbelt::profile(settings, &workspace, &always, own);
-    vec!["-p".into(), profile]
+    Ok(vec![sandbox.into(), "-p".into(), profile])
 }
 
 /// Serves `host`'s requests one at a time until stopped or dropped; either kills a run in
@@ -233,8 +246,14 @@ impl Host {
     }
 
     /// [`confinement`] for one of this session's runs.
-    fn profile(&self, settings: &Value, run_dir: &Path, codex: Option<&CodexHome>) -> Vec<String> {
-        confinement(&self.sandbox, settings, &self.cwd, run_dir, codex)
+    fn profile(
+        &self,
+        settings: &Value,
+        run_dir: &Path,
+        codex: Option<&CodexHome>,
+    ) -> Result<Vec<String>, String> {
+        let filter = self.run_root.join(seccomp::FILE);
+        confinement(&self.sandbox, &filter, settings, &self.cwd, run_dir, codex)
     }
 
     fn report(&self, line: &str) {
@@ -277,7 +296,10 @@ mod tests {
             home: d.join("codex"),
             state: d.join("state/s1"),
         };
-        let made = |sandbox| confinement(sandbox, &settings(&d), &ws, &own, Some(&codex));
+        let filter = d.join("seccomp.bpf");
+        let made = |sandbox| {
+            confinement(sandbox, &filter, &settings(&d), &ws, &own, Some(&codex)).unwrap()
+        };
 
         let bwrap = made("/usr/bin/bwrap");
         for mount in [
@@ -307,16 +329,26 @@ mod tests {
             );
         }
         assert_eq!(bwrap.last().map(String::as_str), Some("--"));
+        // A Codex turn gets the seccomp filter as a host run does.
+        assert_eq!(
+            bwrap[3..7],
+            [
+                p("seccomp.bpf"),
+                "/usr/bin/bwrap".into(),
+                "--seccomp".into(),
+                "3".into()
+            ]
+        );
 
         let seatbelt = made("/usr/bin/sandbox-exec");
-        assert_eq!(seatbelt[0], "-p");
+        assert_eq!(seatbelt[..2], ["/usr/bin/sandbox-exec", "-p"]);
         for rule in [
             format!("(deny file-read* (subpath \"{}\"))", p("secret")),
             format!("(allow file-write* (subpath \"{}\")", p("ws")),
             format!("(literal \"{}\")", p("codex/auth.json")),
             format!("(allow file-read* file-write* (subpath \"{}\"))", p("sess")),
         ] {
-            assert!(seatbelt[1].contains(&rule), "{rule} in {}", seatbelt[1]);
+            assert!(seatbelt[2].contains(&rule), "{rule} in {}", seatbelt[2]);
         }
         std::fs::remove_dir_all(&d).unwrap();
     }

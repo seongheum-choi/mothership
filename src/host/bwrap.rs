@@ -13,6 +13,11 @@ use std::{
 /// `.git`s.
 const DEPTH: usize = 3;
 
+/// Hidden from every run besides what the rules hide: users' runtime directories (their
+/// session buses, `systemd --user`, agents' sockets) and Docker's socket. [`super::seccomp`]
+/// already refuses a run Unix sockets; this keeps them out of reach should it not load.
+const SERVICES: [&str; 3] = ["/run/user", "/run/docker.sock", "/var/run/docker.sock"];
+
 /// What a run may do at a path and everything below it, until a deeper mount says otherwise.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Access {
@@ -34,7 +39,8 @@ enum Access {
 ///   cannot be removed, renamed or replaced;
 /// - in a PID namespace of its own, signals reach only processes in the same sandbox, and
 ///   nothing it started outlives it;
-/// - `codex`, Codex's home for a Codex run, is laid out by [`super::codex::home_mounts`].
+/// - `codex`, Codex's home for a Codex run, is laid out by [`super::codex::home_mounts`];
+/// - [`SERVICES`] are hidden too.
 ///
 /// Mounts follow links, so each path counts as resolved, and a rule naming nothing that
 /// exists has nothing to mount. The network stays open, as under Claude Code's sandbox with
@@ -66,8 +72,10 @@ pub fn args(
     for root in &roots {
         guards(root, DEPTH, &mut fixed, &mut pinned);
     }
+    let mut hidden = paths("Read");
+    hidden.extend(SERVICES.iter().filter_map(resolve));
     let rules = Rules {
-        hidden: paths("Read"),
+        hidden,
         writable: roots,
         fixed,
         own,
@@ -245,7 +253,37 @@ mod tests {
             &d.join("secret/own"),
             None,
         );
-        let p = |rel: &str| d.join(rel).display().to_string();
+        let mut mounts: Vec<(&str, PathBuf)> = [
+            ("--ro-bind /dev/null", "netrc"),
+            ("--tmpfs", "secret"),
+            ("--bind =", "secret/own"),
+            ("--bind =", "sess"),
+            ("--bind =", "ws"),
+            ("--ro-bind =", "ws/.claude"),
+            ("--ro-bind =", "ws/.envrc"),
+            ("--bind =", "ws/.git"),
+            ("--ro-bind =", "ws/locked"),
+            ("--bind =", "ws/sub/.git"),
+            ("--ro-bind =", "ws/sub/.git/hooks"),
+        ]
+        .map(|(kind, rel)| (kind, d.join(rel)))
+        .to_vec();
+        // Hidden as they exist on the machine running the test.
+        for service in SERVICES.iter().filter_map(resolve) {
+            let kind = if service.is_dir() {
+                "--tmpfs"
+            } else {
+                "--ro-bind /dev/null"
+            };
+            mounts.push((kind, service));
+        }
+        mounts.sort_by(|a, b| a.1.cmp(&b.1));
+        // `/var/run` is often a link to `/run`.
+        mounts.dedup_by(|a, b| a.1 == b.1);
+        let emptied: Vec<_> = (mounts.iter())
+            .filter(|(kind, _)| *kind == "--tmpfs")
+            .map(|(_, path)| ("--remount-ro", path.clone()))
+            .collect();
         let mut want: Vec<String> = [
             "--die-with-parent",
             "--new-session",
@@ -260,24 +298,12 @@ mod tests {
         ]
         .map(String::from)
         .to_vec();
-        for (kind, rel) in [
-            ("--ro-bind /dev/null", "netrc"),
-            ("--tmpfs", "secret"),
-            ("--bind =", "secret/own"),
-            ("--bind =", "sess"),
-            ("--bind =", "ws"),
-            ("--ro-bind =", "ws/.claude"),
-            ("--ro-bind =", "ws/.envrc"),
-            ("--bind =", "ws/.git"),
-            ("--ro-bind =", "ws/locked"),
-            ("--bind =", "ws/sub/.git"),
-            ("--ro-bind =", "ws/sub/.git/hooks"),
-            ("--remount-ro", "secret"),
-        ] {
+        for (kind, path) in mounts.into_iter().chain(emptied) {
+            let p = path.display().to_string();
             for word in kind.split(' ') {
-                want.push(if word == "=" { p(rel) } else { word.into() });
+                want.push(if word == "=" { p.clone() } else { word.into() });
             }
-            want.push(p(rel));
+            want.push(p);
         }
         want.push("--".into());
         assert_eq!(made, want);
