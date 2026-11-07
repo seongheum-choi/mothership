@@ -27,6 +27,9 @@ pub const GITHUB_SECRET: &str = "github-secret";
 /// The agent's GitHub account; feedback must mention it.
 pub const GITHUB_LOGIN: &str = "impala";
 pub const ZULIP_TOKEN: &str = "zulip-token";
+pub const GERRIT_TOKEN: &str = "gerrit-token";
+/// The one account whose Gerrit reviews are heard.
+pub const GERRIT_TRUSTED: &str = "nate@example.com";
 pub const ZULIP_BOT: &str = "bot@zulip.test";
 
 /// How long `eventually` waits; everything here takes well under a second.
@@ -162,6 +165,8 @@ impl Harness {
                 ("GERRIT_URL", gerrit.url.clone()),
                 ("GERRIT_USERNAME", gerrit::USERNAME.into()),
                 ("GERRIT_HTTP_PASSWORD", gerrit::HTTP_PASSWORD.into()),
+                ("GERRIT_WEBHOOK_TOKEN", GERRIT_TOKEN.into()),
+                ("GERRIT_TRUSTED_EMAILS", GERRIT_TRUSTED.into()),
             ]);
             Some(gerrit)
         } else {
@@ -242,6 +247,18 @@ impl Harness {
             ("x-hub-signature-256", signature.as_str()),
         ];
         self.post("/github-webhook", &headers, body).await
+    }
+
+    /// Posts a Gerrit event to `/gerrit-webhook` with `token` as its bearer token.
+    pub async fn gerrit_event(&self, token: &str, payload: &Value) -> Result<u16> {
+        let auth = format!("Bearer {token}");
+        let headers = [("authorization", auth.as_str())];
+        self.post(
+            "/gerrit-webhook",
+            &headers,
+            payload.to_string().into_bytes(),
+        )
+        .await
     }
 
     pub async fn zulip(&self, payload: &Value) -> Result<u16> {
