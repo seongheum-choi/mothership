@@ -1,8 +1,10 @@
-//! Integration tests: the mothership binary against local stand-ins for Linear, Zulip, GitHub
-//! and the Claude Code and Codex CLIs. The harness is our own, so this executable can also play
-//! `claude`, `codex` and `gh` when it is started under those names.
+//! Integration tests: the mothership binary against local stand-ins for Linear, Zulip, GitHub,
+//! Gerrit and the Claude Code and Codex CLIs. The harness is our own, so this executable can
+//! also play `claude`, `codex` and `gh` when it is started under those names.
 
 mod fake;
+mod gerrit;
+mod gerrit_scenarios;
 mod harness;
 mod mock;
 mod scenarios;
@@ -77,6 +79,7 @@ impl Args {
 fn selected(filter: Option<&str>) -> impl Iterator<Item = &'static (&'static str, Scenario)> {
     scenarios::ALL
         .iter()
+        .chain(gerrit_scenarios::ALL)
         .filter(move |(name, _)| filter.is_none_or(|f| name.contains(f)))
 }
 

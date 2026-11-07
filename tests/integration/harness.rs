@@ -2,7 +2,10 @@
 //! port, the mocks, and the fakes on `PATH`. Its helpers sign and send webhooks and wait for
 //! what mothership does in response.
 
-use crate::mock::{self, Mock};
+use crate::{
+    gerrit::{self, GerritMock},
+    mock::{self, Mock},
+};
 use anyhow::{Context, Result, bail};
 use hmac::{Hmac, KeyInit, Mac};
 use serde_json::{Value, json};
@@ -70,6 +73,8 @@ pub struct Setup {
     pub folders: Vec<&'static str>,
     pub zulip: bool,
     pub github: bool,
+    /// Gerrit on, against a [`GerritMock`].
+    pub gerrit: bool,
     /// The seed `LINEAR_ACCESS_TOKEN`.
     pub token: &'static str,
     pub env: Vec<(&'static str, String)>,
@@ -84,6 +89,7 @@ impl Default for Setup {
             folders: Vec::new(),
             zulip: false,
             github: false,
+            gerrit: false,
             token: "token",
             env: Vec::new(),
             state: None,
@@ -95,6 +101,7 @@ pub struct Harness {
     pub dir: PathBuf,
     pub home: PathBuf,
     pub mock: Mock,
+    pub gerrit: Option<GerritMock>,
     child: Child,
     url: String,
     http: reqwest::Client,
@@ -149,6 +156,17 @@ impl Harness {
             env.push(("GITHUB_WEBHOOK_SECRET", GITHUB_SECRET.into()));
             env.push(("GITHUB_MENTION_LOGIN", GITHUB_LOGIN.into()));
         }
+        let gerrit = if setup.gerrit {
+            let gerrit = GerritMock::start().await?;
+            env.extend([
+                ("GERRIT_URL", gerrit.url.clone()),
+                ("GERRIT_USERNAME", gerrit::USERNAME.into()),
+                ("GERRIT_HTTP_PASSWORD", gerrit::HTTP_PASSWORD.into()),
+            ]);
+            Some(gerrit)
+        } else {
+            None
+        };
         env.extend(setup.env);
 
         let http = reqwest::Client::new();
@@ -178,6 +196,7 @@ impl Harness {
                         dir,
                         home,
                         mock,
+                        gerrit,
                         child,
                         url,
                         http,
@@ -467,12 +486,17 @@ pub fn git(dir: &Path, args: &[&str]) -> Result<String> {
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
-/// A clone with one commit on `main`, `origin` on GitHub, and `origin/main` already fetched.
+/// A clone with one commit on `main`, `origin` on GitHub (`owner/name`) or at a URL, and
+/// `origin/main` already fetched.
 pub fn create_repo(path: &Path, origin: &str) -> Result<()> {
     std::fs::create_dir_all(path)?;
     git(path, &["init", "-q", "-b", "main"])?;
     git(path, &["commit", "-q", "--allow-empty", "-m", "initial"])?;
-    let url = format!("https://github.com/{origin}.git");
+    let url = if origin.contains("://") {
+        origin.to_string()
+    } else {
+        format!("https://github.com/{origin}.git")
+    };
     git(path, &["remote", "add", "origin", &url])?;
     git(path, &["update-ref", "refs/remotes/origin/main", "HEAD"])?;
     Ok(())
