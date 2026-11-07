@@ -12,7 +12,10 @@ use tokio::process::Command;
 /// `git push` can never target the base branch.
 pub async fn ensure(repo: &Path, dir: &Path, branch: &str, base: &str) -> Result<PathBuf> {
     if let Err(e) = git(repo, &["fetch", "origin"]).await {
-        tracing::warn!("git fetch failed, using local refs: {e:#}");
+        tracing::warn!(
+            "git fetch in {} failed, using local refs: {e:#}",
+            repo.display()
+        );
     }
     let porcelain = git(repo, &["worktree", "list", "--porcelain"]).await?;
     if let Some(existing) = checked_out_at(&porcelain, branch) {
