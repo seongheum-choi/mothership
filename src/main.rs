@@ -46,6 +46,12 @@ async fn main() -> Result<()> {
              MOTHERSHIP_RUNS and no repository commands, and Claude's usage limit fails turns"
         );
     }
+    if app.cfg.home.join("allowed-domains").exists() {
+        tracing::warn!(
+            "allowed-domains limits only Claude Code's Bash: Codex turns and host runs still \
+             reach any host"
+        );
+    }
     if app.cfg.linear.workspace.is_none() {
         tracing::warn!(
             "LINEAR_WORKSPACE is not set: whichever workspace installs the app first is pinned"
