@@ -69,7 +69,7 @@ impl App {
         let gerrit = cfg
             .gerrit
             .as_ref()
-            .map(|_| Gerrit::new(&cfg.home))
+            .map(|gerrit| Gerrit::new(gerrit, &live.repos(), &cfg.home))
             .transpose()
             .context("setting up Gerrit")?;
         Ok(Arc::new(Self {
@@ -98,6 +98,9 @@ impl App {
         if self.github.is_some() {
             router = router.merge(crate::github::routes());
         }
+        if self.gerrit.is_some() {
+            router = router.merge(crate::gerrit::routes());
+        }
         router.with_state(self.clone())
     }
 
@@ -111,12 +114,18 @@ impl App {
     }
 
     /// Picks up changes to `repos.json` and `.env` before an event is routed, so the next turn
-    /// sees them. GitHub origins follow a changed repository list.
+    /// sees them. GitHub origins and Gerrit projects follow a changed repository list.
     pub fn refresh(&self) {
-        if let Some(repos) = self.live.refresh()
-            && let Some(github) = &self.github
-        {
+        let Some(repos) = self.live.refresh() else {
+            return;
+        };
+        if let Some(github) = &self.github {
             github.set_repos(&repos);
+        }
+        if let (Some(gerrit), Some(cfg)) = (&self.gerrit, &self.cfg.gerrit)
+            && cfg.webhook_token.is_some()
+        {
+            gerrit.set_repos(cfg, &repos);
         }
     }
 
