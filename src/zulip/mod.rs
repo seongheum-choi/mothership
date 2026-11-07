@@ -56,12 +56,12 @@ async fn handle(app: Arc<App>, p: Value) {
     let Some(message_id) = message["id"].as_u64() else {
         return;
     };
-    let client = client(&app);
-    if let Err(e) = client.react(message_id, RECEIVED, true).await {
-        tracing::warn!("zulip reaction failed: {e:#}");
-    }
     let (key, dest, location) = conversation(message);
     tracing::info!("[{key}] zulip message {message_id}");
+    let client = client(&app);
+    if let Err(e) = client.react(message_id, RECEIVED, true).await {
+        tracing::warn!("[{key}] zulip reaction failed: {e:#}");
+    }
 
     let mut prompt = String::new();
     if let Destination::Stream { topic, .. } = &dest
@@ -80,7 +80,7 @@ async fn handle(app: Arc<App>, p: Value) {
                 cursor,
                 &zulip_bot(&app),
             )),
-            Err(e) => tracing::warn!("zulip topic context failed: {e:#}"),
+            Err(e) => tracing::warn!("[{key}] zulip topic context failed: {e:#}"),
         }
     }
     let text = strip_mention(
