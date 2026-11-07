@@ -110,18 +110,44 @@ pub struct GerritConfig {
     /// to agents for `git push` and `gerrit-reply`.
     pub username: String,
     pub http_password: String,
+    /// `GERRIT_WEBHOOK_TOKEN`: the bearer token `POST /gerrit-webhook` takes; unset, review
+    /// feedback is off.
+    pub webhook_token: Option<String>,
+    /// Account emails whose reviews are heard.
+    pub trusted_emails: Vec<String>,
+    /// What a review writes after `@` to address the agent: `GERRIT_MENTION`, or the username.
+    pub mention: String,
 }
 
 impl GerritConfig {
-    /// On when `GERRIT_URL` is set, which then needs the account's HTTP credentials.
+    /// On when `GERRIT_URL` is set, which then needs the account's HTTP credentials. Review
+    /// feedback is on when `GERRIT_WEBHOOK_TOKEN` is set, which then needs
+    /// `GERRIT_TRUSTED_EMAILS`.
     pub(super) fn from_vars(vars: &Vars) -> Result<Option<Self>> {
         let Some(url) = vars.get("GERRIT_URL") else {
             return Ok(None);
         };
+        let username = vars.require("GERRIT_USERNAME")?;
+        let webhook_token = vars.get("GERRIT_WEBHOOK_TOKEN");
+        let trusted_emails = vars
+            .get("GERRIT_TRUSTED_EMAILS")
+            .map(|list| parse_list(&list))
+            .unwrap_or_default();
+        if webhook_token.is_some() && trusted_emails.is_empty() {
+            bail!("GERRIT_WEBHOOK_TOKEN is set but GERRIT_TRUSTED_EMAILS lists nobody");
+        }
+        let mention = vars
+            .get("GERRIT_MENTION")
+            .map(|m| m.trim().trim_start_matches('@').to_string())
+            .filter(|m| !m.is_empty())
+            .unwrap_or_else(|| username.clone());
         Ok(Some(Self {
             url: url.trim_end_matches('/').to_string(),
-            username: vars.require("GERRIT_USERNAME")?,
+            username,
             http_password: vars.require("GERRIT_HTTP_PASSWORD")?,
+            webhook_token,
+            trusted_emails,
+            mention,
         }))
     }
 }
