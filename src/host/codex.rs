@@ -126,7 +126,7 @@ impl Host {
             args.extend(["-c".into(), format!("model_reasoning_effort=\"{effort}\"")]);
         }
         args.push("-".into());
-        let profile = self.profile(&self.codex_settings, dir, Some(&self.codex_home));
+        let profile = self.profile(&self.codex_settings, dir, Some(&self.codex_home))?;
         let codex = self.codex.display().to_string();
         let out = self
             .confined(profile, dir, &codex, &args, Some(&run.prompt))
