@@ -12,6 +12,7 @@ mod command;
 mod process;
 mod request;
 mod seatbelt;
+mod seccomp;
 
 pub use command::prompt as commands_prompt;
 
@@ -30,6 +31,9 @@ use std::{
 const TIMEOUT: Duration = Duration::from_hours(1);
 /// Of a process's own environment, what a run gets besides the agent's.
 const INHERITED: [&str; 7] = ["HOME", "USER", "LOGNAME", "SHELL", "LANG", "LC_ALL", "PATH"];
+/// What a run never gets, even from `AGENT_ENV`: where the services that would run something
+/// outside its sandbox listen.
+const SOCKETS: [&str; 2] = ["DBUS_SESSION_BUS_ADDRESS", "SSH_AUTH_SOCK"];
 
 /// What a session's runs need from its turn.
 pub struct Host {
@@ -105,7 +109,7 @@ pub fn codex_home(app: &App) -> PathBuf {
 }
 
 /// A run's environment: the agent's, less what `settings` hide from Bash (the Claude Code
-/// login), over a few basics of mothership's own; nothing else of mothership's.
+/// login) and [`SOCKETS`], over a few basics of mothership's own; nothing else of mothership's.
 pub fn env(settings: &Value, agent: &[(String, String)]) -> Vec<(String, String)> {
     let hidden: Vec<&str> = settings["sandbox"]["credentials"]["envVars"]
         .as_array()
@@ -118,7 +122,7 @@ pub fn env(settings: &Value, agent: &[(String, String)]) -> Vec<(String, String)
         .iter()
         .filter_map(|k| Some(((*k).to_string(), std::env::var(k).ok()?)))
         .chain(agent.iter().cloned())
-        .filter(|(k, _)| !hidden.contains(&k.as_str()))
+        .filter(|(k, _)| !hidden.contains(&k.as_str()) && !SOCKETS.contains(&k.as_str()))
         .collect()
 }
 
@@ -203,21 +207,30 @@ impl Host {
         outcome
     }
 
-    /// `HOST_SANDBOX`'s arguments before the program for a run under `settings` (see
-    /// [`seatbelt::profile`] and [`bwrap::args`]), writing also `/dev`, `run_dir` (its `TMPDIR`
-    /// too) and, for a Codex run, Codex's state in `codex_home`. Not the shared temporary
-    /// directories, where one run could reach another's files or plant some for unconfined
-    /// tools.
-    fn profile(&self, settings: &Value, run_dir: &Path, codex_home: Option<&Path>) -> Vec<String> {
+    /// The command a run's program follows under `settings`: `HOST_SANDBOX` and its arguments
+    /// (see [`seatbelt::profile`] and [`bwrap::args`], with [`seccomp::filter`] written into
+    /// `run_dir` for bubblewrap), writing also `/dev`, `run_dir` (its `TMPDIR` too) and, for a
+    /// Codex run, Codex's state in `codex_home`. Not the shared temporary directories, where
+    /// one run could reach another's files or plant some for unconfined tools.
+    fn profile(
+        &self,
+        settings: &Value,
+        run_dir: &Path,
+        codex_home: Option<&Path>,
+    ) -> Result<Vec<String>, String> {
         let mut workspace = vec![self.cwd.clone()];
         workspace.extend(crate::sandbox::workspace_clone_git(&self.cwd));
         if Path::new(&self.sandbox).file_name() == Some("bwrap".as_ref()) {
-            return bwrap::args(settings, &workspace, run_dir, codex_home);
+            let filter = seccomp::filter().ok_or("no seccomp filter for this architecture")?;
+            let file = run_dir.join("seccomp.bpf");
+            request::write_new(&file, &filter).map_err(|e| e.to_string())?;
+            let args = bwrap::args(settings, &workspace, run_dir, codex_home);
+            return Ok(seccomp::wrapped(&self.sandbox, &file, args));
         }
         let mut always = seatbelt::subpath(Path::new("/dev"));
         always.extend(codex_home.map(codex::home_writes).unwrap_or_default());
         let profile = seatbelt::profile(settings, &workspace, &always, run_dir);
-        vec!["-p".into(), profile]
+        Ok(vec![self.sandbox.clone(), "-p".into(), profile])
     }
 
     fn report(&self, line: &str) {

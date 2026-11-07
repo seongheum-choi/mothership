@@ -18,11 +18,11 @@ use std::{
 /// - no directory it may write in can itself be removed, renamed or replaced, nor any `.git`
 ///   moved away, since mothership reads and writes those paths again after the run, and a
 ///   `.git` moved aside and back would carry hooks past the `.git/hooks` rule;
-/// - signals reach only processes in the same sandbox, as under Claude Code's.
+/// - signals reach only processes in the same sandbox, as under Claude Code's;
+/// - [`ESCAPES`]: nothing outside the sandbox can be asked to run something for it.
 ///
 /// Paths are matched as written and as resolved, since Seatbelt sees resolved paths. The
-/// network and other services stay open, as under Claude Code's sandbox with
-/// `bypassPermissions`.
+/// network stays open, as under Claude Code's sandbox with `bypassPermissions`.
 pub fn profile(settings: &Value, workspace: &[PathBuf], always: &[String], own: &Path) -> String {
     let deny = denied(settings);
     let roots = writable_roots(settings, workspace);
@@ -33,6 +33,7 @@ pub fn profile(settings: &Value, workspace: &[PathBuf], always: &[String], own: 
 
     let mut sb = String::from("(version 1)\n(allow default)\n");
     sb.push_str("(deny signal)\n(allow signal (target same-sandbox))\n");
+    sb.push_str(ESCAPES);
     let rules = |tool| {
         deny.iter()
             .flat_map(move |r| filters(r, tool))
@@ -53,6 +54,14 @@ pub fn profile(settings: &Value, workspace: &[PathBuf], always: &[String], own: 
     sb.push_str("(deny file-write-unlink (regex #\"/\\.git$\"))\n");
     sb
 }
+
+/// What a run may not ask of services outside its sandbox: launchd to start a job
+/// (`launchctl submit`, `bootstrap`), `LaunchServices` to open an application (`open`), another
+/// application to act through Apple Events (`osascript`), or anything listening on a Unix
+/// socket (ssh-agent, Docker, tmux), but mDNSResponder, which looks up host names.
+const ESCAPES: &str = "(deny job-creation lsopen appleevent-send)\n\
+     (deny network-outbound (regex #\"^/\"))\n\
+     (allow network-outbound (literal \"/private/var/run/mDNSResponder\"))\n";
 
 /// The `permissions.deny` rules of `settings`.
 pub(super) fn denied(settings: &Value) -> Vec<&str> {
@@ -277,7 +286,7 @@ mod tests {
             made,
             format!(
                 "(version 1)\n(allow default)\n\
-                 (deny signal)\n(allow signal (target same-sandbox))\n\
+                 (deny signal)\n(allow signal (target same-sandbox))\n{}\
                  (deny file-read* (subpath \"/h/.ssh\") (literal \"/h/.netrc\"))\n\
                  (allow file-read-metadata (literal \"/h/.m/host-runs\") (literal \"/h/.m\") \
                  (literal \"/h\") (literal \"/\"))\n\
@@ -289,6 +298,7 @@ mod tests {
                  (deny file-write* (literal \"/h/.m/worktrees/A\") (literal \"/h/.cargo/registry\") \
                  (literal \"/h/.m/progress/s1\") (literal \"/h/.m/host-runs/r1\"))\n\
                  (deny file-write-unlink (regex #\"/\\.git$\"))\n",
+                ESCAPES,
                 protected.join(" ")
             )
         );
@@ -384,7 +394,27 @@ mod tests {
         ] {
             assert!(runs(allowed), "{allowed}");
         }
+        // Outside the sandbox the same socket connects, so a refusal inside is the profile's.
+        let _listener = std::os::unix::net::UnixListener::bind(d.join("sock")).unwrap();
+        let connect = "perl -MSocket -e 'socket(my $s, AF_UNIX, SOCK_STREAM, 0) \
+                       && connect($s, pack_sockaddr_un(\"sock\")) or exit 1'";
+        let free = |cmd: &str| {
+            std::process::Command::new("/bin/sh")
+                .args(["-c", cmd])
+                .current_dir(&d)
+                .status()
+                .unwrap()
+                .success()
+        };
+        assert!(free(connect));
+        let label = format!("mothership-test-{}", std::process::id());
+        let submit = format!("launchctl submit -l {label} -- /usr/bin/true");
         for denied in [
+            connect,
+            &submit,
+            // Hidden, should it open after all.
+            "open -g -j -a Calculator",
+            "osascript -e 'tell application \"Finder\" to get name'",
             "cat secret/s",
             "ls secret",
             "echo > outside/x",
@@ -398,6 +428,7 @@ mod tests {
         ] {
             assert!(!runs(denied), "{denied}");
         }
+        free(&format!("launchctl remove {label}"));
         std::fs::remove_dir_all(&base).unwrap();
     }
 }

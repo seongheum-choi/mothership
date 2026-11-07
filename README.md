@@ -244,7 +244,8 @@ Every run happens under `HOST_SANDBOX` with rules made from the turn's own setti
 - a Codex run may also write Codex's state in `CODEX_HOME`: sessions, logs, caches, state databases and a refreshed login, but not its config, hooks, rules, skills, memories or plugins;
 - the `Edit` deny rules deny writing again inside those (the clone's `config` and `hooks`, other worktrees), and so do the names Claude Code's sandbox never lets Bash write (shell rc files, `.gitconfig`, `.envrc`, `.npmrc`, `.mcp.json`, `.git/hooks`, `.claude/`, `.vscode/` and the rest), but for `.idea`;
 - signals reach only processes in the same sandbox;
-- the network and other system services stay open, as through Claude Code's proxy under `bypassPermissions`.
+- nothing outside the sandbox can be asked to run something for it: no Unix socket can be connected to (the user's service manager, D-Bus, Docker, ssh-agent, tmux), but mDNSResponder on macOS, and on macOS neither launchd (`launchctl submit`), LaunchServices (`open`) nor Apple Events (`osascript`) can be used; `DBUS_SESSION_BUS_ADDRESS` and `SSH_AUTH_SOCK` are left out of a run's environment;
+- the network stays open, as through Claude Code's proxy under `bypassPermissions`.
 
 Only a Codex run can read Codex's home and binary; a command runs under the session's own read rules. A run's environment is the agent's (`AGENT_ENV` and the `MOTHERSHIP_*` values) without what the settings hide from Bash (`CLAUDE_CODE_OAUTH_TOKEN`), over `HOME`, `USER`, `LOGNAME`, `SHELL`, `LANG`, `LC_ALL` and `PATH`; nothing else of mothership's.
 
@@ -259,6 +260,7 @@ bubblewrap confines with mounts: `/` read-only, the directories a run may write 
 - Mounts follow links, so a rule counts for the path it resolves to, and a rule naming nothing that exists confines nothing. Rules with globs (`Read(//**/.env)`) have nothing to mount and are skipped.
 - Protected names and `.git`s are looked for three levels deep under each directory a run may write, and only among what exists when the run starts: a run can create a missing `.envrc` or `.vscode/`, but not change one that is there. Each one found is a mount point, so a `.git` cannot be moved aside either.
 - The run has a PID namespace of its own: signals reach only its processes, and nothing it started, `setsid` or not, outlives it.
+- A seccomp filter, passed to `bwrap --seccomp` through `/bin/sh`, makes `socket(AF_UNIX, …)` fail with `EPERM`, which covers abstract sockets that no mount can hide, and so does every `io_uring` call, whose socket operation seccomp never sees, and every call from a 32-bit or x32 process. It exists for x86_64 and aarch64; elsewhere a run is refused. `/run/user` and Docker's socket are hidden as well.
 - For a Codex run, Codex's home is an empty directory that goes with the run, with the home's entries mounted back in: `sessions`, logs, caches, `installation_id` and `auth.json` (a refreshed login must reach the home) writable, links as links, the rest read-only. The state databases, `history.jsonl`, the models cache and the global state are left out, so each run starts its own; a database shared with Codex outside the run would be corrupted by a journal kept inside it. Whatever else a run writes there is gone after it, so it cannot leave config, rules or skills for later runs.
 
 #### Claude usage limit
