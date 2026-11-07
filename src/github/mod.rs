@@ -27,7 +27,8 @@ use axum::{
     routing::post,
 };
 use feedback::Feedback;
-use guard::{Budget, Deliveries};
+use guard::Deliveries;
+pub(crate) use guard::{Allowance, Budget, PROMPTS_PER_WINDOW};
 use serde_json::Value;
 use std::{
     path::{Path, PathBuf},
