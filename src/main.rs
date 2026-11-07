@@ -42,8 +42,8 @@ async fn main() -> Result<()> {
 
     if app.cfg.agent.host_sandbox.is_none() {
         tracing::warn!(
-            "HOST_SANDBOX is not a file: host runs are off, so sessions get no MOTHERSHIP_RUNS \
-             and no repository commands"
+            "HOST_SANDBOX is not a file: host runs and Codex turns are off, so sessions get no \
+             MOTHERSHIP_RUNS and no repository commands, and Claude's usage limit fails turns"
         );
     }
     if app.cfg.linear.workspace.is_none() {
