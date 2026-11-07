@@ -46,7 +46,7 @@ Agents run as `claude -p --input-format stream-json --output-format stream-json`
 | --- | --- |
 | A chat or tracker (Slack, GitHub issues) | Implement `session::Surface` and add its routes in `app.rs` |
 | A tunnel (ngrok, ...) | A `tunnel::Tunnel` variant and its command |
-| A review system | A `review::ReviewBackend` variant for its instructions, and a module beside `github/` and `gerrit/` for its feedback |
+| A review system | A `review::ReviewBackend` variant for its instructions, and a module beside `github/` and `gerrit/` that finds the session its feedback continues and hands it to `review::intake::submit` |
 | An agent runtime | An `agent::Runner` variant and a module in `src/agent/` that builds its command line and turns its output into `agent::Event`s |
 | Skills for every session | Drop a Claude Code plugin directory into `<home>/plugins/`; it loads on the next turn |
 | A working mode picked by Linear labels | A [`<home>/modes/<name>.md`](#modes) file |
