@@ -1,4 +1,5 @@
-//! Per-surface settings: Linear (always on), Zulip and GitHub (each on when its key is set).
+//! Per-surface settings: Linear (always on), Zulip, GitHub and Gerrit (each on when its key is
+//! set).
 
 use super::vars::{Vars, parse_list};
 use crate::store::Tokens;
@@ -99,6 +100,29 @@ impl GitHubAppConfig {
             client_id: vars.get("GITHUB_APP_CLIENT_ID")?,
             client_secret: vars.get("GITHUB_APP_CLIENT_SECRET"),
         })
+    }
+}
+
+pub struct GerritConfig {
+    /// `GERRIT_URL` without trailing slashes, such as `https://gerrit.example.com`.
+    pub url: String,
+    /// The agent's Gerrit account and its HTTP password, for mothership's REST calls and handed
+    /// to agents for `git push` and `gerrit-reply`.
+    pub username: String,
+    pub http_password: String,
+}
+
+impl GerritConfig {
+    /// On when `GERRIT_URL` is set, which then needs the account's HTTP credentials.
+    pub(super) fn from_vars(vars: &Vars) -> Result<Option<Self>> {
+        let Some(url) = vars.get("GERRIT_URL") else {
+            return Ok(None);
+        };
+        Ok(Some(Self {
+            url: url.trim_end_matches('/').to_string(),
+            username: vars.require("GERRIT_USERNAME")?,
+            http_password: vars.require("GERRIT_HTTP_PASSWORD")?,
+        }))
     }
 }
 

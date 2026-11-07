@@ -8,7 +8,7 @@ mod vars;
 
 pub use model::{EFFORTS, ModelDefaults, ModelFields, check_effort};
 pub use reload::Live;
-pub use surfaces::{GitHubAppConfig, GitHubConfig, LinearConfig, ZulipConfig};
+pub use surfaces::{GerritConfig, GitHubAppConfig, GitHubConfig, LinearConfig, ZulipConfig};
 
 use crate::{review::ReviewBackend, sandbox, store::Tokens, tunnel::Tunnel};
 use anyhow::{Context, Result};
@@ -44,6 +44,7 @@ pub struct Config {
     pub github: Option<GitHubConfig>,
     /// `GITHUB_APP_CLIENT_ID`: the app whose user token agents get as `GH_TOKEN`.
     pub github_app: Option<GitHubAppConfig>,
+    pub gerrit: Option<GerritConfig>,
     pub worktrees_dir: PathBuf,
     pub agent: AgentConfig,
     /// Extra MCP config files for every session, next to the Linear one.
@@ -92,6 +93,7 @@ impl Config {
             .transpose()?;
         let zulip = ZulipConfig::from_vars(&vars)?;
         let github = GitHubConfig::from_vars(&vars)?;
+        let gerrit = GerritConfig::from_vars(&vars)?;
         let tunnel = vars
             .get("CLOUDFLARE_TOKEN")
             .map(|token| Tunnel::Cloudflare {
@@ -122,6 +124,7 @@ impl Config {
             zulip,
             github,
             github_app: GitHubAppConfig::from_vars(&vars),
+            gerrit,
             worktrees_dir: vars
                 .get("WORKTREES_DIR")
                 .map_or_else(|| home.join("worktrees"), PathBuf::from),
