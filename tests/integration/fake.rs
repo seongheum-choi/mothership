@@ -171,6 +171,8 @@ pub fn codex() -> ExitCode {
         "resume": resume,
         "surface": std::env::var("MOTHERSHIP_SURFACE").ok(),
         "prompt": prompt,
+        "tmpdir": std::env::var("TMPDIR").ok(),
+        "env": std::env::vars().map(|(k, _)| k).collect::<Vec<_>>(),
     }));
     let thread = resume.unwrap_or_else(|| format!("thread-{pid}"));
     let log = std::path::PathBuf::from(std::env::var("FAKE_LOG").unwrap_or_default());

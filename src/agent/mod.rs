@@ -88,6 +88,13 @@ pub struct Launch {
     pub env: Vec<(String, String)>,
 }
 
+/// How a Codex turn starts: its sandbox's command line up to Codex's own arguments (see
+/// [`crate::host::codex_runner`]), and its whole environment.
+pub struct Confined {
+    pub argv: Vec<String>,
+    pub env: Vec<(String, String)>,
+}
+
 /// `--model`, `--fallback-model` and `--effort` for one turn.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Models {
@@ -144,23 +151,24 @@ pub struct Agent {
 }
 
 impl Agent {
-    /// Starts `launch`'s runner; a Codex turn starts with `codex`, the confined command of
-    /// [`crate::host::codex_runner`].
-    pub fn spawn(cfg: &AgentConfig, launch: Launch, codex: &[String]) -> Result<Self> {
-        let (mut cmd, output) = match launch.runner {
-            Runner::Claude => (
-                claude::command(&cfg.claude_bin, &launch),
-                Output::Claude(claude::Stream::default()),
-            ),
-            Runner::Codex => (
-                codex::command(codex, &launch),
+    /// Starts `launch`'s runner: Claude Code with mothership's environment and `launch`'s on
+    /// top, Codex only as `codex` says.
+    pub fn spawn(cfg: &AgentConfig, launch: &Launch, codex: Option<Confined>) -> Result<Self> {
+        let (mut cmd, output) = match (launch.runner, codex) {
+            (Runner::Claude, _) => {
+                let mut cmd = claude::command(&cfg.claude_bin, launch);
+                cmd.envs(launch.env.iter().cloned());
+                (cmd, Output::Claude(claude::Stream::default()))
+            }
+            (Runner::Codex, Some(confined)) => (
+                codex::command(confined, launch),
                 Output::Codex(codex::Stream::default()),
             ),
+            (Runner::Codex, None) => anyhow::bail!("a Codex turn starts only confined"),
         };
         let bin = cmd.as_std().get_program().to_string_lossy().into_owned();
         let mut child = cmd
             .current_dir(&launch.cwd)
-            .envs(launch.env)
             .env_remove("CLAUDECODE")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())

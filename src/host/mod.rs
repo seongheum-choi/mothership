@@ -13,7 +13,7 @@ mod process;
 mod request;
 mod seatbelt;
 
-pub use codex::runner as codex_runner;
+pub use codex::{CodexHome, runner as codex_runner};
 pub use command::prompt as commands_prompt;
 
 use crate::app::App;
@@ -54,8 +54,8 @@ pub struct Host {
     pub commands: BTreeMap<String, String>,
     /// `CODEX_BIN`, as found on the agent's `PATH`.
     pub codex: PathBuf,
-    /// Codex's home, resolved: see [`codex::home_writes`].
-    pub codex_home: PathBuf,
+    /// See [`codex::home_writes`] and [`codex::home_mounts`].
+    pub codex_home: CodexHome,
     /// `HOST_SANDBOX`: bubblewrap when its file name is `bwrap`, else `sandbox-exec`.
     pub sandbox: String,
 }
@@ -78,18 +78,19 @@ pub fn run_root(state: &Path) -> PathBuf {
     state.join("host-runs")
 }
 
-/// Empties [`run_root`] of what earlier runs left and makes it private, at startup: it must
-/// exist for sessions' deny rules to name it.
+/// Empties [`run_root`] of what earlier runs left and makes it private, at startup, and makes
+/// sure sessions' parts of Codex's home ([`codex::state_root`]) have their directory: both
+/// must exist for sessions' deny rules to name them.
 pub fn reset_run_root(state: &Path) -> std::io::Result<()> {
     use std::os::unix::fs::DirBuilderExt;
     let root = run_root(state);
     if std::fs::symlink_metadata(&root).is_ok() {
         std::fs::remove_dir_all(&root)?;
     }
-    std::fs::DirBuilder::new()
-        .recursive(true)
-        .mode(0o700)
-        .create(&root)
+    let mut dirs = std::fs::DirBuilder::new();
+    dirs.recursive(true).mode(0o700);
+    dirs.create(&root)?;
+    dirs.create(codex::state_root(state))
 }
 
 /// `CODEX_HOME` as agents get it, or `~/.codex`.
@@ -126,22 +127,26 @@ pub fn env(settings: &Value, agent: &[(String, String)]) -> Vec<(String, String)
 /// `sandbox`'s arguments before the program for a process working in `cwd` under `settings`
 /// (see [`seatbelt::profile`] and [`bwrap::args`]), writing also `/dev`, `own` (a run's
 /// directory and `TMPDIR`, or a Codex turn's session directory) and, for Codex, Codex's state
-/// in `codex_home`. Not the shared temporary directories, where one run could reach another's
+/// in its home. Not the shared temporary directories, where one run could reach another's
 /// files or plant some for unconfined tools.
 pub fn confinement(
     sandbox: &str,
     settings: &Value,
     cwd: &Path,
     own: &Path,
-    codex_home: Option<&Path>,
+    codex: Option<&CodexHome>,
 ) -> Vec<String> {
     let mut workspace = vec![cwd.to_path_buf()];
     workspace.extend(crate::sandbox::workspace_clone_git(cwd));
     if Path::new(sandbox).file_name() == Some("bwrap".as_ref()) {
-        return bwrap::args(settings, &workspace, own, codex_home);
+        return bwrap::args(settings, &workspace, own, codex);
     }
     let mut always = seatbelt::subpath(Path::new("/dev"));
-    always.extend(codex_home.map(codex::home_writes).unwrap_or_default());
+    always.extend(
+        codex
+            .map(|c| codex::home_writes(&c.home))
+            .unwrap_or_default(),
+    );
     let profile = seatbelt::profile(settings, &workspace, &always, own);
     vec!["-p".into(), profile]
 }
@@ -228,8 +233,8 @@ impl Host {
     }
 
     /// [`confinement`] for one of this session's runs.
-    fn profile(&self, settings: &Value, run_dir: &Path, codex_home: Option<&Path>) -> Vec<String> {
-        confinement(&self.sandbox, settings, &self.cwd, run_dir, codex_home)
+    fn profile(&self, settings: &Value, run_dir: &Path, codex: Option<&CodexHome>) -> Vec<String> {
+        confinement(&self.sandbox, settings, &self.cwd, run_dir, codex)
     }
 
     fn report(&self, line: &str) {
@@ -267,8 +272,12 @@ mod tests {
     fn confines_a_codex_turn_to_the_sessions_rules() {
         let d = tree();
         let p = |rel: &str| d.join(rel).display().to_string();
-        let (ws, own, home) = (d.join("ws"), d.join("sess"), d.join("codex"));
-        let made = |sandbox| confinement(sandbox, &settings(&d), &ws, &own, Some(&home));
+        let (ws, own) = (d.join("ws"), d.join("sess"));
+        let codex = CodexHome {
+            home: d.join("codex"),
+            state: d.join("state/s1"),
+        };
+        let made = |sandbox| confinement(sandbox, &settings(&d), &ws, &own, Some(&codex));
 
         let bwrap = made("/usr/bin/bwrap");
         for mount in [
@@ -278,6 +287,9 @@ mod tests {
                 .map(String::from)
                 .to_vec(),
             ["--tmpfs", &p("codex")].map(String::from).to_vec(),
+            ["--bind", &p("state/s1/sessions"), &p("codex/sessions")]
+                .map(String::from)
+                .to_vec(),
             ["--bind", &p("codex/auth.json"), &p("codex/auth.json")]
                 .map(String::from)
                 .to_vec(),
