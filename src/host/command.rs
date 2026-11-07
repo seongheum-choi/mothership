@@ -44,7 +44,7 @@ impl Host {
         let args = ["-c".to_string(), format!("exec 2>&1\n{command}")];
         let out = self
             .confined(
-                self.profile(&self.settings, dir, None),
+                self.profile(&self.settings, dir, None)?,
                 dir,
                 "/bin/sh",
                 &args,
