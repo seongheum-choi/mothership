@@ -14,14 +14,7 @@ pub(super) struct Vars {
 impl Vars {
     pub(super) fn load(home: &Path) -> Self {
         let file_path = home.join(".env");
-        let file = std::fs::read_to_string(&file_path)
-            .unwrap_or_default()
-            .lines()
-            .map(str::trim)
-            .filter(|line| !line.is_empty() && !line.starts_with('#'))
-            .filter_map(|line| line.split_once('='))
-            .map(|(k, v)| (k.trim().to_string(), v.trim().trim_matches('"').to_string()))
-            .collect();
+        let file = parse_env(&std::fs::read_to_string(&file_path).unwrap_or_default());
         Self { file, file_path }
     }
 
@@ -127,17 +120,41 @@ pub(super) fn parse_home_entries(
         .collect()
 }
 
+/// `KEY=value` lines of a `.env` file: blank lines and `#` comments skipped, both sides trimmed,
+/// and the value's surrounding double quotes dropped.
+fn parse_env(text: &str) -> HashMap<String, String> {
+    text.lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .filter_map(|line| line.split_once('='))
+        .map(|(k, v)| (k.trim().to_string(), v.trim().trim_matches('"').to_string()))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{parse_home_entries, parse_list, parse_paths};
+    use super::{parse_env, parse_home_entries, parse_list, parse_paths};
     use std::path::{Path, PathBuf};
 
     #[test]
-    fn parses_trimmed_nonempty_keys() {
-        assert_eq!(
-            parse_list("CLAUDE_CODE_OAUTH_TOKEN, CLAUDE_CODE_EFFORT_LEVEL"),
-            ["CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_EFFORT_LEVEL"]
+    fn reads_env_lines() {
+        let env = parse_env(
+            "# comment\n\n  TOKEN = \"a=b\" \nURL=https://x?y=1\nEMPTY=\nnot a setting\n  # KEY=no\n",
         );
+        let get = |k: &str| env.get(k).map(String::as_str);
+        assert_eq!(
+            get("TOKEN"),
+            Some("a=b"),
+            "quotes and spaces go, `=` in a value stays"
+        );
+        assert_eq!(get("URL"), Some("https://x?y=1"));
+        assert_eq!(
+            get("EMPTY"),
+            Some(""),
+            "kept here; `get` treats it as unset"
+        );
+        assert_eq!(get("KEY"), None, "commented out");
+        assert_eq!(env.len(), 3);
     }
 
     #[test]
