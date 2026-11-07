@@ -156,7 +156,8 @@ pub fn binaries(bin: &Path) -> Vec<PathBuf> {
         .collect()
 }
 
-/// How Codex starts for a turn of session `key`: `HOST_SANDBOX` with the turn's host settings
+/// How Codex starts for a turn of session `key`: `HOST_SANDBOX` (and its seccomp filter under
+/// bubblewrap) with the turn's host settings
 /// (the session's read and write rules, Codex's home and binary readable) and the session's
 /// directory as its own, then `CODEX_BIN`, so Codex reads only what Claude Code's sandbox lets
 /// the session read. Its environment is a run's (see [`super::env`]), not mothership's, with
@@ -172,18 +173,21 @@ pub fn runner(app: &App, key: &str, launch: &Launch) -> anyhow::Result<Confined>
     let tmp = own.join("tmp");
     std::fs::create_dir_all(&tmp).with_context(|| format!("making {}", tmp.display()))?;
     let codex = CodexHome::of(app, key);
-    let args = super::confinement(
+    let filter = super::run_root(&app.cfg.home).join(super::seccomp::FILE);
+    let prefix = super::confinement(
         &sandbox,
+        &filter,
         &launch.host_settings,
         &launch.cwd,
         &own,
         Some(&codex),
-    );
+    )
+    .map_err(anyhow::Error::msg)?;
     let mut env = super::env(&launch.settings, &launch.env);
     env.push(("TMPDIR".into(), tmp.display().to_string()));
     Ok(Confined {
-        argv: std::iter::once(sandbox)
-            .chain(args)
+        argv: prefix
+            .into_iter()
             .chain([bin.display().to_string()])
             .collect(),
         env,
@@ -216,7 +220,7 @@ impl Host {
             args.extend(["-c".into(), format!("model_reasoning_effort=\"{effort}\"")]);
         }
         args.push("-".into());
-        let profile = self.profile(&self.codex_settings, dir, Some(&self.codex_home));
+        let profile = self.profile(&self.codex_settings, dir, Some(&self.codex_home))?;
         let codex = self.codex.display().to_string();
         let out = self
             .confined(profile, dir, &codex, &args, Some(&run.prompt))
