@@ -186,9 +186,8 @@ mod tests {
                 .success()
         };
         assert!(sandboxed("echo > ws/a"));
-        let socket = |family| {
-            format!("perl -MSocket -e 'socket(my $s, {family}, SOCK_STREAM, 0) or exit 1'")
-        };
+        let socket =
+            |family| format!("perl -MSocket -e 'socket(S, {family}, SOCK_STREAM, 0) or exit 1'");
         if free(&socket("AF_UNIX")) {
             assert!(!sandboxed(&socket("AF_UNIX")));
             assert!(sandboxed(&socket("AF_INET")));

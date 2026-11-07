@@ -396,8 +396,9 @@ mod tests {
         }
         // Outside the sandbox the same socket connects, so a refusal inside is the profile's.
         let _listener = std::os::unix::net::UnixListener::bind(d.join("sock")).unwrap();
-        let connect = "perl -MSocket -e 'socket(my $s, AF_UNIX, SOCK_STREAM, 0) \
-                       && connect($s, pack_sockaddr_un(\"sock\")) or exit 1'";
+        // A bareword handle: perl 5.34, macOS's, refuses `socket(my $s, …)`.
+        let connect = "perl -MSocket -e 'socket(S, AF_UNIX, SOCK_STREAM, 0) \\
+                       && connect(S, pack_sockaddr_un(\"sock\")) or exit 1'";
         let free = |cmd: &str| {
             std::process::Command::new("/bin/sh")
                 .args(["-c", cmd])
@@ -407,14 +408,13 @@ mod tests {
                 .success()
         };
         assert!(free(connect));
-        let label = format!("mothership-test-{}", std::process::id());
-        let submit = format!("launchctl submit -l {label} -- /usr/bin/true");
+        let escaped = launchd_escapes(&d, &runs, &free);
         for denied in [
             connect,
-            &submit,
             // Hidden, should it open after all.
             "open -g -j -a Calculator",
-            "osascript -e 'tell application \"Finder\" to get name'",
+            // By what it prints: refused, osascript may still exit 0.
+            "osascript -e 'tell application \"Finder\" to get name' | grep -qx Finder",
             "cat secret/s",
             "ls secret",
             "echo > outside/x",
@@ -428,7 +428,79 @@ mod tests {
         ] {
             assert!(!runs(denied), "{denied}");
         }
-        free(&format!("launchctl remove {label}"));
+        assert_eq!(escaped, Vec::<&str>::new());
         std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    /// Which of launchd's ways to run something outside the sandbox `runs` reached, told by
+    /// their effect as `free` sees it; everything they left in launchd is removed first.
+    #[cfg(target_os = "macos")]
+    fn launchd_escapes(
+        d: &Path,
+        runs: &dyn Fn(&str) -> bool,
+        free: &dyn Fn(&str) -> bool,
+    ) -> Vec<&'static str> {
+        let label = format!("mothership-test-{}", std::process::id());
+        let uid = std::process::Command::new("id").arg("-u").output().unwrap();
+        let domain = format!("gui/{}", String::from_utf8_lossy(&uid.stdout).trim());
+        // A job that only leaves a mark in `d`, for `kickstart` and `bootstrap`.
+        let job = |name: &str, at_load: bool| {
+            let plist = d.join(format!("{name}.plist"));
+            std::fs::write(
+                &plist,
+                format!(
+                    "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<plist version=\"1.0\"><dict>\
+                     <key>Label</key><string>{label}.{name}</string>\
+                     <key>ProgramArguments</key><array><string>/usr/bin/touch</string>\
+                     <string>{}</string></array><key>RunAtLoad</key><{at_load}/></dict></plist>\n",
+                    d.join(name).display()
+                ),
+            )
+            .unwrap();
+            plist.display().to_string()
+        };
+        let pause = || std::thread::sleep(std::time::Duration::from_secs(2));
+        let mut escaped = Vec::new();
+
+        runs(&format!(
+            "launchctl submit -l {label}.submit -- /usr/bin/true"
+        ));
+        if free(&format!("launchctl list {label}.submit")) {
+            escaped.push("launchctl submit");
+        }
+        assert!(free(&format!(
+            "launchctl bootstrap {domain} {}",
+            job("kick", false)
+        )));
+        runs(&format!("launchctl kickstart {domain}/{label}.kick"));
+        pause();
+        if d.join("kick").exists() {
+            escaped.push("launchctl kickstart");
+        }
+        runs(&format!(
+            "launchctl bootstrap {domain} {}",
+            job("boot", true)
+        ));
+        pause();
+        if free(&format!("launchctl print {domain}/{label}.boot >/dev/null")) {
+            escaped.push("launchctl bootstrap");
+        }
+        let var = label.replace('-', "_");
+        runs(&format!("launchctl setenv {var} escaped"));
+        if free(&format!("test -n \"$(launchctl getenv {var})\"")) {
+            escaped.push("launchctl setenv");
+        }
+
+        free(&format!("launchctl remove {label}.submit"));
+        free(&format!("launchctl kickstart {domain}/{label}.kick"));
+        pause();
+        let kick_works = d.join("kick").exists();
+        for name in ["kick", "boot"] {
+            free(&format!("launchctl bootout {domain}/{label}.{name}"));
+        }
+        free(&format!("launchctl unsetenv {var}"));
+        // Without it, a refused kickstart would say nothing.
+        assert!(kick_works, "kickstart outside the sandbox left no mark");
+        escaped
     }
 }
