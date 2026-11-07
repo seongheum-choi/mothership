@@ -3,7 +3,7 @@
 
 use crate::{
     gerrit,
-    harness::{Ctx, GERRIT_TOKEN, GERRIT_TRUSTED, Harness, Setup, Skipped},
+    harness::{Ctx, GERRIT_TOKEN, GERRIT_TRUSTED, Harness, Setup, Skipped, eventually},
     scenarios::{Scenario, argv, created, flag, issue},
 };
 use anyhow::{Context, Result, ensure};
@@ -144,7 +144,8 @@ fn review(
 }
 
 /// A trusted reviewer's comments that mention the agent reach the session of the issue whose
-/// key is the change's topic, with the command that answers each one. A wrong token is refused;
+/// key is the change's topic, with the command that answers each one, and the change the
+/// session mentions is linked on it. A wrong token is refused;
 /// untrusted authors, reviews that do not mention the agent and other topics are ignored.
 async fn gerrit_review_continues_the_session_of_its_topic(ctx: Ctx) -> Result<()> {
     let setup = Setup {
@@ -203,6 +204,16 @@ async fn gerrit_review_continues_the_session_of_its_topic(ctx: Ctx) -> Result<()
         ensure!(prompt.contains(part), "no {part:?} in {prompt}");
     }
     h.activity("s31", "response", 2).await?;
+    // The fake agent answers `Done: <prompt>`, so the change URL is in its response.
+    let link = json!({"label": "team/app/+/12", "url": format!("{url}/c/team/app/+/12")});
+    let update = eventually("agentSessionUpdate", || {
+        h.mock.read(|r| r.session_updates.first().cloned())
+    })
+    .await?;
+    ensure!(
+        update == json!({"id": "s31", "input": {"addedExternalUrls": [link]}}),
+        "{update}"
+    );
     ensure!(
         h.prompts_with("rename this").len() == 1,
         "outsider or another topic heard"
