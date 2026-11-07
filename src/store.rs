@@ -60,7 +60,7 @@ pub struct SessionRec {
     /// Linear: the issue was closed and the session's worktree cleaned up, so GitHub feedback
     /// no longer starts turns. A new Linear prompt reopens it.
     pub closed: bool,
-    /// Linear: pull request URLs already added to the session's external URLs.
+    /// Linear: pull request and Gerrit change URLs already added to the session's external URLs.
     pub pull_requests: Vec<String>,
     /// `[runner=…]`, `[model=…]` and `[effort=…]` from the session's messages; `None` follows
     /// the labels, the mode, the repository and the instance defaults. A runner set here also

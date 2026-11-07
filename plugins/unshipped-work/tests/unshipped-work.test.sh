@@ -68,6 +68,35 @@ expect "staged change" block "$wt"
 git -C "$wt" commit -qm two
 expect "commit on a branch with no upstream" block "$wt"
 
+# Gerrit: a fake curl answers the change query from $tmp/gerrit-commits, once it got the
+# account's credentials on stdin, escaped for curl's config syntax, and a query that leaves
+# abandoned changes out.
+mkdir "$tmp/bin"
+cat >"$tmp/bin/curl" <<'FAKE'
+#!/usr/bin/env bash
+[[ $(cat) == 'user = "impala:p\"w"' ]] || exit 22
+url=${*: -1}
+[[ $url == *'+-is:abandoned' ]] || exit 22
+sha=${url##*commit:}
+sha=${sha%%+*}
+printf ")]}'\n"
+if grep -qx "$sha" "$GERRIT_COMMITS" 2>/dev/null; then echo '[{"_number":12}]'; else echo '[]'; fi
+FAKE
+chmod +x "$tmp/bin/curl"
+saved_path=$PATH
+export PATH="$tmp/bin:$PATH" GERRIT_URL=https://gerrit.test GERRIT_USERNAME=impala
+export GERRIT_HTTP_PASSWORD='p"w' GERRIT_COMMITS="$tmp/gerrit-commits"
+expect "commit Gerrit does not have" block "$wt"
+git -C "$wt" rev-parse HEAD >"$GERRIT_COMMITS"
+expect "commit pushed for review on Gerrit" allow "$wt"
+git -C "$wt" commit -q --amend -m "two, amended"
+expect "amended commit not pushed again" block "$wt"
+export GERRIT_HTTP_PASSWORD=wrong
+git -C "$wt" rev-parse HEAD >"$GERRIT_COMMITS"
+expect "Gerrit refusing the query" block "$wt"
+unset GERRIT_URL GERRIT_USERNAME GERRIT_HTTP_PASSWORD GERRIT_COMMITS
+export PATH=$saved_path
+
 git -C "$wt" push -q origin feature
 expect "pushed branch" allow "$wt"
 
