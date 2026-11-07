@@ -404,7 +404,7 @@ mod tests {
         // Outside the sandbox the same socket connects, so a refusal inside is the profile's.
         let _listener = std::os::unix::net::UnixListener::bind(d.join("sock")).unwrap();
         // A bareword handle: perl 5.34, macOS's, refuses `socket(my $s, …)`.
-        let connect = "perl -MSocket -e 'socket(S, AF_UNIX, SOCK_STREAM, 0) \\
+        let connect = "perl -MSocket -e 'socket(S, AF_UNIX, SOCK_STREAM, 0) \
                        && connect(S, pack_sockaddr_un(\"sock\")) or exit 1'";
         let free = |cmd: &str| {
             std::process::Command::new("/bin/sh")
