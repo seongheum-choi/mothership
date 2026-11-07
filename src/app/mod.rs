@@ -134,9 +134,11 @@ impl App {
     }
 
     /// Whether a turn that hit Claude Code's usage limit can move to Codex: `CODEX_BIN` is there
-    /// on the `PATH` the agent would run with, not this process's.
+    /// on the `PATH` the agent would run with, not this process's, and `HOST_SANDBOX` to
+    /// confine it (see [`crate::host::codex_runner`]).
     pub fn codex_installed(&self) -> bool {
-        limit::installed(&self.cfg.agent.codex_bin, self.agent_path().as_deref())
+        self.cfg.agent.host_sandbox.is_some()
+            && limit::installed(&self.cfg.agent.codex_bin, self.agent_path().as_deref())
     }
 
     /// The `PATH` agent processes get, when `AGENT_ENV` carries one. Without it they inherit this

@@ -65,6 +65,7 @@ pub const ALL: &[(&str, Scenario)] = scenarios![
     zulip_effort_from_the_message,
     codex_runner_answers_with_thoughts_and_a_response,
     codex_runner_resumes_the_thread_with_a_prompt_from_mid_turn,
+    codex_runner_refuses_without_a_host_sandbox,
     claude_usage_limit_moves_turns_to_codex_until_it_resets,
     runner_directive_keeps_the_session_on_codex,
     runner_directive_keeps_the_session_on_claude_at_the_limit,
@@ -353,12 +354,15 @@ async fn linear_agent_is_launched_in_the_sandbox(ctx: Ctx) -> Result<()> {
     let args = argv(&h.prompt_with("context of SH-10").await?);
     let state = h.home.join(".mothership");
     // `HOME` holds `.mothership` and `src/app`; the worktree is `.mothership/worktrees/SH-10`.
-    // `host-runs/` holds runs' private directories, which no session may read or write.
+    // `host-runs/` holds runs' private directories and `codex/` sessions' parts of Codex's
+    // home, which no session may read or write.
     let mut deny = vec![
+        deny_dir(&state.join("codex")),
         deny_dir(&state.join("host-runs")),
         deny_dir(&state.join("mcp")),
         deny_file(&state.join("state.json")),
     ];
+    deny.push(deny_edit_dir(&state.join("codex")));
     deny.push(deny_edit_dir(&state.join("host-runs")));
     deny.push(deny_edit_dir(&state.join("mcp")));
     // `repos/` and `worktrees/` hold the empty `.env` that stops dotenv searches; it stays
@@ -520,11 +524,13 @@ async fn linear_mode_from_labels_shapes_the_agent(ctx: Ctx) -> Result<()> {
     let state = h.home.join(".mothership");
     let deny = deny_rules(&args)?;
     let mut expected = vec![
+        deny_dir(&state.join("codex")),
         deny_dir(&state.join("host-runs")),
         deny_dir(&state.join("mcp")),
         deny_dir(&state.join("modes")),
         deny_file(&state.join("state.json")),
     ];
+    expected.push(deny_edit_dir(&state.join("codex")));
     expected.push(deny_edit_dir(&state.join("host-runs")));
     expected.push(deny_edit_dir(&state.join("mcp")));
     expected.push(deny_edit_dir(&state.join("modes")));
@@ -1528,9 +1534,12 @@ async fn codex_harness(ctx: &Ctx) -> Result<Harness> {
 
 /// With `AGENT_RUNNER=codex` in `.env`, a turn runs `codex exec --json` in the worktree with the
 /// prompt on stdin; its reasoning becomes a thought, its command an action and its last message
-/// the response. `/status` names the runner.
+/// the response. It runs under `HOST_SANDBOX` with the session's read rules and a run's
+/// environment. `/status` names the runner.
 async fn codex_runner_answers_with_thoughts_and_a_response(ctx: Ctx) -> Result<()> {
     let h = codex_harness(&ctx).await?;
+    // A home entry no session may read.
+    std::fs::create_dir_all(h.home.join("notes"))?;
     ensure!(h.status().await?["runner"] == "codex");
     let issue = issue(40, "Fix it.");
     h.mock.add_issue(&issue);
@@ -1565,7 +1574,40 @@ async fn codex_runner_answers_with_thoughts_and_a_response(ctx: Ctx) -> Result<(
         flag(&args, "--cd")? == cwd.display().to_string(),
         "{args:#?}"
     );
-    ensure!(flag(&args, "--sandbox")? == "workspace-write", "{args:#?}");
+    // Only a run's environment, none of mothership's own, and a `TMPDIR` of the session's.
+    let env: Vec<String> = serde_json::from_value(call["env"].clone())?;
+    ensure!(
+        env.contains(&"FAKE_LOG".into()) && !env.contains(&"LINEAR_CLIENT_SECRET".into()),
+        "{env:?}"
+    );
+    let session = h.home.join(".mothership/progress/s40");
+    ensure!(
+        call["tmpdir"] == session.join("tmp").display().to_string(),
+        "{call}"
+    );
+    // Codex runs under `HOST_SANDBOX` with the session's read rules, its own sandbox off.
+    ensure!(
+        flag(&args, "--sandbox")? == "danger-full-access",
+        "{args:#?}"
+    );
+    let sandbox = h.calls("sandbox-exec");
+    ensure!(
+        sandbox.len() == 1
+            && sandbox[0]["program"] == h.dir.join("bin/codex").display().to_string(),
+        "{sandbox:#?}"
+    );
+    let profile = sandbox[0]["profile"].as_str().unwrap_or_default();
+    let subpath = |p: &Path| format!("(subpath \"{}\")", p.display());
+    ensure!(
+        profile
+            .lines()
+            .any(|l| l.starts_with("(deny file-read* ")
+                && l.contains(&subpath(&h.home.join("notes"))))
+            && !profile.contains(&subpath(&h.home.join(".codex")))
+            && profile.contains(&subpath(&h.home.join(".codex/sessions")))
+            && profile.contains(&format!("(allow file-write* {}", subpath(&cwd))),
+        "{profile}"
+    );
     ensure!(
         args.iter()
             .any(|a| a.starts_with("developer_instructions=") && a.contains("SH-40")),
@@ -1580,6 +1622,24 @@ async fn codex_runner_answers_with_thoughts_and_a_response(ctx: Ctx) -> Result<(
         sessions["s40"]["agent_sessions"] == json!({"codex": format!("thread-{}", call["pid"])}),
         "{sessions}"
     );
+    Ok(())
+}
+
+/// Without the `HOST_SANDBOX` file nothing could keep Codex to the session's read rules, so a
+/// Codex turn fails and Codex never starts.
+async fn codex_runner_refuses_without_a_host_sandbox(ctx: Ctx) -> Result<()> {
+    let setup = Setup {
+        env: vec![("HOST_SANDBOX", "/nonexistent/sandbox-exec".into())],
+        ..Setup::default()
+    };
+    let h = Harness::start(&ctx, setup).await?;
+    std::fs::write(h.home.join(".mothership/.env"), "AGENT_RUNNER=codex\n")?;
+    let issue = issue(42, "Fix it.");
+    h.mock.add_issue(&issue);
+    ensure!(h.linear(created("s42", &issue, "context of SH-42")).await? == 200);
+    let error = h.activity("s42", "error", 1).await?;
+    ensure!(body(&error).contains("HOST_SANDBOX"), "{error}");
+    ensure!(h.calls("codex").is_empty(), "{:?}", h.calls("codex"));
     Ok(())
 }
 

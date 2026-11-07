@@ -34,7 +34,7 @@ enum Access {
 ///   cannot be removed, renamed or replaced;
 /// - in a PID namespace of its own, signals reach only processes in the same sandbox, and
 ///   nothing it started outlives it;
-/// - `codex_home`, for a Codex run, is laid out by [`super::codex::home_mounts`].
+/// - `codex`, Codex's home for a Codex run, is laid out by [`super::codex::home_mounts`].
 ///
 /// Mounts follow links, so each path counts as resolved, and a rule naming nothing that
 /// exists has nothing to mount. The network stays open, as under Claude Code's sandbox with
@@ -46,7 +46,7 @@ pub fn args(
     settings: &Value,
     workspace: &[PathBuf],
     own: &Path,
-    codex_home: Option<&Path>,
+    codex: Option<&super::CodexHome>,
 ) -> Vec<String> {
     let deny = seatbelt::denied(settings);
     let paths = |tool| -> Vec<PathBuf> {
@@ -101,11 +101,7 @@ pub fn args(
             mount(&mut args, path, access, &mut emptied);
         }
     }
-    args.extend(
-        codex_home
-            .map(super::codex::home_mounts)
-            .unwrap_or_default(),
-    );
+    args.extend(codex.map(super::codex::home_mounts).unwrap_or_default());
     // Last, once the mounts inside them have their mount points.
     for dir in emptied {
         args.extend(["--remount-ro".to_string(), dir]);
