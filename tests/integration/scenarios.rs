@@ -200,6 +200,10 @@ async fn linear_session_gets_a_response(ctx: Ctx) -> Result<()> {
 
     let response = h.activity("s1", "response", 1).await?;
     ensure!(body(&response) == "Done: <issue>SH-1</issue>", "{response}");
+    // The service log says what each turn ran and how it ended, by session and issue.
+    h.logged("[s1] turn on SH-1: claude ").await?;
+    h.logged("new session").await?;
+    h.logged("[s1] turn answered after ").await?;
     let thoughts: Vec<String> = h
         .activities("s1")
         .iter()
@@ -931,6 +935,7 @@ async fn linear_stop_kills_the_agent(ctx: Ctx) -> Result<()> {
     ensure!(h.linear(stop("s6", &issue)).await? == 200);
     let response = h.activity("s6", "response", 1).await?;
     ensure!(body(&response) == "Stopped.", "{response}");
+    h.logged("[s6] turn stopped after ").await?;
     exited(pid).await?;
     tool_exited(tool).await
 }
