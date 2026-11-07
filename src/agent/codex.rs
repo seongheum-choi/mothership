@@ -1,20 +1,22 @@
 //! The Codex CLI: `codex exec --json`, one process per turn with the prompt on stdin, resumed
 //! by thread id. Flags and event names are those of Codex 0.146 and 0.160.
 
-use super::{Event, Launch};
+use super::{Confined, Event, Launch};
 use serde_json::{Value, json};
 use tokio::process::Command;
 
-/// The command line for one turn of `launch`, started by `confined` (see
-/// [`crate::host::codex_runner`]). Claude Code's permission mode, settings, MCP configs and
-/// plugins have no Codex counterpart; the sandbox around Codex is its sandbox, made from the
-/// session's settings, since Codex's own cannot start inside it. `codex exec` never asks for
-/// approval.
-pub(super) fn command(confined: &[String], launch: &Launch) -> Command {
+/// The command line for one turn of `launch`, started by `confined` and with only its
+/// environment (see [`crate::host::codex_runner`]). Claude Code's permission mode, settings,
+/// MCP configs and plugins have no Codex counterpart; the sandbox around Codex is its sandbox,
+/// made from the session's settings, since Codex's own cannot start inside it. `codex exec`
+/// never asks for approval.
+pub(super) fn command(confined: Confined, launch: &Launch) -> Command {
     let (program, args) = confined
+        .argv
         .split_first()
         .expect("the confined Codex command names its sandbox");
     let mut cmd = Command::new(program);
+    cmd.env_clear().envs(confined.env);
     cmd.args(args)
         .args(["exec", "--json", "--skip-git-repo-check"])
         .args(["--sandbox", "danger-full-access"])
