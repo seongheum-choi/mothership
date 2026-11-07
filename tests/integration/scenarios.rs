@@ -73,7 +73,7 @@ pub const ALL: &[(&str, Scenario)] = scenarios![
 ];
 
 /// An issue as Linear's API returns it; the webhook carries a subset.
-fn issue(n: u32, description: &str) -> Value {
+pub(crate) fn issue(n: u32, description: &str) -> Value {
     json!({
         "id": format!("issue-{n}"),
         "identifier": format!("SH-{n}"),
@@ -118,7 +118,7 @@ fn session(sid: &str, issue: &Value, comment: &str) -> Value {
 }
 
 /// A delegation: Linear's `created` event with `context` as its prompt context.
-fn created(sid: &str, issue: &Value, context: &str) -> Value {
+pub(crate) fn created(sid: &str, issue: &Value, context: &str) -> Value {
     json!({
         "type": "AgentSessionEvent", "action": "created", "organizationId": ORG,
         "agentSession": session(sid, issue, DELEGATION_MARKER), "promptContext": context,
@@ -169,7 +169,7 @@ async fn held_session(h: &Harness, sid: &str, n: u32) -> Result<(Value, u64, u64
     Ok((issue, pid, tool))
 }
 
-fn body(content: &Value) -> &str {
+pub(crate) fn body(content: &Value) -> &str {
     content["body"].as_str().unwrap_or_default()
 }
 
@@ -289,7 +289,7 @@ async fn linear_session_links_the_pull_requests_it_mentions(ctx: Ctx) -> Result<
 }
 
 /// The fake agent's command line for the call `call`.
-fn argv(call: &Value) -> Vec<String> {
+pub(crate) fn argv(call: &Value) -> Vec<String> {
     call["args"]
         .as_array()
         .into_iter()
@@ -299,7 +299,7 @@ fn argv(call: &Value) -> Vec<String> {
 }
 
 /// The value after the first `name` in `args`.
-fn flag<'a>(args: &'a [String], name: &str) -> Result<&'a str> {
+pub(crate) fn flag<'a>(args: &'a [String], name: &str) -> Result<&'a str> {
     args.windows(2)
         .find(|w| w[0] == name)
         .map(|w| w[1].as_str())

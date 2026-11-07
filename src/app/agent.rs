@@ -16,14 +16,19 @@ pub struct Settings {
 impl App {
     /// Environment every agent process gets: the `MOTHERSHIP_*` markers so hooks and skills know
     /// where they run, plus the `AGENT_ENV` keys resolved from the environment or `<home>/.env`.
-    /// With GitHub feedback on, `gh-reply` comes first on `PATH`.
+    /// With GitHub feedback or Gerrit on, `gh-reply` and `gerrit-reply` come first on `PATH`;
+    /// with Gerrit on, its URL and credentials are added (see [`crate::gerrit::agent_env`]).
     pub fn agent_env(&self, surface: &str) -> Vec<(String, String)> {
         let mut env = vec![
             ("MOTHERSHIP_AGENT".into(), self.cfg.agent_name.clone()),
             ("MOTHERSHIP_SURFACE".into(), surface.into()),
         ];
         env.extend(self.cfg.agent_env.iter().cloned());
-        if let Some(github) = &self.github {
+        if let Some(cfg) = &self.cfg.gerrit {
+            crate::gerrit::agent_env(cfg, &mut env, std::env::var("GIT_CONFIG_COUNT").ok());
+        }
+        let bin_dirs = self.bin_dirs();
+        if !bin_dirs.is_empty() {
             let path = env
                 .iter()
                 .rev()
@@ -31,12 +36,18 @@ impl App {
                 .map(|(_, v)| v.clone())
                 .or_else(|| std::env::var("PATH").ok())
                 .unwrap_or_default();
-            env.push((
-                "PATH".into(),
-                format!("{}:{path}", github.bin_dir.display()),
-            ));
+            let mut dirs: Vec<String> = bin_dirs.iter().map(|d| d.display().to_string()).collect();
+            dirs.push(path);
+            env.push(("PATH".into(), dirs.join(":")));
         }
         env
+    }
+
+    /// The directories of mothership's reply wrappers, which agents must be able to read.
+    pub fn bin_dirs(&self) -> Vec<PathBuf> {
+        let github = self.github.as_ref().map(|g| g.bin_dir.clone());
+        let gerrit = self.gerrit.as_ref().map(|g| g.bin_dir.clone());
+        github.into_iter().chain(gerrit).collect()
     }
 
     /// The session's own directory under the progress directory: its progress file and the
