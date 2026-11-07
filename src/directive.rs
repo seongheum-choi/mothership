@@ -16,7 +16,8 @@ pub fn values<'a>(text: &'a str, key: &str) -> impl Iterator<Item = &'a str> {
         .into_iter()
         .filter_map(move |i| {
             let rest = &text[i + tag.len()..];
-            Some(rest[..rest.find(']')?].trim())
+            // Linear stores a typed `[` and `]` escaped, as `\[` and `\]`.
+            Some(rest[..rest.find(']')?].trim_end_matches('\\').trim())
         })
 }
 
@@ -78,6 +79,7 @@ mod tests {
             "quoted, not given"
         );
         assert_eq!(first("no directive", "repo"), None);
+        assert_eq!(first(r"\[runner=codex\]", "runner"), Some("codex"));
         assert_eq!(
             first("[model=sonnet] [effort=high]", "effort"),
             Some("high")
