@@ -164,22 +164,29 @@ pub fn settle(app: &App, key: &str, outcome: &Outcome) {
         let Some(rec) = s.sessions.get_mut(key) else {
             return;
         };
-        let tried = matches!((&rec.launched, &rec.model), (Some(l), Some(m)) if l.model == *m);
-        if let Some(replaced) = rec.replaced_model.take_if(|_| tried)
-            && failed
-        {
-            tracing::warn!(
-                "[{key}] the turn on model {:?} failed; going back",
-                rec.model
-            );
-            rec.model = replaced.model;
+        let model = rec.model.clone();
+        if settle_model(rec, failed) {
+            tracing::warn!("[{key}] the turn on model {model:?} failed; going back");
         }
     });
+}
+
+/// [`settle`] on the record; true when it went back to the model before.
+fn settle_model(rec: &mut SessionRec, failed: bool) -> bool {
+    let tried = matches!((&rec.launched, &rec.model), (Some(l), Some(m)) if l.model == *m);
+    match rec.replaced_model.take_if(|_| tried) {
+        Some(replaced) if failed => {
+            rec.model = replaced.model;
+            true
+        }
+        _ => false,
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::store::Replaced;
 
     fn defaults(effort: Option<&str>) -> ModelDefaults {
         ModelDefaults {
@@ -358,6 +365,38 @@ mod tests {
             choose(&rec, &scopes(), &defaults(None)).note,
             None,
             "a turn from before runners were recorded"
+        );
+    }
+
+    #[test]
+    fn a_failed_turn_on_a_chosen_model_goes_back() {
+        let rec = |launched: &str| SessionRec {
+            model: Some("bad".into()),
+            replaced_model: Some(Replaced {
+                model: Some("sonnet".into()),
+            }),
+            launched: Some(Launched {
+                model: launched.into(),
+                ..Launched::default()
+            }),
+            ..SessionRec::default()
+        };
+        let mut failed = rec("bad");
+        assert!(settle_model(&mut failed, true));
+        assert_eq!(failed.model.as_deref(), Some("sonnet"));
+        assert_eq!(failed.replaced_model, None);
+
+        let mut answered = rec("bad");
+        assert!(!settle_model(&mut answered, false));
+        assert_eq!(answered.model.as_deref(), Some("bad"), "it stays");
+        assert_eq!(answered.replaced_model, None);
+
+        let mut untried = rec("opus");
+        assert!(!settle_model(&mut untried, true), "a turn on another model");
+        assert_eq!(untried.model.as_deref(), Some("bad"));
+        assert!(
+            untried.replaced_model.is_some(),
+            "kept for the turn with it"
         );
     }
 }

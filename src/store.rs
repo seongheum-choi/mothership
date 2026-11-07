@@ -266,4 +266,27 @@ mod tests {
         assert_eq!(rec.resume(Runner::Claude), None);
         assert!(load("{}").agent_sessions.is_empty());
     }
+
+    #[test]
+    fn writes_replace_the_file_whole_and_private() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("mothership-store-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("state.json");
+        std::fs::write(&path, "old").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        write_private(&path, b"new").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "new");
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600, "tokens never readable by others");
+        let left: Vec<_> = std::fs::read_dir(&dir).unwrap().collect();
+        assert_eq!(left.len(), 1, "no temporary file left behind");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn session_keys_become_one_safe_file_name() {
+        assert_eq!(file_name("9f3c-a1.b"), "9f3c-a1.b");
+        assert_eq!(file_name("zulip:12:a/../b c"), "zulip_12_a_.._b_c");
+    }
 }
