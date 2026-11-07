@@ -55,11 +55,18 @@ pub fn profile(settings: &Value, workspace: &[PathBuf], always: &[String], own: 
     sb
 }
 
-/// What a run may not ask of services outside its sandbox: launchd to start a job
-/// (`launchctl submit`, `bootstrap`), `LaunchServices` to open an application (`open`), another
-/// application to act through Apple Events (`osascript`), or anything listening on a Unix
-/// socket (ssh-agent, Docker, tmux), but mDNSResponder, which looks up host names.
-const ESCAPES: &str = "(deny job-creation lsopen appleevent-send)\n\
+/// What a run may not ask of services outside its sandbox: launchd to start or restart a job
+/// (`launchctl submit`, `bootstrap`, `kickstart`, `setenv`), `LaunchServices` to open an
+/// application (`open`), another application to act through Apple Events (`osascript`), or
+/// anything listening on a Unix socket (ssh-agent, Docker, tmux), but mDNSResponder, which
+/// looks up host names. Apple Events reach another application even with every `mach-lookup`
+/// and `appleevent-send` denied, and launchd restarts a loaded job past `job-creation`, so the
+/// tools that ask for them may not run at all.
+// shortcut: a copy of these binaries, or Apple Events sent from Python or Swift, still get
+// through; deny by signature once Seatbelt's `signing-identifier` works for `process-exec`.
+const ESCAPES: &str = "(deny job-creation lsopen)\n\
+     (deny process-exec (literal \"/usr/bin/osascript\") (literal \"/usr/bin/osacompile\") \
+     (literal \"/usr/bin/automator\") (literal \"/usr/bin/open\") (literal \"/bin/launchctl\"))\n\
      (deny network-outbound (regex #\"^/\"))\n\
      (allow network-outbound (literal \"/private/var/run/mDNSResponder\"))\n";
 
