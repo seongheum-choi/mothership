@@ -14,7 +14,7 @@ mod prompt;
 mod reply;
 mod route;
 
-use crate::{app::App, config::GerritConfig, github::Budget, repos::Repo};
+use crate::{app::App, config::GerritConfig, repos::Repo, review::intake::Budget};
 use anyhow::Result;
 use axum::{
     Router,
