@@ -5,25 +5,26 @@ use super::{Event, Launch};
 use serde_json::{Value, json};
 use tokio::process::Command;
 
-/// The command line for one turn of `launch`. Claude Code's permission mode, settings, MCP
-/// configs and plugins have no Codex counterpart; Codex runs in its own workspace-write sandbox,
-/// and `codex exec` never asks for approval.
-pub(super) fn command(bin: &str, launch: &Launch) -> Command {
-    let mut cmd = Command::new(bin);
-    cmd.args(["exec", "--json", "--skip-git-repo-check"])
-        .args(["--sandbox", "workspace-write"])
+/// The command line for one turn of `launch`, started by `confined` (see
+/// [`crate::host::codex_runner`]). Claude Code's permission mode, settings, MCP configs and
+/// plugins have no Codex counterpart; the sandbox around Codex is its sandbox, made from the
+/// session's settings, since Codex's own cannot start inside it. `codex exec` never asks for
+/// approval.
+pub(super) fn command(confined: &[String], launch: &Launch) -> Command {
+    let (program, args) = confined
+        .split_first()
+        .expect("the confined Codex command names its sandbox");
+    let mut cmd = Command::new(program);
+    cmd.args(args)
+        .args(["exec", "--json", "--skip-git-repo-check"])
+        .args(["--sandbox", "danger-full-access"])
         .arg("--cd")
         .arg(&launch.cwd)
-        // Agents push branches and open pull requests.
-        .args(["-c", "sandbox_workspace_write.network_access=true"])
         .arg("-c")
         .arg(format!(
             "developer_instructions={}",
             toml_string(&launch.system_prompt)
         ));
-    for dir in writable(&launch.settings) {
-        cmd.arg("--add-dir").arg(dir);
-    }
     if let Some(model) = codex_model(&launch.models.model) {
         cmd.args(["-m", model]);
     }
@@ -42,18 +43,6 @@ pub(super) fn command(bin: &str, launch: &Launch) -> Command {
 /// A TOML basic string: JSON's string escapes are a subset of TOML's.
 fn toml_string(text: &str) -> String {
     Value::from(text).to_string()
-}
-
-/// The directories Claude Code's sandbox lets Bash write besides the working directory
-/// (`SANDBOX_WRITE` and the session's directory, whose `runs/` it may ask mothership in), so
-/// Codex's sandbox opens the same.
-fn writable(settings: &Value) -> Vec<&str> {
-    settings["sandbox"]["filesystem"]["allowWrite"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_str)
-        .collect()
 }
 
 /// `model` unless it names a Claude model (the instance default is `CLAUDE_MODEL`), which

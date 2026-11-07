@@ -144,14 +144,16 @@ pub struct Agent {
 }
 
 impl Agent {
-    pub fn spawn(cfg: &AgentConfig, launch: Launch) -> Result<Self> {
+    /// Starts `launch`'s runner; a Codex turn starts with `codex`, the confined command of
+    /// [`crate::host::codex_runner`].
+    pub fn spawn(cfg: &AgentConfig, launch: Launch, codex: &[String]) -> Result<Self> {
         let (mut cmd, output) = match launch.runner {
             Runner::Claude => (
                 claude::command(&cfg.claude_bin, &launch),
                 Output::Claude(claude::Stream::default()),
             ),
             Runner::Codex => (
-                codex::command(&cfg.codex_bin, &launch),
+                codex::command(codex, &launch),
                 Output::Codex(codex::Stream::default()),
             ),
         };
