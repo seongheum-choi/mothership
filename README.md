@@ -44,7 +44,7 @@ Agents run as `claude -p --input-format stream-json --output-format stream-json`
 
 | To add | Where |
 | --- | --- |
-| A chat or tracker (Slack, GitHub issues) | Implement `session::Surface` and add its routes in `app.rs` |
+| A chat or tracker (Slack, GitHub issues) | Implement `session::Surface`, build its `Launch` with `App::launch` from an `app::Place`, and add its routes in `app/mod.rs` |
 | A tunnel (ngrok, ...) | A `tunnel::Tunnel` variant and its command |
 | A review system | A `review::ReviewBackend` variant for its instructions, and a module beside `github/` and `gerrit/` that finds the session its feedback continues and hands it to `review::intake::submit` |
 | An agent runtime | An `agent::Runner` variant and a module in `src/agent/` that builds its command line and turns its output into `agent::Event`s |

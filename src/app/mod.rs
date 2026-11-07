@@ -4,6 +4,8 @@
 mod agent;
 mod status;
 
+pub use agent::Place;
+
 use crate::{
     agent::{Runner, limit},
     config::{Config, Live, ModelDefaults},
