@@ -4,6 +4,7 @@ mod agent;
 mod app;
 mod config;
 mod directive;
+mod gerrit;
 mod github;
 mod host;
 mod linear;
@@ -72,10 +73,11 @@ async fn main() -> Result<()> {
         .await
         .with_context(|| format!("binding {}", app.cfg.bind))?;
     tracing::info!(
-        "listening on {} (zulip {}, github {}, repos: {})",
+        "listening on {} (zulip {}, github {}, gerrit {}, repos: {})",
         app.cfg.bind,
         if app.zulip.is_some() { "on" } else { "off" },
         if app.github.is_some() { "on" } else { "off" },
+        if app.gerrit.is_some() { "on" } else { "off" },
         app.repos()
             .iter()
             .map(|r| r.name.as_str())

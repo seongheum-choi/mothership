@@ -131,7 +131,7 @@ impl Surface for Linear {
         let plugin_dirs = app.cfg.plugin_dirs();
         let mut readable = vec![repo.path.clone()];
         readable.extend(plugin_dirs.iter().cloned());
-        readable.extend(app.github.as_ref().map(|g| g.bin_dir.clone()));
+        readable.extend(app.bin_dirs());
         let mut mcp_configs = vec![mcp::config(app, key)?];
         mcp_configs.extend(app.cfg.mcp_configs.iter().cloned());
         mcp_configs.extend(repo.mcp_configs.iter().cloned());

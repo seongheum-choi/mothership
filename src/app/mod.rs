@@ -1,10 +1,13 @@
-//! Shared state and the HTTP surface; what each agent process gets is in `agent.rs`.
+//! Shared state and the HTTP surface; what each agent process gets is in `agent.rs`, `/status`
+//! in `status.rs`.
 
 mod agent;
+mod status;
 
 use crate::{
     agent::{Runner, limit},
     config::{Config, Live, ModelDefaults},
+    gerrit::Gerrit,
     github::{GitHub, UserToken},
     linear::Linear,
     repos::Repo,
@@ -13,8 +16,7 @@ use crate::{
     zulip::Zulip,
 };
 use anyhow::{Context, Result};
-use axum::{Json, Router, extract::State, routing::get};
-use serde_json::{Value, json};
+use axum::{Router, routing::get};
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
@@ -39,6 +41,7 @@ pub struct App {
     pub github: Option<GitHub>,
     /// The GitHub App user token agents get as `GH_TOKEN`, when `GITHUB_APP_CLIENT_ID` is set.
     pub github_user: Option<UserToken>,
+    pub gerrit: Option<Gerrit>,
     /// Sessions on the same issue share a worktree; one agent at a time per workspace.
     workspace_locks: Mutex<HashMap<PathBuf, Arc<tokio::sync::Mutex<()>>>>,
     /// New turns wait for a restart instead of starting (SIGUSR1, until SIGUSR2).
@@ -63,6 +66,12 @@ impl App {
             .map(|_| GitHub::new(&live.repos(), &cfg.home))
             .transpose()
             .context("setting up GitHub feedback")?;
+        let gerrit = cfg
+            .gerrit
+            .as_ref()
+            .map(|_| Gerrit::new(&cfg.home))
+            .transpose()
+            .context("setting up Gerrit")?;
         Ok(Arc::new(Self {
             home_dir,
             live,
@@ -72,6 +81,7 @@ impl App {
             zulip: cfg.zulip.as_ref().map(|_| Arc::new(Registry::new(Zulip))),
             github,
             github_user: cfg.github_app.clone().map(UserToken::new),
+            gerrit,
             workspace_locks: Mutex::default(),
             draining: AtomicBool::new(false),
             cfg,
@@ -80,7 +90,7 @@ impl App {
 
     pub fn router(self: &Arc<Self>) -> Router {
         let mut router = Router::new()
-            .route("/status", get(status))
+            .route("/status", get(status::status))
             .merge(crate::linear::routes());
         if self.zulip.is_some() {
             router = router.merge(crate::zulip::routes());
@@ -199,47 +209,4 @@ impl App {
             tracing::warn!("grace period elapsed; exiting with sessions still stopping");
         }
     }
-}
-
-async fn status(State(app): State<Arc<App>>) -> Json<Value> {
-    // One look at `.env` and `repos.json` for the whole response; the reads below follow it.
-    app.refresh();
-    let models = app.models();
-    Json(json!({
-        "status": if app.busy() { "busy" } else { "idle" },
-        // Also tells `contrib/deploy.sh` that this binary handles SIGUSR1 rather than dying of it.
-        "draining": app.draining(),
-        "sessions": sessions(&app),
-        // Set by `contrib/deploy.sh`, so a deploy can tell the new binary answers.
-        "commit": option_env!("MOTHERSHIP_COMMIT"),
-        "runner": app.runner(),
-        "claude_limited_until": app.claude_limited_until(),
-        "model": models.model,
-        "fallback_model": models.fallback_model,
-        "effort": models.effort,
-    }))
-}
-
-/// Each running turn: where it works, how long it has run, how long its agent has been quiet
-/// and the background tasks it still runs. No session ids, since a tunnel exposes `/status`.
-fn sessions(app: &App) -> Vec<Value> {
-    let now = crate::store::now_secs();
-    let linear = app.linear.activities().into_iter().map(|a| ("linear", a));
-    let zulip = app
-        .zulip
-        .iter()
-        .flat_map(|z| z.activities())
-        .map(|a| ("zulip", a));
-    linear
-        .chain(zulip)
-        .map(|(surface, a)| {
-            json!({
-                "surface": surface,
-                "workspace": a.workspace,
-                "turn_secs": now.saturating_sub(a.started),
-                "quiet_secs": now.saturating_sub(a.last_event),
-                "background_tasks": a.background,
-            })
-        })
-        .collect()
 }
