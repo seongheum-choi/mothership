@@ -94,7 +94,7 @@ impl<S: Surface> Turn<'_, S> {
                                 }
                                 self.answered(&mut agent, &mut background).await;
                                 let outcome = outcome(text, is_error, pinned && limited.is_some());
-                                surface.finish(app, key, std::mem::take(tickets), outcome).await;
+                                self.finish(std::mem::take(tickets), outcome).await;
                             }
                             Event::Usage(usage) => tracing::info!("[{key}] {runner} usage: {usage}"),
                             event => {
@@ -114,7 +114,7 @@ impl<S: Surface> Turn<'_, S> {
                     agent.close_input();
                     let text = background.give_up();
                     tracing::warn!("[{key}] {text}");
-                    surface.update(app, key, Update::Thought { text, nested: false }).await;
+                    surface.update(app, key, Update::thought(text)).await;
                 }
                 () = &mut start_deadline, if !started => {
                     agent.kill().await;
@@ -147,10 +147,7 @@ impl<S: Surface> Turn<'_, S> {
             Next::Close => agent.close_input(),
             Next::Wait(text) => {
                 tracing::info!("[{}] {text}", self.key);
-                let note = Update::Thought {
-                    text,
-                    nested: false,
-                };
+                let note = Update::thought(text);
                 self.reg.surface.update(self.app, self.key, note).await;
             }
             Next::KeepWaiting => {}
@@ -180,9 +177,7 @@ impl<S: Surface> Turn<'_, S> {
             Msg::Stop(note) => {
                 agent.kill().await;
                 tickets.extend(queued.drain(..).map(|(_, ticket)| ticket));
-                let outcome = Outcome::Stopped(note);
-                surface
-                    .finish(app, key, std::mem::take(tickets), outcome)
+                self.finish(std::mem::take(tickets), Outcome::Stopped(note))
                     .await;
                 return Ok(true);
             }
