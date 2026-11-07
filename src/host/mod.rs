@@ -4,7 +4,7 @@
 //! writes a request into its session directory; mothership runs it confined by the session's
 //! own rules, as a Seatbelt profile on macOS (`seatbelt.rs`) or bubblewrap mounts on Linux
 //! (`bwrap.rs`), and writes the answer next to it (`request.rs`); `process.rs` runs the
-//! confined process.
+//! confined process. The Codex runner's own turns run under the same rules (`codex.rs`).
 
 mod bwrap;
 mod codex;
@@ -13,6 +13,7 @@ mod process;
 mod request;
 mod seatbelt;
 
+pub use codex::runner as codex_runner;
 pub use command::prompt as commands_prompt;
 
 use crate::app::App;
@@ -122,6 +123,29 @@ pub fn env(settings: &Value, agent: &[(String, String)]) -> Vec<(String, String)
         .collect()
 }
 
+/// `sandbox`'s arguments before the program for a process working in `cwd` under `settings`
+/// (see [`seatbelt::profile`] and [`bwrap::args`]), writing also `/dev`, `own` (a run's
+/// directory and `TMPDIR`, or a Codex turn's session directory) and, for Codex, Codex's state
+/// in `codex_home`. Not the shared temporary directories, where one run could reach another's
+/// files or plant some for unconfined tools.
+pub fn confinement(
+    sandbox: &str,
+    settings: &Value,
+    cwd: &Path,
+    own: &Path,
+    codex_home: Option<&Path>,
+) -> Vec<String> {
+    let mut workspace = vec![cwd.to_path_buf()];
+    workspace.extend(crate::sandbox::workspace_clone_git(cwd));
+    if Path::new(sandbox).file_name() == Some("bwrap".as_ref()) {
+        return bwrap::args(settings, &workspace, own, codex_home);
+    }
+    let mut always = seatbelt::subpath(Path::new("/dev"));
+    always.extend(codex_home.map(codex::home_writes).unwrap_or_default());
+    let profile = seatbelt::profile(settings, &workspace, &always, own);
+    vec!["-p".into(), profile]
+}
+
 /// Serves `host`'s requests one at a time until stopped or dropped; either kills a run in
 /// flight.
 pub struct Watch(tokio::task::JoinHandle<()>);
@@ -203,26 +227,85 @@ impl Host {
         outcome
     }
 
-    /// `HOST_SANDBOX`'s arguments before the program for a run under `settings` (see
-    /// [`seatbelt::profile`] and [`bwrap::args`]), writing also `/dev`, `run_dir` (its `TMPDIR`
-    /// too) and, for a Codex run, Codex's state in `codex_home`. Not the shared temporary
-    /// directories, where one run could reach another's files or plant some for unconfined
-    /// tools.
+    /// [`confinement`] for one of this session's runs.
     fn profile(&self, settings: &Value, run_dir: &Path, codex_home: Option<&Path>) -> Vec<String> {
-        let mut workspace = vec![self.cwd.clone()];
-        workspace.extend(crate::sandbox::workspace_clone_git(&self.cwd));
-        if Path::new(&self.sandbox).file_name() == Some("bwrap".as_ref()) {
-            return bwrap::args(settings, &workspace, run_dir, codex_home);
-        }
-        let mut always = seatbelt::subpath(Path::new("/dev"));
-        always.extend(codex_home.map(codex::home_writes).unwrap_or_default());
-        let profile = seatbelt::profile(settings, &workspace, &always, run_dir);
-        vec!["-p".into(), profile]
+        confinement(&self.sandbox, settings, &self.cwd, run_dir, codex_home)
     }
 
     fn report(&self, line: &str) {
         if let Err(e) = writeln!(&self.progress, "{line}") {
             tracing::warn!("cannot report {line:?}: {e}");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    /// A session's tree: a workspace, its directory, a secret its rules deny and Codex's home.
+    fn tree() -> PathBuf {
+        let base = std::env::temp_dir().join(format!("mothership-cf-{}", std::process::id()));
+        for dir in ["ws", "sess", "secret", "codex/sessions"] {
+            std::fs::create_dir_all(base.join(dir)).unwrap();
+        }
+        for file in ["secret/s", "codex/auth.json", "codex/config.toml"] {
+            std::fs::write(base.join(file), "s").unwrap();
+        }
+        std::fs::canonicalize(&base).unwrap()
+    }
+
+    fn settings(d: &Path) -> Value {
+        json!({
+            "permissions": {"deny": [format!("Read(/{}/secret/**)", d.display())]},
+            "sandbox": {"filesystem": {"allowWrite": [d.join("sess")]}},
+        })
+    }
+
+    #[test]
+    fn confines_a_codex_turn_to_the_sessions_rules() {
+        let d = tree();
+        let p = |rel: &str| d.join(rel).display().to_string();
+        let (ws, own, home) = (d.join("ws"), d.join("sess"), d.join("codex"));
+        let made = |sandbox| confinement(sandbox, &settings(&d), &ws, &own, Some(&home));
+
+        let bwrap = made("/usr/bin/bwrap");
+        for mount in [
+            ["--tmpfs", &p("secret")].map(String::from).to_vec(),
+            ["--bind", &p("ws"), &p("ws")].map(String::from).to_vec(),
+            ["--bind", &p("sess"), &p("sess")]
+                .map(String::from)
+                .to_vec(),
+            ["--tmpfs", &p("codex")].map(String::from).to_vec(),
+            ["--bind", &p("codex/auth.json"), &p("codex/auth.json")]
+                .map(String::from)
+                .to_vec(),
+            [
+                "--ro-bind",
+                &p("codex/config.toml"),
+                &p("codex/config.toml"),
+            ]
+            .map(String::from)
+            .to_vec(),
+        ] {
+            assert!(
+                bwrap.windows(mount.len()).any(|w| w == mount),
+                "{mount:?} in {bwrap:?}"
+            );
+        }
+        assert_eq!(bwrap.last().map(String::as_str), Some("--"));
+
+        let seatbelt = made("/usr/bin/sandbox-exec");
+        assert_eq!(seatbelt[0], "-p");
+        for rule in [
+            format!("(deny file-read* (subpath \"{}\"))", p("secret")),
+            format!("(allow file-write* (subpath \"{}\")", p("ws")),
+            format!("(literal \"{}\")", p("codex/auth.json")),
+            format!("(allow file-read* file-write* (subpath \"{}\"))", p("sess")),
+        ] {
+            assert!(seatbelt[1].contains(&rule), "{rule} in {}", seatbelt[1]);
+        }
+        std::fs::remove_dir_all(&d).unwrap();
     }
 }

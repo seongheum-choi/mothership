@@ -1,6 +1,9 @@
-//! A Codex run: `codex exec` with Codex's own sandbox off, since the profile is the sandbox.
+//! A Codex run, and a Codex runner turn: `codex exec` with Codex's own sandbox off, since the
+//! profile is the sandbox.
 
 use super::{Host, request, seatbelt};
+use crate::{agent::Launch, app::App};
+use anyhow::Context;
 use request::CodexRun;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
@@ -98,6 +101,33 @@ pub fn binaries(bin: &Path) -> Vec<PathBuf> {
         .flat_map(|p| [std::fs::canonicalize(&p).ok(), Some(p)])
         .flatten()
         .collect()
+}
+
+/// The command that starts Codex for a turn of session `key`: `HOST_SANDBOX` with the turn's
+/// host settings (the session's read and write rules, Codex's home and binary readable) and
+/// the session's directory as its own, then `CODEX_BIN`. Codex then reads only what Claude
+/// Code's sandbox lets the session read. Without `HOST_SANDBOX` there is none, and the turn
+/// fails rather than read the whole home.
+pub fn runner(app: &App, key: &str, launch: &Launch) -> anyhow::Result<Vec<String>> {
+    let sandbox = (app.cfg.agent.host_sandbox.clone())
+        .context("HOST_SANDBOX is not a file, so Codex cannot run confined to the session")?;
+    let home = super::codex_home(app);
+    let home = std::fs::canonicalize(&home).unwrap_or(home);
+    let bin = &app.cfg.agent.codex_bin;
+    let bin =
+        crate::agent::limit::locate(bin, app.agent_path().as_deref()).unwrap_or_else(|| bin.into());
+    let own = app.session_dir(key);
+    let args = super::confinement(
+        &sandbox,
+        &launch.host_settings,
+        &launch.cwd,
+        &own,
+        Some(&home),
+    );
+    Ok(std::iter::once(sandbox)
+        .chain(args)
+        .chain([bin.display().to_string()])
+        .collect())
 }
 
 impl Host {

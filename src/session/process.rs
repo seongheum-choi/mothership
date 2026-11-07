@@ -42,7 +42,11 @@ impl<S: Surface> Turn<'_, S> {
         let runner = launch.runner;
         let pinned = launch.pinned;
         let can_switch = runner == Runner::Claude && !pinned && app.codex_installed();
-        let mut agent = Agent::spawn(&app.cfg.agent, launch)?;
+        let codex = match runner {
+            Runner::Codex => crate::host::codex_runner(app, key, &launch)?,
+            Runner::Claude => Vec::new(),
+        };
+        let mut agent = Agent::spawn(&app.cfg.agent, launch, &codex)?;
         agent.send(prompt).await?;
         let mut relay = Relay::default();
         let mut tick = tokio::time::interval(Duration::from_secs(1));
