@@ -178,7 +178,6 @@ fn prepare(app: &Arc<App>, key: &str, launch: &mut Launch) -> Result<(ProgressTa
             .push(("MOTHERSHIP_RUNS".into(), dir.display().to_string()));
     }
     let codex = &app.cfg.agent.codex_bin;
-    let codex_home = host::codex_home(app);
     let host = host::Host {
         runs: dir,
         run_root: host::run_root(&app.cfg.home),
@@ -189,7 +188,7 @@ fn prepare(app: &Arc<App>, key: &str, launch: &mut Launch) -> Result<(ProgressTa
         codex_settings: launch.host_settings.clone(),
         commands: launch.commands.clone(),
         codex: limit::locate(codex, app.agent_path().as_deref()).unwrap_or_else(|| codex.into()),
-        codex_home: std::fs::canonicalize(&codex_home).unwrap_or(codex_home),
+        codex_home: host::CodexHome::of(app, key),
         // Without one, a request still gets an answer: the error that the sandbox cannot start.
         sandbox: app.cfg.agent.host_sandbox.clone().unwrap_or_default(),
     };

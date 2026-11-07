@@ -2,13 +2,17 @@
 //! profile is the sandbox.
 
 use super::{Host, request, seatbelt};
-use crate::{agent::Launch, app::App};
+use crate::{
+    agent::{Confined, Launch},
+    app::App,
+};
 use anyhow::Context;
 use request::CodexRun;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 
-/// The directories a run may write in Codex's home: its sessions, logs and caches.
+/// The directories a run may write in Codex's home: its sessions, logs and caches. Under
+/// bubblewrap, each is the session's own (see [`CodexHome::state`]).
 const HOME_DIRS: [&str; 8] = [
     "sessions",
     "thread-writer-locks",
@@ -56,13 +60,41 @@ pub fn home_writes(home: &Path) -> Vec<String> {
     writes
 }
 
+/// Codex's home, and the session's own part of it.
+pub struct CodexHome {
+    /// Codex's home, resolved.
+    pub home: PathBuf,
+    /// `<MOTHERSHIP_HOME>/codex/<session>`: the session's [`HOME_DIRS`], which bubblewrap
+    /// mounts in Codex's home so one session cannot read or change another's threads. No
+    /// session's rules let it read the directory itself.
+    pub state: PathBuf,
+}
+
+impl CodexHome {
+    pub fn of(app: &App, key: &str) -> Self {
+        let home = super::codex_home(app);
+        Self {
+            home: std::fs::canonicalize(&home).unwrap_or(home),
+            state: state_root(&app.cfg.home).join(crate::store::file_name(key)),
+        }
+    }
+}
+
+/// Where sessions keep their own parts of Codex's home.
+pub fn state_root(state: &Path) -> PathBuf {
+    state.join("codex")
+}
+
 /// Codex's home as bubblewrap mounts: an empty directory in its place, gone after the run,
-/// with the home's entries mounted back in: writable for [`HOME_DIRS`] and [`SHARED_FILES`],
-/// links as links, the rest read-only (config, hooks, rules, skills, memories). The state
-/// databases and the other [`HOME_FILES`] are left out, so the run starts its own: a database
-/// shared with Codex outside the run, its journal in the throwaway directory, would be
-/// corrupted. Whatever else a run writes there goes with it, so it leaves no config behind.
-pub fn home_mounts(home: &Path) -> Vec<String> {
+/// with the home's entries mounted back in: writable for [`SHARED_FILES`], links as links,
+/// the rest read-only (config, hooks, rules, skills, memories). [`HOME_DIRS`] come from the
+/// session's own directory instead, made when missing. The state databases and the other
+/// [`HOME_FILES`] are left out, so the run starts its own: a database shared with Codex
+/// outside the run, its journal in the throwaway directory, would be corrupted. Codex finds
+/// a thread to resume from its file in `sessions` alone. Whatever else a run writes there
+/// goes with it, so it leaves no config behind.
+pub fn home_mounts(codex: &CodexHome) -> Vec<String> {
+    let home = &codex.home;
     let Ok(entries) = std::fs::read_dir(home) else {
         return Vec::new();
     };
@@ -72,13 +104,16 @@ pub fn home_mounts(home: &Path) -> Vec<String> {
     for entry in entries {
         let name = entry.file_name().to_string_lossy().into_owned();
         let path = entry.path().to_string_lossy().into_owned();
+        if HOME_DIRS.contains(&name.as_str()) {
+            continue;
+        }
         if entry.file_type().is_ok_and(|t| t.is_symlink()) {
             if let Ok(to) = std::fs::read_link(entry.path()) {
                 mounts.extend(["--symlink".into(), to.to_string_lossy().into_owned(), path]);
             }
             continue;
         }
-        let kind = if HOME_DIRS.contains(&name.as_str()) || SHARED_FILES.contains(&name.as_str()) {
+        let kind = if SHARED_FILES.contains(&name.as_str()) {
             "--bind"
         } else if HOME_FILES.contains(&name.as_str()) || name.contains(".sqlite") {
             continue;
@@ -87,7 +122,25 @@ pub fn home_mounts(home: &Path) -> Vec<String> {
         };
         mounts.extend([kind.into(), path.clone(), path]);
     }
+    for dir in HOME_DIRS {
+        let own = codex.state.join(dir);
+        // bubblewrap binds only what exists.
+        if let Err(e) = private_dir(&own) {
+            tracing::warn!("cannot make {}: {e}", own.display());
+            continue;
+        }
+        let at = home.join(dir).to_string_lossy().into_owned();
+        mounts.extend(["--bind".into(), own.to_string_lossy().into_owned(), at]);
+    }
     mounts
+}
+
+fn private_dir(dir: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::DirBuilderExt;
+    std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(dir)
 }
 
 /// Codex's binary and the code-mode host it starts its tools through, which it looks for
@@ -103,31 +156,38 @@ pub fn binaries(bin: &Path) -> Vec<PathBuf> {
         .collect()
 }
 
-/// The command that starts Codex for a turn of session `key`: `HOST_SANDBOX` with the turn's
-/// host settings (the session's read and write rules, Codex's home and binary readable) and
-/// the session's directory as its own, then `CODEX_BIN`. Codex then reads only what Claude
-/// Code's sandbox lets the session read. Without `HOST_SANDBOX` there is none, and the turn
-/// fails rather than read the whole home.
-pub fn runner(app: &App, key: &str, launch: &Launch) -> anyhow::Result<Vec<String>> {
+/// How Codex starts for a turn of session `key`: `HOST_SANDBOX` with the turn's host settings
+/// (the session's read and write rules, Codex's home and binary readable) and the session's
+/// directory as its own, then `CODEX_BIN`, so Codex reads only what Claude Code's sandbox lets
+/// the session read. Its environment is a run's (see [`super::env`]), not mothership's, with
+/// `TMPDIR` in the session's directory, since `/tmp` is not writable and no other session's.
+/// Without `HOST_SANDBOX` there is none, and the turn fails rather than read the whole home.
+pub fn runner(app: &App, key: &str, launch: &Launch) -> anyhow::Result<Confined> {
     let sandbox = (app.cfg.agent.host_sandbox.clone())
         .context("HOST_SANDBOX is not a file, so Codex cannot run confined to the session")?;
-    let home = super::codex_home(app);
-    let home = std::fs::canonicalize(&home).unwrap_or(home);
     let bin = &app.cfg.agent.codex_bin;
     let bin =
         crate::agent::limit::locate(bin, app.agent_path().as_deref()).unwrap_or_else(|| bin.into());
     let own = app.session_dir(key);
+    let tmp = own.join("tmp");
+    std::fs::create_dir_all(&tmp).with_context(|| format!("making {}", tmp.display()))?;
+    let codex = CodexHome::of(app, key);
     let args = super::confinement(
         &sandbox,
         &launch.host_settings,
         &launch.cwd,
         &own,
-        Some(&home),
+        Some(&codex),
     );
-    Ok(std::iter::once(sandbox)
-        .chain(args)
-        .chain([bin.display().to_string()])
-        .collect())
+    let mut env = super::env(&launch.settings, &launch.env);
+    env.push(("TMPDIR".into(), tmp.display().to_string()));
+    Ok(Confined {
+        argv: std::iter::once(sandbox)
+            .chain(args)
+            .chain([bin.display().to_string()])
+            .collect(),
+        env,
+    })
 }
 
 impl Host {
@@ -212,10 +272,13 @@ mod tests {
     }
 
     #[test]
-    fn mounts_codex_state_but_not_its_config() {
-        let home = std::env::temp_dir().join(format!("mothership-ch-{}", std::process::id()));
+    fn mounts_codex_config_but_the_sessions_own_state() {
+        let base = std::env::temp_dir().join(format!("mothership-ch-{}", std::process::id()));
+        let home = base.join("codex");
+        // The home's own sessions and a link where a session directory goes are both replaced.
         std::fs::create_dir_all(home.join("sessions")).unwrap();
         std::fs::create_dir_all(home.join("skills")).unwrap();
+        std::os::unix::fs::symlink("/elsewhere", home.join("log")).unwrap();
         for file in [
             "auth.json",
             "config.toml",
@@ -226,6 +289,10 @@ mod tests {
             std::fs::write(home.join(file), "").unwrap();
         }
         std::os::unix::fs::symlink("/elsewhere/AGENTS.md", home.join("AGENTS.md")).unwrap();
+        let codex = CodexHome {
+            home: home.clone(),
+            state: base.join("state/s1"),
+        };
         let h = |rel: &str| home.join(rel).display().to_string();
         let mut want = vec!["--tmpfs".to_string(), home.display().to_string()];
         want.extend([
@@ -236,13 +303,17 @@ mod tests {
         for (kind, rel) in [
             ("--bind", "auth.json"),
             ("--ro-bind", "config.toml"),
-            ("--bind", "sessions"),
             ("--ro-bind", "skills"),
         ] {
             want.extend([kind.into(), h(rel), h(rel)]);
         }
-        assert_eq!(home_mounts(&home), want);
-        std::fs::remove_dir_all(&home).unwrap();
+        for dir in HOME_DIRS {
+            let own = codex.state.join(dir).display().to_string();
+            want.extend(["--bind".into(), own, h(dir)]);
+        }
+        assert_eq!(home_mounts(&codex), want);
+        assert!(codex.state.join("sessions").is_dir());
+        std::fs::remove_dir_all(&base).unwrap();
     }
 
     #[test]

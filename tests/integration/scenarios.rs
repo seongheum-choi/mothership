@@ -354,12 +354,15 @@ async fn linear_agent_is_launched_in_the_sandbox(ctx: Ctx) -> Result<()> {
     let args = argv(&h.prompt_with("context of SH-10").await?);
     let state = h.home.join(".mothership");
     // `HOME` holds `.mothership` and `src/app`; the worktree is `.mothership/worktrees/SH-10`.
-    // `host-runs/` holds runs' private directories, which no session may read or write.
+    // `host-runs/` holds runs' private directories and `codex/` sessions' parts of Codex's
+    // home, which no session may read or write.
     let mut deny = vec![
+        deny_dir(&state.join("codex")),
         deny_dir(&state.join("host-runs")),
         deny_dir(&state.join("mcp")),
         deny_file(&state.join("state.json")),
     ];
+    deny.push(deny_edit_dir(&state.join("codex")));
     deny.push(deny_edit_dir(&state.join("host-runs")));
     deny.push(deny_edit_dir(&state.join("mcp")));
     // `repos/` and `worktrees/` hold the empty `.env` that stops dotenv searches; it stays
@@ -521,11 +524,13 @@ async fn linear_mode_from_labels_shapes_the_agent(ctx: Ctx) -> Result<()> {
     let state = h.home.join(".mothership");
     let deny = deny_rules(&args)?;
     let mut expected = vec![
+        deny_dir(&state.join("codex")),
         deny_dir(&state.join("host-runs")),
         deny_dir(&state.join("mcp")),
         deny_dir(&state.join("modes")),
         deny_file(&state.join("state.json")),
     ];
+    expected.push(deny_edit_dir(&state.join("codex")));
     expected.push(deny_edit_dir(&state.join("host-runs")));
     expected.push(deny_edit_dir(&state.join("mcp")));
     expected.push(deny_edit_dir(&state.join("modes")));
@@ -1529,8 +1534,8 @@ async fn codex_harness(ctx: &Ctx) -> Result<Harness> {
 
 /// With `AGENT_RUNNER=codex` in `.env`, a turn runs `codex exec --json` in the worktree with the
 /// prompt on stdin; its reasoning becomes a thought, its command an action and its last message
-/// the response. It runs under `HOST_SANDBOX` with the session's read rules. `/status` names
-/// the runner.
+/// the response. It runs under `HOST_SANDBOX` with the session's read rules and a run's
+/// environment. `/status` names the runner.
 async fn codex_runner_answers_with_thoughts_and_a_response(ctx: Ctx) -> Result<()> {
     let h = codex_harness(&ctx).await?;
     // A home entry no session may read.
@@ -1568,6 +1573,17 @@ async fn codex_runner_answers_with_thoughts_and_a_response(ctx: Ctx) -> Result<(
     ensure!(
         flag(&args, "--cd")? == cwd.display().to_string(),
         "{args:#?}"
+    );
+    // Only a run's environment, none of mothership's own, and a `TMPDIR` of the session's.
+    let env: Vec<String> = serde_json::from_value(call["env"].clone())?;
+    ensure!(
+        env.contains(&"FAKE_LOG".into()) && !env.contains(&"LINEAR_CLIENT_SECRET".into()),
+        "{env:?}"
+    );
+    let session = h.home.join(".mothership/progress/s40");
+    ensure!(
+        call["tmpdir"] == session.join("tmp").display().to_string(),
+        "{call}"
     );
     // Codex runs under `HOST_SANDBOX` with the session's read rules, its own sandbox off.
     ensure!(
