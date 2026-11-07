@@ -8,7 +8,7 @@ use crate::{
     host,
 };
 use anyhow::Result;
-use std::sync::Arc;
+use std::{sync::Arc, time::Instant};
 use tokio::sync::mpsc;
 
 pub(super) async fn worker<S: Surface>(
@@ -54,14 +54,13 @@ pub(super) async fn worker<S: Surface>(
             app: &app,
             reg: &reg,
             key: &key,
+            started: Instant::now(),
         };
         if let Err(e) = turn
             .run(&texts.join("\n\n"), &mut tickets, &mut rx, &mut queued)
             .await
         {
-            tracing::error!("[{key}] {e:#}");
-            reg.surface
-                .finish(&app, &key, tickets, Outcome::Failed(format!("{e:#}")))
+            turn.finish(tickets, Outcome::Failed(format!("{e:#}")))
                 .await;
         }
     }
@@ -71,6 +70,7 @@ pub(super) struct Turn<'a, S: Surface> {
     pub(super) app: &'a Arc<App>,
     pub(super) reg: &'a Registry<S>,
     pub(super) key: &'a str,
+    pub(super) started: Instant,
 }
 
 impl<S: Surface> Turn<'_, S> {
@@ -101,12 +101,9 @@ impl<S: Surface> Turn<'_, S> {
             .file_name()
             .map(|n| n.to_string_lossy().into_owned());
         self.reg.note(key, |a| a.workspace = workspace);
+        self.log_start(&launch);
         if let Some(text) = launch.note.take() {
-            let note = Update::Thought {
-                text,
-                nested: false,
-            };
-            surface.update(app, key, note).await;
+            surface.update(app, key, Update::thought(text)).await;
         }
         if let Some(token) = crate::github::user_token::for_turn(app).await {
             crate::github::user_token::set_gh_token(&mut launch.env, token);
@@ -141,11 +138,7 @@ impl<S: Surface> Turn<'_, S> {
         if let (Ended::Limited { resets_at }, Some(mut launch)) = (ended, retry) {
             let text = limit::switched(resets_at);
             tracing::warn!("[{key}] {text}");
-            let note = Update::Thought {
-                text,
-                nested: false,
-            };
-            surface.update(app, key, note).await;
+            surface.update(app, key, Update::thought(text)).await;
             launch.runner = Runner::Codex;
             launch.resume = app.store.read(|s| {
                 let rec = s.sessions.get(key);

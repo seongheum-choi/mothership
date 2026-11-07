@@ -4,6 +4,7 @@
 
 mod background;
 pub mod choice;
+mod log;
 mod process;
 mod relay;
 mod turn;
@@ -78,6 +79,17 @@ pub enum Update {
     Progress(String),
     /// A prompt that arrived mid-turn was passed to the running agent.
     Noted,
+}
+
+impl Update {
+    /// A thought of the turn itself rather than of a subagent: notes mothership adds, and the
+    /// main agent's interim text.
+    pub fn thought(text: impl Into<String>) -> Self {
+        Self::Thought {
+            text: text.into(),
+            nested: false,
+        }
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -164,11 +176,7 @@ impl<S: Surface> Registry<S> {
         tracing::info!("[{key}] held for the restart");
         let (reg, app, key) = (self.clone(), app.clone(), key.to_string());
         tokio::spawn(async move {
-            let note = Update::Thought {
-                text: HELD.into(),
-                nested: false,
-            };
-            reg.surface.update(&app, &key, note).await;
+            reg.surface.update(&app, &key, Update::thought(HELD)).await;
         });
         true
     }
