@@ -7,10 +7,13 @@ use axum::{
     Json, Router,
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
-    routing::post,
+    routing::{get, post},
 };
 use serde_json::{Value, json};
-use std::sync::{Arc, Mutex};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+};
 
 /// The agent's Gerrit account.
 pub const USERNAME: &str = "acme-bot";
@@ -20,6 +23,9 @@ const AUTHORIZATION: &str = "Basic aW1wYWxhOmh0dHAtcGFzcw==";
 
 #[derive(Default)]
 pub struct Recorded {
+    /// What `GET /a/changes/{change}/messages` and `.../comments` answer, by change number.
+    pub messages: HashMap<String, Value>,
+    pub comments: HashMap<String, Value>,
     /// `POST /a/changes/{change}/revisions/{revision}/review`: change, revision and body.
     pub reviews: Vec<(String, String, Value)>,
 }
@@ -46,6 +52,8 @@ impl GerritMock {
                 "/a/changes/{change}/revisions/{revision}/review",
                 post(review),
             )
+            .route("/a/changes/{change}/messages", get(messages))
+            .route("/a/changes/{change}/comments", get(comments))
             .with_state(recorded.clone());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
@@ -63,6 +71,13 @@ impl GerritMock {
 
     pub fn read<T>(&self, f: impl FnOnce(&Recorded) -> T) -> T {
         f(&self.recorded.lock().expect("gerrit mock poisoned"))
+    }
+
+    /// Sets what change `number`'s messages and comments are.
+    pub fn set_review(&self, number: u64, messages: Value, comments: Value) {
+        let mut recorded = self.recorded.lock().expect("gerrit mock poisoned");
+        recorded.messages.insert(number.to_string(), messages);
+        recorded.comments.insert(number.to_string(), comments);
     }
 }
 
@@ -90,4 +105,34 @@ async fn review(
         .reviews
         .push((change, revision, body));
     gerrit_json(&json!({}))
+}
+
+async fn messages(
+    State(recorded): State<Shared>,
+    Path(change): Path<String>,
+    headers: HeaderMap,
+) -> (StatusCode, String) {
+    listed(&recorded, &headers, |r| r.messages.get(&change).cloned())
+}
+
+async fn comments(
+    State(recorded): State<Shared>,
+    Path(change): Path<String>,
+    headers: HeaderMap,
+) -> (StatusCode, String) {
+    listed(&recorded, &headers, |r| r.comments.get(&change).cloned())
+}
+
+fn listed(
+    recorded: &Shared,
+    headers: &HeaderMap,
+    pick: impl FnOnce(&Recorded) -> Option<Value>,
+) -> (StatusCode, String) {
+    if !authorized(headers) {
+        return (StatusCode::UNAUTHORIZED, "Unauthorized".into());
+    }
+    match pick(&recorded.lock().expect("gerrit mock poisoned")) {
+        Some(value) => gerrit_json(&value),
+        None => (StatusCode::NOT_FOUND, "Not found".into()),
+    }
 }

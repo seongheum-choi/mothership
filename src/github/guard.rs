@@ -1,5 +1,5 @@
 //! Limits on what reaches an agent from GitHub: each delivery once, and a capped number of
-//! prompts per session per hour.
+//! prompts per session per hour. Gerrit feedback applies the same cap with a budget of its own.
 
 use std::{
     collections::{HashMap, HashSet, VecDeque},
@@ -11,7 +11,7 @@ const DELIVERIES_KEPT: usize = 1000;
 
 /// GitHub-started prompts a session may take per window before it is paused, so a reply loop
 /// the marker misses (the agent posting with plain `gh`) burns out quickly.
-pub(super) const PROMPTS_PER_WINDOW: usize = 10;
+pub(crate) const PROMPTS_PER_WINDOW: usize = 10;
 const WINDOW: Duration = Duration::from_hours(1);
 
 /// Delivery ids already handled, oldest dropped first.
@@ -43,14 +43,14 @@ impl Deliveries {
 
 /// GitHub-started prompts per session within the last [`WINDOW`].
 #[derive(Default)]
-pub(super) struct Budget {
+pub(crate) struct Budget {
     granted: HashMap<String, VecDeque<Instant>>,
     /// When each session was last told it is paused.
     notified: HashMap<String, Instant>,
 }
 
 #[derive(Debug, PartialEq)]
-pub(super) enum Allowance {
+pub(crate) enum Allowance {
     Granted,
     /// `notify` is true for the first refusal of a pause, so Linear hears of it once.
     Denied {
@@ -59,7 +59,7 @@ pub(super) enum Allowance {
 }
 
 impl Budget {
-    pub(super) fn take(&mut self, key: &str, now: Instant) -> Allowance {
+    pub(crate) fn take(&mut self, key: &str, now: Instant) -> Allowance {
         let granted = self.granted.entry(key.to_string()).or_default();
         while granted
             .front()
