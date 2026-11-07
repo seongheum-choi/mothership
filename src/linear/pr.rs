@@ -1,12 +1,14 @@
-//! GitHub pull requests a turn mentions, added to the Linear session's external URLs so the
-//! session shows them and Linear links the session to each pull request once it is synced.
+//! GitHub pull requests and Gerrit changes a turn mentions, added to the Linear session's
+//! external URLs so the session shows them and Linear links the session to each pull request
+//! once it is synced.
 
 use super::Linear;
 use crate::{app::App, session::Outcome};
 use anyhow::{Result, bail};
 use serde_json::json;
 
-/// A pull request URL without fragment or query, and its `owner/repo#n` label.
+/// A pull request or change URL without fragment or query, and its `owner/repo#n` or
+/// `project/+/n` label.
 #[derive(Debug, PartialEq)]
 pub(super) struct PullRequest {
     pub url: String,
@@ -15,13 +17,24 @@ pub(super) struct PullRequest {
 
 const GITHUB: &str = "https://github.com/";
 
-/// Every `https://github.com/<owner>/<repo>/pull/<n>` in `text`, first mention first, once each.
-pub(super) fn pull_requests(text: &str) -> Vec<PullRequest> {
+/// Every `https://github.com/<owner>/<repo>/pull/<n>` in `text`, and with `gerrit` (the
+/// `GERRIT_URL`) every `<gerrit>/c/<project>/+/<n>`, first mention first, once each.
+pub(super) fn pull_requests(text: &str, gerrit: Option<&str>) -> Vec<PullRequest> {
+    let mut at: Vec<(usize, PullRequest)> = text
+        .match_indices(GITHUB)
+        .filter_map(|(i, _)| Some((i, parse(&text[i + GITHUB.len()..])?)))
+        .collect();
+    if let Some(base) = gerrit {
+        let prefix = format!("{base}/c/");
+        at.extend(
+            text.match_indices(&prefix)
+                .filter_map(|(i, _)| Some((i, parse_change(base, &text[i + prefix.len()..])?))),
+        );
+        at.sort_by_key(|(i, _)| *i);
+    }
     let mut found: Vec<PullRequest> = Vec::new();
-    for (start, _) in text.match_indices(GITHUB) {
-        if let Some(pr) = parse(&text[start + GITHUB.len()..])
-            && !found.iter().any(|f| f.url == pr.url)
-        {
+    for (_, pr) in at {
+        if !found.iter().any(|f| f.url == pr.url) {
             found.push(pr);
         }
     }
@@ -36,19 +49,41 @@ fn parse(rest: &str) -> Option<PullRequest> {
     if parts.next() != Some("pull") {
         return None;
     }
-    let tail = parts.next()?;
-    let digits = tail.chars().take_while(char::is_ascii_digit).count();
-    let number = &tail[..digits];
-    // `pull/12abc` is no pull request; `pull/12/files`, `pull/12#r3` and `pull/12.` are. A
-    // `.` can end a sentence but never continue a number, unlike in owner and repository names.
-    let next = tail[digits..].chars().next();
-    if number.is_empty() || number.starts_with('0') || next.is_some_and(continues_number) {
-        return None;
-    }
+    let number = leading_number(parts.next()?)?;
     Some(PullRequest {
         url: format!("{GITHUB}{owner}/{repo}/pull/{number}"),
         label: format!("{owner}/{repo}#{number}"),
     })
+}
+
+/// The change `rest` (what follows `<gerrit>/c/`) starts with: `<project>/+/<n>`, where a
+/// project has one or more `/`-separated names.
+fn parse_change(gerrit: &str, rest: &str) -> Option<PullRequest> {
+    let (project, tail) = rest.split_once("/+/")?;
+    if !project.split('/').all(is_name) {
+        return None;
+    }
+    let number = leading_number(tail)?;
+    Some(PullRequest {
+        url: format!("{gerrit}/c/{project}/+/{number}"),
+        label: format!("{project}/+/{number}"),
+    })
+}
+
+/// The number `tail` starts with. `12abc` is none; `12/files`, `12#r3` and `12.` are 12. A
+/// `.` can end a sentence but never continue a number, unlike in owner and repository names.
+fn leading_number(tail: &str) -> Option<&str> {
+    let digits = tail.chars().take_while(char::is_ascii_digit).count();
+    let number = &tail[..digits];
+    let next = tail[digits..].chars().next();
+    if number.is_empty() || number.starts_with('0') || next.is_some_and(continues_number) {
+        return None;
+    }
+    Some(number)
+}
+
+fn gerrit_url(app: &App) -> Option<&str> {
+    app.cfg.gerrit.as_ref().map(|g| g.url.as_str())
 }
 
 fn is_name(s: &str) -> bool {
@@ -64,9 +99,10 @@ fn continues_number(c: char) -> bool {
 }
 
 impl Linear {
-    /// Remembers the pull requests in the running turn's interim text of session `key`.
-    pub(super) fn note_pull_requests(&self, key: &str, text: &str) {
-        let found = pull_requests(text);
+    /// Remembers the pull requests and changes in the running turn's interim text of session
+    /// `key`.
+    pub(super) fn note_pull_requests(&self, app: &App, key: &str, text: &str) {
+        let found = pull_requests(text, gerrit_url(app));
         if found.is_empty() {
             return;
         }
@@ -100,7 +136,7 @@ impl Linear {
             .expect("turn_prs lock poisoned")
             .remove(key)
             .unwrap_or_default();
-        for pr in pull_requests(reply) {
+        for pr in pull_requests(reply, gerrit_url(app)) {
             if !prs.contains(&pr) {
                 prs.push(pr);
             }
@@ -156,7 +192,34 @@ mod tests {
     use super::*;
 
     fn urls(text: &str) -> Vec<String> {
-        pull_requests(text).into_iter().map(|pr| pr.url).collect()
+        pull_requests(text, None)
+            .into_iter()
+            .map(|pr| pr.url)
+            .collect()
+    }
+
+    #[test]
+    fn finds_gerrit_changes_under_gerrit_url_only() {
+        let gerrit = Some("https://gerrit.example.com");
+        let text = "Pushed https://gerrit.example.com/c/team/app/+/12. Patch set: \
+                    https://gerrit.example.com/c/team/app/+/12/2/src/lib.rs#5, and \
+                    https://github.com/acme/app/pull/7, then \
+                    (https://gerrit.example.com/c/lib/+/3?tab=comments) and \
+                    https://gerrit.example.com/c/team/app/+/012 \
+                    https://gerrit.example.com/c/team app/+/4 \
+                    https://other.example.com/c/team/app/+/5";
+        let found = pull_requests(text, gerrit);
+        let urls: Vec<&str> = found.iter().map(|pr| pr.url.as_str()).collect();
+        assert_eq!(
+            urls,
+            [
+                "https://gerrit.example.com/c/team/app/+/12",
+                "https://github.com/acme/app/pull/7",
+                "https://gerrit.example.com/c/lib/+/3",
+            ]
+        );
+        assert_eq!(found[0].label, "team/app/+/12");
+        assert_eq!(pull_requests(text, None).len(), 1, "Gerrit off");
     }
 
     #[test]
@@ -192,7 +255,7 @@ mod tests {
                 "https://github.com/my-org/web.site/pull/7",
             ]
         );
-        assert_eq!(pull_requests(text)[1].label, "my-org/web.site#7");
+        assert_eq!(pull_requests(text, None)[1].label, "my-org/web.site#7");
     }
 
     #[test]

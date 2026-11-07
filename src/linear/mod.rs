@@ -170,7 +170,7 @@ impl Surface for Linear {
             }
             Update::Noted => (thought("Got it, adding that to the current work."), true),
             Update::Thought { text, nested } => {
-                self.note_pull_requests(key, &text);
+                self.note_pull_requests(app, key, &text);
                 (thought(&prefixed(&text, nested)), false)
             }
             Update::Progress(line) => (thought(&line), false),
