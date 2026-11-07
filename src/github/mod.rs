@@ -20,7 +20,7 @@ pub mod user_token;
 pub use device::start as start_login;
 pub use user_token::{UserToken, UserTokens};
 
-use crate::{app::App, repos::Repo};
+use crate::{app::App, repos::Repo, review::intake::Budget};
 use anyhow::{Result, bail};
 use axum::{
     Router,
@@ -31,7 +31,6 @@ use axum::{
 };
 use feedback::Feedback;
 use guard::Deliveries;
-pub(crate) use guard::{Allowance, Budget, PROMPTS_PER_WINDOW};
 use serde_json::Value;
 use std::{
     path::{Path, PathBuf},

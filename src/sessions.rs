@@ -1,5 +1,5 @@
 //! Session lookups shared by the surfaces: which repository a pre-routing session works in, and
-//! which session owns a pull request.
+//! which session owns a pull request or a Gerrit topic.
 
 use crate::{
     repos::{self, Repo},
@@ -68,6 +68,16 @@ pub enum Found {
     Open(String),
     /// Its issue was closed and its worktree cleaned up; feedback is only logged.
     Closed(String),
+}
+
+impl Found {
+    fn new(open: bool, sid: &str) -> Self {
+        if open {
+            Self::Open(sid.to_string())
+        } else {
+            Self::Closed(sid.to_string())
+        }
+    }
 }
 
 /// The session that owns the pull request `pr`, whose head is `branch`, in one of `names`
@@ -173,23 +183,38 @@ pub fn find<'a>(
 ) -> Option<Found> {
     sessions
         .into_iter()
-        .filter(|(_, rec)| {
-            rec.repo
-                .as_deref()
-                .is_some_and(|r| repos.iter().any(|n| n.eq_ignore_ascii_case(r)))
-        })
+        .filter(|(_, rec)| in_repos(rec, repos))
         .filter_map(|(sid, rec)| {
             let opened_for = owns(rec, pr, head)?;
             Some((opened_for, !rec.closed, rec.prompted_at, sid))
         })
         .max()
-        .map(|(_, open, _, sid)| {
-            if open {
-                Found::Open(sid.clone())
-            } else {
-                Found::Closed(sid.clone())
-            }
-        })
+        .map(|(_, open, _, sid)| Found::new(open, sid))
+}
+
+/// The newest session on the issue whose key is `topic`, in one of `repos` (names): every
+/// layer of a stack is pushed with the issue key as topic, so the issue's newest session hears
+/// all of them. An open session wins over a closed one.
+pub fn for_topic<'a>(
+    sessions: impl IntoIterator<Item = (&'a String, &'a SessionRec)>,
+    topic: &str,
+    repos: &[&str],
+) -> Option<Found> {
+    sessions
+        .into_iter()
+        .filter(|(_, rec)| !rec.identifier.is_empty() && rec.identifier.eq_ignore_ascii_case(topic))
+        .filter(|(_, rec)| in_repos(rec, repos))
+        .map(|(sid, rec)| (!rec.closed, rec.prompted_at, sid))
+        .max()
+        .map(|(open, _, sid)| Found::new(open, sid))
+}
+
+/// Whether `rec` works in one of `repos` (names, which ignore case). A session with no
+/// repository recorded is in none.
+fn in_repos(rec: &SessionRec, repos: &[&str]) -> bool {
+    rec.repo
+        .as_deref()
+        .is_some_and(|r| repos.iter().any(|n| n.eq_ignore_ascii_case(r)))
 }
 
 #[cfg(test)]
@@ -311,6 +336,36 @@ mod tests {
         assert_eq!(
             open(super::find(&sessions, &any_case, "x", &["app"])).as_deref(),
             Some("pr9")
+        );
+    }
+
+    #[test]
+    fn the_newest_open_session_on_the_topic_in_the_project() {
+        let rec = |identifier: &str, repo: &str, prompted_at, closed| SessionRec {
+            identifier: identifier.into(),
+            repo: Some(repo.into()),
+            prompted_at,
+            closed,
+            ..SessionRec::default()
+        };
+        let sessions = HashMap::from([
+            ("old".to_string(), rec("SH-8", "app", 1, false)),
+            ("new".to_string(), rec("SH-8", "app", 2, false)),
+            ("done".to_string(), rec("SH-8", "app", 9, true)),
+            ("lib".to_string(), rec("SH-8", "lib", 5, false)),
+            ("other".to_string(), rec("SH-80", "app", 9, false)),
+            ("chat".to_string(), SessionRec::default()),
+        ]);
+        let found = |topic, repos: &[&str]| for_topic(&sessions, topic, repos);
+        assert_eq!(found("sh-8", &["app"]), Some(Found::Open("new".into())));
+        assert_eq!(found("SH-8", &["lib"]), Some(Found::Open("lib".into())));
+        assert_eq!(found("SH-8", &["web"]), None, "another repository");
+        assert_eq!(found("SH", &["app"]), None);
+        assert_eq!(found("", &["app"]), None);
+        let closed = HashMap::from([("done".to_string(), rec("SH-8", "app", 9, true))]);
+        assert_eq!(
+            for_topic(&closed, "SH-8", &["app"]),
+            Some(Found::Closed("done".into()))
         );
     }
 }

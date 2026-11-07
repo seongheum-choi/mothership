@@ -4,16 +4,16 @@
 use super::{
     GitHub,
     feedback::{Feedback, Head},
-    guard::{Allowance, PROMPTS_PER_WINDOW},
     open,
 };
 use crate::{
     app::App,
+    review::intake,
     sessions::{self, Found},
 };
 use anyhow::{Context, Result, bail};
-use serde_json::{Value, json};
-use std::{sync::Arc, time::Instant};
+use serde_json::Value;
+use std::sync::Arc;
 
 pub(super) async fn handle(app: Arc<App>, feedback: Feedback) {
     let github = app
@@ -59,46 +59,21 @@ pub(super) async fn handle(app: Arc<App>, feedback: Feedback) {
         }
         None => return open::open(app.clone(), feedback, head, &names).await,
     };
-    let allowed = github
-        .budget
-        .lock()
-        .expect("prompt budget poisoned")
-        .take(&sid, Instant::now());
-    match allowed {
-        Allowance::Granted => {}
-        Allowance::Denied { notify: false } => {
-            tracing::info!(
-                "[{sid}] github feedback paused, @{} ignored",
-                feedback.author
-            );
-            return;
-        }
-        Allowance::Denied { notify: true } => {
-            tracing::warn!(
-                "[{sid}] {PROMPTS_PER_WINDOW} GitHub prompts within the hour; pausing GitHub feedback"
-            );
-            app.linear.stop(&sid, None);
-            let body = format!(
-                "Paused GitHub feedback: this session got {PROMPTS_PER_WINDOW} prompts from GitHub \
-                 within an hour, which looks like the agent answering its own comments. The \
-                 running turn was stopped, and GitHub comments on this PR are ignored until the \
-                 hour is up. Prompt here to continue."
-            );
-            app.linear
-                .surface
-                .activity(&app, &sid, json!({ "type": "error", "body": body }), false)
-                .await;
-            return;
-        }
+    let from = format!("@{}", feedback.author);
+    let prompt = intake::Prompt {
+        source: "GitHub",
+        from: &from,
+        ignored: "GitHub comments on this PR",
+        text: feedback.prompt(),
+    };
+    if intake::submit(&app, &sid, &github.budget, prompt).await {
+        tracing::info!(
+            "[{sid}] github {} from @{} on {}",
+            feedback.kind.label(),
+            feedback.author,
+            head.branch
+        );
     }
-    tracing::info!(
-        "[{sid}] github {} from @{} on {}",
-        feedback.kind.label(),
-        feedback.author,
-        head.branch
-    );
-    sessions::mark_prompted(&app.store, &sid);
-    app.linear.submit(&app, &sid, feedback.prompt(), ());
 }
 
 /// `issue_comment` payloads describe the PR as an issue, without its head.

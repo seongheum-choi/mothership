@@ -1,5 +1,8 @@
 //! Where finished work goes for review. The agent drives the backend's own CLI from its
-//! instructions. Review feedback comes back through `github` or `gerrit`.
+//! instructions. Review feedback comes back through `github` or `gerrit`, which find the session
+//! it continues and hand it to [`intake`].
+
+pub mod intake;
 
 use anyhow::bail;
 use std::str::FromStr;
