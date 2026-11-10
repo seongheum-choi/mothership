@@ -3,8 +3,10 @@
 
 mod agent;
 mod status;
+mod tmp;
 
 pub use agent::Place;
+pub use tmp::TmpRoot;
 
 use crate::{
     agent::{Runner, limit},
@@ -44,6 +46,8 @@ pub struct App {
     /// The GitHub App user token agents get as `GH_TOKEN`, when `GITHUB_APP_CLIENT_ID` is set.
     pub github_user: Option<UserToken>,
     pub gerrit: Option<Gerrit>,
+    /// Where each session's `TMPDIR` is.
+    pub tmp: TmpRoot,
     /// Sessions on the same issue share a worktree; one agent at a time per workspace.
     workspace_locks: Mutex<HashMap<PathBuf, Arc<tokio::sync::Mutex<()>>>>,
     /// New turns wait for a restart instead of starting (SIGUSR1, until SIGUSR2).
@@ -52,14 +56,17 @@ pub struct App {
 
 impl App {
     pub fn new(cfg: Config) -> Result<Arc<Self>> {
-        match agent::check_session_tmp(&cfg.home) {
+        std::fs::create_dir_all(&cfg.home)
+            .with_context(|| format!("creating {}", cfg.home.display()))?;
+        // mothership's own user, who made or owns its home; `std` has no `getuid`.
+        let uid = std::os::unix::fs::MetadataExt::uid(&std::fs::metadata(&cfg.home)?);
+        let tmp = TmpRoot::for_instance(&cfg.home, uid);
+        match tmp.check() {
             Err(e) if std::env::var_os("MOTHERSHIP_ALLOW_LONG_TMPDIR").is_some() => {
                 tracing::warn!("{e:#}");
             }
             checked => checked?,
         }
-        std::fs::create_dir_all(&cfg.home)
-            .with_context(|| format!("creating {}", cfg.home.display()))?;
         let store = Store::open(cfg.home.join("state.json"))?;
         if store.read(|s| s.linear.access_token.is_empty())
             && let Some(seed) = &cfg.linear.seed_tokens
@@ -90,6 +97,7 @@ impl App {
             github,
             github_user: cfg.github_app.clone().map(UserToken::new),
             gerrit,
+            tmp,
             workspace_locks: Mutex::default(),
             draining: AtomicBool::new(false),
             cfg,
