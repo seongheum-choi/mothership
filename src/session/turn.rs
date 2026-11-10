@@ -161,8 +161,7 @@ fn prepare(app: &Arc<App>, key: &str, launch: &mut Launch) -> Result<(ProgressTa
         // The progress file of the layout before session directories.
         std::fs::remove_file(&dir)?;
     }
-    let tmp = app.session_tmp(key);
-    std::fs::create_dir_all(&tmp)?;
+    let tmp = app.tmp.create(key)?;
     // After `AGENT_ENV`, so a shared `TMPDIR` from `.env` is overridden.
     for var in ["TMPDIR", "CLAUDE_CODE_TMPDIR"] {
         launch.env.push((var.into(), tmp.display().to_string()));
