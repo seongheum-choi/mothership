@@ -1,5 +1,5 @@
 //! What each agent process gets from the instance: the [`Launch`] a surface's [`Place`] becomes,
-//! its environment, its settings, and its session's directory.
+//! its environment, its settings, and its session's directories.
 
 use super::App;
 use crate::{
@@ -10,6 +10,7 @@ use crate::{
 };
 use anyhow::Result;
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
@@ -117,6 +118,11 @@ impl App {
         self.cfg.progress_dir().join(crate::store::file_name(key))
     }
 
+    /// The session's own temporary directory (see [`session_tmp`]).
+    pub fn session_tmp(&self, key: &str) -> PathBuf {
+        session_tmp(&self.cfg.home, key)
+    }
+
     /// The `--settings` for session `key`'s agent working in `workspace`: see
     /// [`sandbox::settings`]. `host` adds what a run mothership starts for the session needs:
     /// Codex's home and binary (see [`crate::host`]).
@@ -129,6 +135,7 @@ impl App {
     ) -> Settings {
         let mut paths = self.cfg.sandbox.clone();
         paths.write.push(self.session_dir(key));
+        paths.write.push(self.session_tmp(key));
         let settings = |readable: &[PathBuf]| {
             let mut settings = sandbox::settings(
                 &self.home_dir,
@@ -147,5 +154,70 @@ impl App {
             agent: settings(readable),
             host: settings(&host_readable),
         }
+    }
+}
+
+/// A Unix socket path's limit, its NUL included: `sun_path` in `sockaddr_un`.
+const SUN_PATH: usize = if cfg!(target_os = "macos") { 104 } else { 108 };
+/// What Claude Code's sandbox adds to `TMPDIR` for its bridge sockets: `/srt-mux-<pid>-<n>.sock`.
+const SOCKET_NAME: usize = 30;
+
+/// `TMPDIR` of session `key`: `<state>/session-tmp/` and 16 hex digits of the key's SHA-256.
+/// Claude Code's sandbox makes its bridge sockets there, which fail past `sun_path`, so the
+/// name has a fixed length however long the key is (a Zulip topic's is the topic). Its own
+/// directory under `session-tmp`, not the `tmp` an instance may still share through
+/// `SANDBOX_WRITE`, so other sessions' are denied like their progress directories.
+pub fn session_tmp(state: &Path, key: &str) -> PathBuf {
+    let digest = Sha256::digest(key.as_bytes());
+    let head: [u8; 8] = digest[..8].try_into().expect("SHA-256 is 32 bytes");
+    state
+        .join("session-tmp")
+        .join(format!("{:016x}", u64::from_be_bytes(head)))
+}
+
+/// Fails when a session's `TMPDIR` under `state` leaves Claude Code's sandbox too little of
+/// `sun_path` for its bridge sockets, which would fail every turn's sandbox instead. With
+/// `MOTHERSHIP_ALLOW_LONG_TMPDIR` set, as for a `claude` that makes no sockets, startup only
+/// warns.
+pub fn check_session_tmp(state: &Path) -> Result<()> {
+    let tmp = session_tmp(state, "");
+    let max = SUN_PATH - 1 - SOCKET_NAME;
+    anyhow::ensure!(
+        tmp.as_os_str().len() <= max,
+        "a session's TMPDIR ({}) is {} bytes, over the {max} that leave room for Claude Code's \
+         sandbox sockets (sun_path is {SUN_PATH}); move MOTHERSHIP_HOME to a shorter path",
+        tmp.display(),
+        tmp.as_os_str().len()
+    );
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn session_tmp_has_a_fixed_length_whatever_the_key() {
+        let state = Path::new("/home/me/.mothership");
+        let topic = "a very long Zulip topic about something ".repeat(8);
+        let zulip = format!("zulip:engineering-and-operations:{topic}");
+        let tmp = session_tmp(state, &zulip);
+        let uuid = session_tmp(state, "cc2ccfbf-3742-4ceb-9124-5295b54792d0");
+        assert_eq!(tmp.parent(), Some(state.join("session-tmp").as_path()));
+        assert_eq!(tmp.as_os_str().len(), state.as_os_str().len() + 29);
+        assert_eq!(tmp.as_os_str().len(), uuid.as_os_str().len());
+        assert_ne!(tmp, uuid);
+        assert!(tmp.as_os_str().len() + SOCKET_NAME < SUN_PATH);
+        check_session_tmp(state).unwrap();
+    }
+
+    #[test]
+    fn refuses_a_home_too_deep_for_the_sandbox_sockets() {
+        // `/` and the name, then `/session-tmp/` and 16 digits: one byte over the limit.
+        let deep = PathBuf::from("/").join("d".repeat(SUN_PATH - 60));
+        let err = check_session_tmp(&deep).unwrap_err().to_string();
+        assert!(err.contains("MOTHERSHIP_HOME"), "{err}");
+        let fits = PathBuf::from("/").join("d".repeat(SUN_PATH - 61));
+        check_session_tmp(&fits).unwrap();
     }
 }

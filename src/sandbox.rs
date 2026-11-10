@@ -336,10 +336,10 @@ mod tests {
     fn denies_other_sessions_temporary_files() {
         let home = std::env::temp_dir().join(format!("mothership-tmp-{}", std::process::id()));
         let state = home.join(".mothership");
-        for dir in ["worktrees/A", "progress/a/tmp", "progress/b/tmp"] {
+        for dir in ["worktrees/A", "session-tmp/aaaa", "session-tmp/bbbb"] {
             std::fs::create_dir_all(state.join(dir)).unwrap();
         }
-        let own = state.join("progress/a");
+        let own = state.join("session-tmp/aaaa");
         let paths = Paths {
             read: vec![],
             write: vec![own.clone()],
@@ -348,10 +348,10 @@ mod tests {
         let made = settings(&home, &state, &state.join("worktrees/A"), &[], &[], &paths);
         let deny: Vec<String> =
             serde_json::from_value(made["permissions"]["deny"].clone()).unwrap();
-        let other = state.join("progress/b").display().to_string();
+        let other = state.join("session-tmp/bbbb").display().to_string();
         assert!(deny.contains(&format!("Read(/{other}/**)")), "{deny:?}");
         assert!(deny.contains(&format!("Edit(/{other}/**)")), "{deny:?}");
-        assert!(!deny.iter().any(|r| r.contains("progress/a")), "{deny:?}");
+        assert!(!deny.iter().any(|r| r.contains("aaaa")), "{deny:?}");
         assert_eq!(made["sandbox"]["filesystem"]["allowWrite"], json!([own]));
         std::fs::remove_dir_all(&home).unwrap();
     }

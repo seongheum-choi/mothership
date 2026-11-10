@@ -125,6 +125,9 @@ impl Harness {
         env.extend([
             ("HOME", home.display().to_string()),
             ("MOTHERSHIP_HOME", state.display().to_string()),
+            // Under an agent's own `TMPDIR` the home is too deep for the sandbox's sockets; the
+            // fake `claude` makes none.
+            ("MOTHERSHIP_ALLOW_LONG_TMPDIR", "1".into()),
             ("PATH", format!("{}:{path}", bin.display())),
             ("LINEAR_API_URL", mock.url.clone()),
             ("LINEAR_CLIENT_ID", "client".into()),
