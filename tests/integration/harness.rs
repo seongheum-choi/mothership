@@ -443,6 +443,47 @@ fn can_list_processes() -> bool {
         .is_ok_and(|s| matches!(s.code(), Some(0 | 1)))
 }
 
+/// Waits until no process of this run is left. The fakes run from the instances' directories
+/// (`mothership-it-<pid>-<n>/bin/claude`), so one that mothership did not kill, or left frozen,
+/// shows that path on its command line. Leftovers are killed, then named in the error.
+pub async fn no_leftovers() -> Result<()> {
+    if !can_list_processes() {
+        return Ok(());
+    }
+    let pattern = format!("mothership-it-{}-", std::process::id());
+    let pids = || {
+        std::process::Command::new("pgrep")
+            .args(["-f", &pattern])
+            .output()
+            .map(|out| {
+                String::from_utf8_lossy(&out.stdout)
+                    .split_whitespace()
+                    .collect::<Vec<_>>()
+                    .join(",")
+            })
+            .unwrap_or_default()
+    };
+    if eventually("leftover processes to exit", || {
+        pids().is_empty().then_some(())
+    })
+    .await
+    .is_ok()
+    {
+        return Ok(());
+    }
+    let left = pids();
+    let ps = std::process::Command::new("ps")
+        .args(["-o", "pid=,stat=,args=", "-p", &left])
+        .output()?;
+    for pid in left.split(',') {
+        let _ = signal("-KILL", pid.parse()?);
+    }
+    bail!(
+        "processes left behind (now killed):\n{}",
+        String::from_utf8_lossy(&ps.stdout)
+    )
+}
+
 /// A scenario that stopped short because this environment lacks something it needs.
 #[derive(Debug)]
 pub struct Skipped(pub &'static str);
