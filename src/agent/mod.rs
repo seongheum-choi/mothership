@@ -236,15 +236,20 @@ impl Agent {
 }
 
 /// Kills `root` and everything it started. Agents run shell commands in their own process
-/// groups, so the whole tree is collected first: each process is frozen (SIGSTOP) before its
-/// children are listed, so nothing forks past the sweep.
+/// groups, so the tree is walked by parent: each process is frozen (SIGSTOP) while its children
+/// are listed, so it cannot fork past the sweep, and killed right after. One shell does all three,
+/// so a process is never left frozen, even when mothership dies in the middle of the sweep.
 pub fn kill_tree(root: u32) {
-    use std::process::Command;
+    const FREEZE_LIST_KILL: &str = r#"kill -STOP "$1"; pgrep -P "$1"; kill -KILL "$1""#;
     let mut tree = vec![root.to_string()];
     let mut next = 0;
     while let Some(pid) = tree.get(next).cloned() {
-        let _ = Command::new("kill").args(["-STOP", &pid]).status();
-        if let Ok(out) = Command::new("pgrep").args(["-P", &pid]).output() {
+        let out = std::process::Command::new("sh")
+            .args(["-c", FREEZE_LIST_KILL, "sh", &pid])
+            .stdin(Stdio::null())
+            .stderr(Stdio::null())
+            .output();
+        if let Ok(out) = out {
             tree.extend(
                 String::from_utf8_lossy(&out.stdout)
                     .split_whitespace()
@@ -253,7 +258,6 @@ pub fn kill_tree(root: u32) {
         }
         next += 1;
     }
-    let _ = Command::new("kill").arg("-KILL").args(&tree).status();
 }
 
 #[cfg(test)]
