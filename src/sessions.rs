@@ -318,7 +318,11 @@ mod tests {
         assert_eq!(find(9, "acme-593").as_deref(), Some("pr9"), "opened for it");
         assert_eq!(find(8, "acme-593-3").as_deref(), Some("pr8"));
         assert_eq!(find(10, "acme-593-3"), None, "pr8's branch is not its own");
-        assert_eq!(find(11, "acme-593-4"), None, "stacked branches are not owned");
+        assert_eq!(
+            find(11, "acme-593-4"),
+            None,
+            "stacked branches are not owned"
+        );
         assert_eq!(find(12, "main"), None);
         let other_repo = PullRequestRef {
             repo: "o/lib".into(),

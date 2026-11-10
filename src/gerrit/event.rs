@@ -171,12 +171,7 @@ mod tests {
         ] {
             assert!(mentions(text, name), "{text}");
         }
-        for text in [
-            "acme-bot",
-            "@acme-bot-2",
-            "@acme-bot_bot",
-            "x@acme-bot",
-        ] {
+        for text in ["acme-bot", "@acme-bot-2", "@acme-bot_bot", "x@acme-bot"] {
             assert!(!mentions(text, name), "{text}");
         }
     }
@@ -190,7 +185,10 @@ mod tests {
         };
         assert!(a("", "N@x.com", "").same(&a("Alice", "n@x.com", "")));
         assert!(a("", "", "alice").same(&a("", "n@x.com", "alice")));
-        assert!(!a("Alice", "", "").same(&a("Alice", "", "")), "names repeat");
+        assert!(
+            !a("Alice", "", "").same(&a("Alice", "", "")),
+            "names repeat"
+        );
         assert!(!a("", "", "").same(&a("", "", "")));
         assert_eq!(a("", "", "").label(), "someone");
     }

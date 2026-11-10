@@ -96,8 +96,7 @@ mod tests {
 
     #[test]
     fn workspace_matches_id_or_url_key() {
-        let data =
-            json!({"viewer":{"organization":{"id":"org-1","urlKey":"acme","name":"ACME"}}});
+        let data = json!({"viewer":{"organization":{"id":"org-1","urlKey":"acme","name":"ACME"}}});
         let ws = Workspace::from_viewer(&data).unwrap();
         assert!(ws.is("org-1"));
         assert!(ws.is("acme"));
