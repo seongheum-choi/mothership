@@ -71,7 +71,9 @@ pub(super) fn parse_list(list: &str) -> Vec<String> {
 
 /// A comma-separated path list (`SANDBOX_READ`, `SANDBOX_WRITE`) with `~` standing for the
 /// user's home, since the deny rules need absolute paths. The OS sandbox judges a symlink by
-/// its target, so a symlink's resolved target is listed after it.
+/// its target, so a symlink's resolved target is listed after it. A path that does not exist
+/// yet is resolved through its nearest existing ancestor: `/tmp/corgi`, which corgi creates
+/// only when it runs tests, has to be allowed as `/private/tmp/corgi` on macOS.
 pub(super) fn parse_paths(key: &str, list: Option<&str>, user_home: &Path) -> Result<Vec<PathBuf>> {
     let mut paths = Vec::new();
     for p in parse_list(list.unwrap_or_default()) {
@@ -85,11 +87,19 @@ pub(super) fn parse_paths(key: &str, list: Option<&str>, user_home: &Path) -> Re
             // listing it would silently deny everything instead.
             bail!("{key} cannot list the home directory itself; name the paths inside it");
         }
-        let target = std::fs::canonicalize(&path).ok().filter(|t| *t != path);
+        let target = resolve(&path).filter(|t| *t != path);
         paths.push(path);
         paths.extend(target);
     }
     Ok(paths)
+}
+
+/// `path` with its nearest existing ancestor's symlinks resolved and the missing rest appended.
+fn resolve(path: &Path) -> Option<PathBuf> {
+    path.ancestors().find_map(|ancestor| {
+        let resolved = std::fs::canonicalize(ancestor).ok()?;
+        Some(resolved.join(path.strip_prefix(ancestor).ok()?))
+    })
 }
 
 /// A comma-separated list of entries directly under the user's home (`SANDBOX_SKIP_DENY`),
@@ -213,9 +223,17 @@ mod tests {
         let paths = parse_paths("K", Some("~/.gitconfig,~/settings"), &home).unwrap();
         let mut expected = vec![home.join(".gitconfig"), target, home.join("settings")];
         if settings != home.join("settings") {
-            expected.push(settings);
+            expected.push(settings.clone());
         }
         assert_eq!(paths, expected);
+
+        // A path that does not exist yet still gets its resolved spelling.
+        std::os::unix::fs::symlink(home.join("settings"), home.join("linked")).unwrap();
+        let paths = parse_paths("K", Some("~/linked/later/dir"), &home).unwrap();
+        assert_eq!(
+            paths,
+            [home.join("linked/later/dir"), settings.join("later/dir")]
+        );
         std::fs::remove_dir_all(&home).unwrap();
     }
 
