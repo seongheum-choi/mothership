@@ -328,6 +328,15 @@ fn deny_dir(path: &Path) -> String {
     format!("Read(/{}/**)", path.display())
 }
 
+/// The path a `Read(…)` or `Edit(…)` rule covers, from either of the spellings above.
+fn rule_path(rule: &str) -> &Path {
+    let inner = rule
+        .split_once('(')
+        .map_or(rule, |(_, rest)| rest.trim_end_matches(')'));
+    let path = inner.strip_prefix('/').unwrap_or(inner);
+    Path::new(path.strip_suffix("/**").unwrap_or(path))
+}
+
 fn deny_file(path: &Path) -> String {
     format!("Read(/{})", path.display())
 }
@@ -464,24 +473,29 @@ async fn linear_progress_from_bash_becomes_a_thought(ctx: Ctx) -> Result<()> {
             .then_some(())
     })
     .await?;
-    let args = argv(&h.prompt_with(&prompt).await?);
+    let call = h.prompt_with(&prompt).await?;
+    let args = argv(&call);
     let settings: Value = serde_json::from_str(flag(&args, "--settings")?)?;
     // Of the progress and temporary directories, a session may write only its own.
     let progress = h.home.join(".mothership/progress/s13");
+    let tmp = PathBuf::from(call["tmpdir"].as_str().unwrap_or_default());
     let write = &settings["sandbox"]["filesystem"]["allowWrite"];
     ensure!(
         write[0] == json!(progress)
-            && write[1]
-                .as_str()
-                .is_some_and(|t| t.contains("/.mothership/session-tmp/"))
+            && write[1] == json!(tmp)
+            && tmp.parent() == Some(h.home.join(".mothership/session-tmp").as_path())
             && write.as_array().map(Vec::len) == Some(2),
         "{settings}"
     );
+    // Compared as paths: the test's own home may sit under a `session-tmp` or a `progress`.
     let deny = deny_rules(&args)?;
     ensure!(
-        !deny
-            .iter()
-            .any(|r| r.contains("/progress") || r.contains("/session-tmp")),
+        !deny.iter().any(|r| {
+            let denied = rule_path(r);
+            [&progress, &tmp]
+                .iter()
+                .any(|own| own.starts_with(denied) || denied.starts_with(own))
+        }),
         "own directories denied: {deny:#?}"
     );
     Ok(())
