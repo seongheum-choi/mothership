@@ -282,7 +282,18 @@ impl Harness {
 
     /// Waits for the session's `n`th (from 1) activity of `kind` and returns its content.
     pub async fn activity(&self, sid: &str, kind: &str, n: usize) -> Result<Value> {
-        eventually(&format!("{kind} activity #{n} on {sid}"), || {
+        self.activity_within(PATIENCE, sid, kind, n).await
+    }
+
+    /// Like [`Harness::activity`], for up to `patience`.
+    pub async fn activity_within(
+        &self,
+        patience: Duration,
+        sid: &str,
+        kind: &str,
+        n: usize,
+    ) -> Result<Value> {
+        eventually_within(patience, &format!("{kind} activity #{n} on {sid}"), || {
             self.activities(sid)
                 .into_iter()
                 .filter(|a| a["type"] == kind)
@@ -413,8 +424,17 @@ async fn wait_ready(
 }
 
 /// Polls `probe` until it returns something, for up to [`PATIENCE`].
-pub async fn eventually<T>(what: &str, mut probe: impl FnMut() -> Option<T>) -> Result<T> {
-    let deadline = Instant::now() + PATIENCE;
+pub async fn eventually<T>(what: &str, probe: impl FnMut() -> Option<T>) -> Result<T> {
+    eventually_within(PATIENCE, what, probe).await
+}
+
+/// Like [`eventually`], for up to `patience`.
+pub async fn eventually_within<T>(
+    patience: Duration,
+    what: &str,
+    mut probe: impl FnMut() -> Option<T>,
+) -> Result<T> {
+    let deadline = Instant::now() + patience;
     loop {
         if let Some(found) = probe() {
             return Ok(found);

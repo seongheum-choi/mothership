@@ -6,7 +6,8 @@ use crate::{
         HANG, HOLD, HOST_COMMAND, HOST_RUN, PROGRESS, PROGRESS_LINE, RELEASE,
     },
     harness::{
-        Ctx, Harness, Setup, ZULIP_TOKEN, create_repo, eventually, exited, git, tool_exited,
+        Ctx, Harness, Setup, ZULIP_TOKEN, create_repo, eventually, eventually_within, exited, git,
+        tool_exited,
     },
     mock::{self, ORG},
 };
@@ -16,6 +17,7 @@ use std::{
     future::Future,
     path::{Path, PathBuf},
     pin::Pin,
+    time::Duration,
 };
 
 pub type Scenario = fn(Ctx) -> Pin<Box<dyn Future<Output = Result<()>> + Send>>;
@@ -2163,6 +2165,12 @@ async fn model_labels_beat_the_mode_and_bad_ones_are_ignored(ctx: Ctx) -> Result
     Ok(())
 }
 
+/// How long to wait for what a host run does. The wait spans a turn's start, the watcher's
+/// poll of up to a second, and two more starts of this test binary (as `sandbox-exec` and as
+/// `codex` or `sh`): more than any other wait here, so it ran out of the usual 15s under load
+/// that made a turn alone take 12s to start.
+const HOST_RUN_PATIENCE: Duration = Duration::from_secs(30);
+
 /// A Codex run the agent asks for in `MOTHERSHIP_RUNS` runs under `HOST_SANDBOX` with a profile
 /// made from the session's rules, Codex's own sandbox off, in the worktree; the answer lands
 /// next to the request, and its start and end show up as thoughts.
@@ -2172,7 +2180,9 @@ async fn host_run_answers_a_codex_request(ctx: Ctx) -> Result<()> {
     h.mock.add_issue(&issue);
     let prompt = format!("check {HOST_RUN}");
     ensure!(h.linear(created("s30", &issue, &prompt)).await? == 200);
-    let response = h.activity("s30", "response", 1).await?;
+    let response = h
+        .activity_within(HOST_RUN_PATIENCE, "s30", "response", 1)
+        .await?;
     let worktree = h.home.join(".mothership/worktrees/SH-30");
     let answer: Value = body(&response)
         .strip_prefix("Host: ")
@@ -2233,7 +2243,10 @@ async fn host_run_dies_with_the_turn(ctx: Ctx) -> Result<()> {
     h.mock.add_issue(&issue);
     let prompt = format!("check {HOST_RUN} {HOLD} {RELEASE}");
     ensure!(h.linear(created("s31", &issue, &prompt)).await? == 200);
-    let codex = eventually("codex run", || h.calls("codex").into_iter().next()).await?;
+    let codex = eventually_within(HOST_RUN_PATIENCE, "codex run", || {
+        h.calls("codex").into_iter().next()
+    })
+    .await?;
     ensure!(h.linear(stop("s31", &issue)).await? == 200);
     let response = h.activity("s31", "response", 1).await?;
     ensure!(body(&response) == "Stopped.", "{response}");
@@ -2257,7 +2270,9 @@ async fn host_run_runs_a_repository_command(ctx: Ctx) -> Result<()> {
     h.mock.add_issue(&issue);
     let prompt = format!("prepare {HOST_COMMAND}");
     ensure!(h.linear(created("s32", &issue, &prompt)).await? == 200);
-    let response = h.activity("s32", "response", 1).await?;
+    let response = h
+        .activity_within(HOST_RUN_PATIENCE, "s32", "response", 1)
+        .await?;
     let answer: Value = serde_json::from_str(
         body(&response)
             .strip_prefix("Host: ")
