@@ -1120,10 +1120,9 @@ async fn github_feedback_loop_is_paused(ctx: Ctx) -> Result<()> {
         ..Setup::default()
     };
     let h = Harness::start(&ctx, setup).await?;
-    let issue = issue(8, "Loop.");
-    h.mock.add_issue(&issue);
-    ensure!(h.linear(created("s8", &issue, "context of SH-8")).await? == 200);
-    h.activity("s8", "response", 1).await?;
+    // The turn holds until the cap stops it: one that answered every round could end before the
+    // refusal, leaving no turn to stop.
+    held_session(&h, "s8", 8).await?;
     let event = "pull_request_review_comment";
     for n in 1..=12 {
         let comment = line_comment(n, "OWNER", &format!("@impala round {n}."), "o/r");
