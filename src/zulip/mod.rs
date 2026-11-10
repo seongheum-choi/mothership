@@ -5,7 +5,7 @@ mod api;
 mod conversation;
 mod surface;
 
-use crate::{app::App, session::choice, signature};
+use crate::{app::App, config::trusts, session::choice, signature};
 use api::{Client, Destination};
 use axum::{Json, Router, extract::State, http::StatusCode, routing::post};
 use conversation::{conversation, strip_mention, topic_context};
@@ -59,6 +59,20 @@ async fn handle(app: Arc<App>, p: Value) {
     let (key, dest, location) = conversation(message);
     tracing::info!("[{key}] zulip message {message_id}");
     let client = client(&app);
+    if !trusts(
+        &client.cfg.trusted_emails,
+        &[message["sender_email"].as_str()],
+    ) {
+        tracing::warn!(
+            "[{key}] refused a message from Zulip user {}: not a trusted sender",
+            message["sender_id"]
+        );
+        let reply = "This agent only works for its owner.";
+        if let Err(e) = client.post_message(&dest, reply).await {
+            tracing::warn!("[{key}] zulip refusal failed: {e:#}");
+        }
+        return;
+    }
     if let Err(e) = client.react(message_id, RECEIVED, true).await {
         tracing::warn!("[{key}] zulip reaction failed: {e:#}");
     }

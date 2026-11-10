@@ -8,6 +8,7 @@ use super::{
 };
 use crate::{
     app::App,
+    config::trusts,
     session::{Outcome, Surface},
 };
 use axum::{
@@ -15,7 +16,7 @@ use axum::{
     extract::State,
     http::{HeaderMap, StatusCode},
 };
-use serde_json::Value;
+use serde_json::{Value, json};
 use std::sync::Arc;
 
 /// `Linear-Signature` is hex(HMAC-SHA256(secret, raw body)). A missing `webhookTimestamp`,
@@ -89,6 +90,12 @@ async fn handle(app: Arc<App>, p: Value) {
             tracing::info!("[{sid}] linear created: opened by mothership, already started");
             return;
         }
+        Some(action @ ("created" | "prompted"))
+            if !trusts(&app.cfg.linear.trusted_users, &caller(&p)) =>
+        {
+            refuse(&app, sid, action, caller(&p)[0]).await;
+            return;
+        }
         Some("created") => {
             // A delegated session starts work on the issue. A mention may be just a question,
             // so the agent moves those issues itself when it starts work (see the prompt).
@@ -124,6 +131,36 @@ async fn handle(app: Arc<App>, p: Value) {
     };
     tracing::info!("[{sid}] linear {} on {}", p["action"], issue["identifier"]);
     start_turn(&app, sid, issue, prompt, request).await;
+}
+
+/// Who called the agent, as their Linear user id and email: who delegated or mentioned it for
+/// `created`, the reply's author for `prompted`. Linear leaves a session's creator unset when
+/// automation or another agent started it.
+fn caller(p: &Value) -> [Option<&str>; 2] {
+    let (user, id) = if p["action"] == "created" {
+        (
+            &p["agentSession"]["creator"],
+            &p["agentSession"]["creatorId"],
+        )
+    } else {
+        (&p["agentActivity"]["user"], &p["agentActivity"]["userId"])
+    };
+    [user["id"].as_str().or(id.as_str()), user["email"].as_str()]
+}
+
+/// Answers someone `LINEAR_TRUSTED_USERS` does not list without starting anything, and without
+/// saying who it lists. A refused reply in a running session leaves the turn running.
+async fn refuse(app: &Arc<App>, sid: &str, action: &str, user: Option<&str>) {
+    let user = user.unwrap_or("none");
+    let body = if action == "created" {
+        tracing::warn!("[{sid}] refused a session from Linear user {user}: not a trusted user");
+        "This agent only works for its owner."
+    } else {
+        tracing::warn!("[{sid}] ignored a prompt from Linear user {user}: not a trusted user");
+        "This agent only works for its owner, so it ignored that message."
+    };
+    let content = json!({ "type": "response", "body": body });
+    app.linear.surface.activity(app, sid, content, false).await;
 }
 
 /// Linear's own `promptContext` (issue, comments, guidance) when present, else a minimal one.
@@ -167,6 +204,21 @@ mod tests {
         assert!(!verify("s", body, sig, 1_070_000), "stale timestamp");
         assert!(!verify("t", body, sig, 1_030_000), "wrong secret");
         assert!(!verify("s", body, "zz", 1_030_000), "not hex");
+    }
+
+    #[test]
+    fn caller_is_the_session_creator_or_the_reply_author() {
+        let created = json!({"action": "created", "agentSession": {
+            "creatorId": "u1", "creator": {"id": "u1", "email": "a@x"}}});
+        assert_eq!(caller(&created), [Some("u1"), Some("a@x")]);
+        let by_id = json!({"action": "created", "agentSession": {"creatorId": "u1"}});
+        assert_eq!(caller(&by_id), [Some("u1"), None]);
+        let automation = json!({"action": "created", "agentSession": {"creator": null}});
+        assert_eq!(caller(&automation), [None, None]);
+        let prompted = json!({"action": "prompted",
+            "agentSession": {"creator": {"id": "u1", "email": "a@x"}},
+            "agentActivity": {"userId": "u2", "user": {"id": "u2", "email": "b@x"}}});
+        assert_eq!(caller(&prompted), [Some("u2"), Some("b@x")]);
     }
 
     #[test]

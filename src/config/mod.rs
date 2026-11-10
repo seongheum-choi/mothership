@@ -8,7 +8,9 @@ mod vars;
 
 pub use model::{EFFORTS, ModelDefaults, ModelFields, check_effort};
 pub use reload::Live;
-pub use surfaces::{GerritConfig, GitHubAppConfig, GitHubConfig, LinearConfig, ZulipConfig};
+pub use surfaces::{
+    GerritConfig, GitHubAppConfig, GitHubConfig, LinearConfig, ZulipConfig, trusts,
+};
 
 use crate::{review::ReviewBackend, sandbox, store::Tokens, tunnel::Tunnel};
 use anyhow::{Context, Result};
