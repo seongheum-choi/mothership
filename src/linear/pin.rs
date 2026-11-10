@@ -96,12 +96,11 @@ mod tests {
 
     #[test]
     fn workspace_matches_id_or_url_key() {
-        let data =
-            json!({"viewer":{"organization":{"id":"org-1","urlKey":"alean","name":"ALEAN"}}});
+        let data = json!({"viewer":{"organization":{"id":"org-1","urlKey":"acme","name":"ACME"}}});
         let ws = Workspace::from_viewer(&data).unwrap();
         assert!(ws.is("org-1"));
-        assert!(ws.is("alean"));
-        assert!(ws.is("ALEAN"), "URL key is case-insensitive");
+        assert!(ws.is("acme"));
+        assert!(ws.is("ACME"), "URL key is case-insensitive");
         assert!(!ws.is("ORG-1"), "IDs are compared exactly");
         assert!(!ws.is("personal"));
         assert!(Workspace::from_viewer(&json!({"viewer":null})).is_err());
@@ -123,19 +122,19 @@ mod tests {
             url_key: url_key.into(),
             name: url_key.to_uppercase(),
         };
-        let alean = ws("org-1", "alean");
+        let acme = ws("org-1", "acme");
         let personal = ws("org-2", "personal");
         assert!(
-            check_pin(None, None, &alean).is_ok(),
+            check_pin(None, None, &acme).is_ok(),
             "first install, no setting"
         );
-        assert!(check_pin(Some("alean"), None, &alean).is_ok());
-        assert!(check_pin(Some("org-1"), None, &alean).is_ok());
-        assert!(check_pin(Some("personal"), None, &alean).is_err());
-        assert!(check_pin(None, Some(&alean), &alean).is_ok(), "same pin");
-        assert!(check_pin(None, Some(&alean), &personal).is_err());
+        assert!(check_pin(Some("acme"), None, &acme).is_ok());
+        assert!(check_pin(Some("org-1"), None, &acme).is_ok());
+        assert!(check_pin(Some("personal"), None, &acme).is_err());
+        assert!(check_pin(None, Some(&acme), &acme).is_ok(), "same pin");
+        assert!(check_pin(None, Some(&acme), &personal).is_err());
         assert!(
-            check_pin(Some("personal"), Some(&alean), &personal).is_err(),
+            check_pin(Some("personal"), Some(&acme), &personal).is_err(),
             "pin never switches"
         );
     }

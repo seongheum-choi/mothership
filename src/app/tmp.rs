@@ -166,12 +166,12 @@ mod tests {
     use super::*;
 
     fn short() -> TmpRoot {
-        TmpRoot::new(Path::new("/Users/nate/.mothership"), 502, true)
+        TmpRoot::new(Path::new("/Users/me/.mothership"), 502, true)
     }
 
     #[test]
     fn a_session_directory_has_a_fixed_length_whatever_the_key() {
-        let state = Path::new("/home/nate/.mothership");
+        let state = Path::new("/home/me/.mothership");
         let root = TmpRoot::new(state, 1000, false);
         let topic = "a very long Zulip topic about something ".repeat(8);
         let zulip = root.session(&format!("zulip:engineering-and-operations:{topic}"));
@@ -211,7 +211,7 @@ mod tests {
         let err = TmpRoot::new(Path::new("/"), 501_234, true).check_for(true);
         assert!(err.unwrap_err().to_string().contains("/tmp/claude-501234"));
         // The measured fallback: `<home>/session-tmp/<16>` on macOS.
-        let home = TmpRoot::new(Path::new("/Users/csheum/.mothership"), 502, false);
+        let home = TmpRoot::new(Path::new("/Users/me/.mothership"), 502, false);
         assert!(home.check_for(true).is_err());
     }
 

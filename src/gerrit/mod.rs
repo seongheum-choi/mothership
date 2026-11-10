@@ -158,15 +158,15 @@ mod tests {
     pub(super) fn cfg() -> GerritConfig {
         GerritConfig {
             url: "https://gerrit.example.com".into(),
-            username: "alean-impala".into(),
+            username: "acme-bot".into(),
             http_password: "secret".into(),
             webhook_token: Some("token".into()),
-            trusted_emails: vec!["Nate@Example.com".into()],
-            mention: "alean-impala".into(),
+            trusted_emails: vec!["Alice@Example.com".into()],
+            mention: "acme-bot".into(),
         }
     }
 
-    /// A `comment-added` event by Nate on change 12, patch set 2, topic `SH-8`.
+    /// A `comment-added` event by Alice on change 12, patch set 2, topic `SH-8`.
     pub(super) fn comment_added() -> Value {
         serde_json::json!({
             "type": "comment-added",
@@ -175,7 +175,7 @@ mod tests {
                 "url": "https://gerrit.example.com/c/team/app/+/12", "status": "NEW",
             },
             "patchSet": {"number": 2, "revision": "abc"},
-            "author": {"name": "Nate", "email": "nate@example.com", "username": "nate"},
+            "author": {"name": "Alice", "email": "alice@example.com", "username": "alice"},
             "comment": "Patch Set 2: Code-Review-1\n\n(1 comment)",
             "eventCreatedOn": 1_700_000_000,
         })
@@ -263,12 +263,12 @@ mod tests {
         let gerrit = "url=https://gerrit.example.com/a/team/app\n";
         let found = git("fill", &format!("{gerrit}\n"));
         assert!(
-            found.contains("username=alean-impala\npassword=secret\n"),
+            found.contains("username=acme-bot\npassword=secret\n"),
             "{found}"
         );
         git(
             "approve",
-            &format!("{gerrit}username=alean-impala\npassword=secret\n\n"),
+            &format!("{gerrit}username=acme-bot\npassword=secret\n\n"),
         );
         assert_eq!(logged(), "", "the global helper never hears of Gerrit");
 

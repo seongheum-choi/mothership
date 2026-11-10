@@ -105,8 +105,8 @@ fn issue_context(issue: &Value) -> String {
     )
 }
 
-/// Linear issue keys (`EN-593`) for a pull request: those its description links first, in
-/// order, then the one its head branch is named after (`en-593-3`, `nate/en-593-fix`).
+/// Linear issue keys (`ACME-593`) for a pull request: those its description links first, in
+/// order, then the one its head branch is named after (`acme-593-3`, `alice/acme-593-fix`).
 fn issue_keys(body: &str, branch: &str) -> Vec<String> {
     const LINK: &str = "linear.app/";
     let mut keys: Vec<String> = Vec::new();
@@ -172,20 +172,20 @@ mod tests {
 
     #[test]
     fn keys_come_from_description_links_then_the_branch() {
-        let body = "Fixes https://linear.app/acme/issue/en-593/fix-login and \
+        let body = "Fixes https://linear.app/acme/issue/acme-593/fix-login and \
                     [SH-7](https://linear.app/acme/issue/SH-7). Again \
-                    https://linear.app/acme/issue/EN-593#comment-1";
+                    https://linear.app/acme/issue/ACME-593#comment-1";
         assert_eq!(
-            issue_keys(body, "nate/sh-9-tidy"),
-            ["EN-593", "SH-7", "SH-9"]
+            issue_keys(body, "alice/sh-9-tidy"),
+            ["ACME-593", "SH-7", "SH-9"]
         );
-        assert_eq!(issue_keys("", "en-593-3"), ["EN-593"]);
+        assert_eq!(issue_keys("", "acme-593-3"), ["ACME-593"]);
         assert_eq!(issue_keys("", "sh-212"), ["SH-212"]);
         assert_eq!(issue_keys("", "a1b-2"), ["A1B-2"]);
-        assert_eq!(issue_keys("", "nate/en-593"), ["EN-593"]);
+        assert_eq!(issue_keys("", "alice/acme-593"), ["ACME-593"]);
         assert_eq!(
-            issue_keys("https://linear.app/acme/issue/EN-1", "en-1-x"),
-            ["EN-1"],
+            issue_keys("https://linear.app/acme/issue/ACME-1", "acme-1-x"),
+            ["ACME-1"],
             "once each"
         );
     }
@@ -197,17 +197,17 @@ mod tests {
             "feature/login",
             "1x-2",
             "en-",
-            "en-12a",
+            "acme-12a",
             "-5",
             "release-v2",
         ] {
             assert_eq!(issue_keys("", branch), Vec::<String>::new(), "{branch}");
         }
         for body in [
-            "https://linear.app/acme/project/EN-5",
+            "https://linear.app/acme/project/ACME-5",
             "https://linear.app/acme/issue/",
             "https://linear.app/acme",
-            "linear.app/issue/EN-5",
+            "linear.app/issue/ACME-5",
         ] {
             assert_eq!(issue_keys(body, "main"), Vec::<String>::new(), "{body}");
         }

@@ -29,7 +29,7 @@ pub struct Opening<'a> {
 }
 
 impl Linear {
-    /// The issue `key` (`EN-593`) with the fields a session records; `None` when Linear has no
+    /// The issue `key` (`ACME-593`) with the fields a session records; `None` when Linear has no
     /// such issue.
     pub async fn issue_by_key(&self, app: &App, key: &str) -> Result<Option<Value>> {
         let data = self

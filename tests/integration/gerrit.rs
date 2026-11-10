@@ -16,10 +16,10 @@ use std::{
 };
 
 /// The agent's Gerrit account.
-pub const USERNAME: &str = "impala";
+pub const USERNAME: &str = "acme-bot";
 pub const HTTP_PASSWORD: &str = "http-pass";
-/// `Basic` + base64(`impala:http-pass`).
-const AUTHORIZATION: &str = "Basic aW1wYWxhOmh0dHAtcGFzcw==";
+/// `Basic` + base64(`acme-bot:http-pass`).
+const AUTHORIZATION: &str = "Basic YWNtZS1ib3Q6aHR0cC1wYXNz";
 
 #[derive(Default)]
 pub struct Recorded {

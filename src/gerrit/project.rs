@@ -115,9 +115,9 @@ mod tests {
         for origin in [
             "https://gerrit.example.com/a/team/app",
             "https://gerrit.example.com/team/app.git",
-            "https://impala@Gerrit.Example.com:8443/team/app/",
-            "ssh://impala@gerrit.example.com:29418/team/app",
-            "impala@gerrit.example.com:team/app.git",
+            "https://acme-bot@Gerrit.Example.com:8443/team/app/",
+            "ssh://acme-bot@gerrit.example.com:29418/team/app",
+            "acme-bot@gerrit.example.com:team/app.git",
         ] {
             assert_eq!(
                 project_of(origin, gerrit).as_deref(),

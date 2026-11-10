@@ -25,11 +25,11 @@ use tokio::process::{Child, Command};
 pub const LINEAR_SECRET: &str = "linear-secret";
 pub const GITHUB_SECRET: &str = "github-secret";
 /// The agent's GitHub account; feedback must mention it.
-pub const GITHUB_LOGIN: &str = "impala";
+pub const GITHUB_LOGIN: &str = "acme-bot";
 pub const ZULIP_TOKEN: &str = "zulip-token";
 pub const GERRIT_TOKEN: &str = "gerrit-token";
 /// The one account whose Gerrit reviews are heard.
-pub const GERRIT_TRUSTED: &str = "nate@example.com";
+pub const GERRIT_TRUSTED: &str = "alice@example.com";
 pub const ZULIP_BOT: &str = "bot@zulip.test";
 
 /// How long `eventually` waits; everything here takes well under a second.

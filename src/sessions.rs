@@ -161,7 +161,7 @@ fn on_checkout(rec: &SessionRec, checkouts: &[PathBuf]) -> bool {
 
 /// Whether `rec` owns the pull request `pr` with head `branch`: `Some(true)` for the session a
 /// mention opened for it, `Some(false)` for a session on its head branch that no other pull
-/// request opened. A branch stacked on the session's (`en-593-3` on `en-593`) is not its own
+/// request opened. A branch stacked on the session's (`acme-593-3` on `acme-593`) is not its own
 /// unless its worktree is on it now: the first mention there opens a session for that pull
 /// request.
 fn owns(rec: &SessionRec, pr: &PullRequestRef, branch: &str) -> Option<bool> {
@@ -275,26 +275,26 @@ mod tests {
     #[test]
     fn closed_sessions_get_no_feedback() {
         let closed = |r: SessionRec| SessionRec { closed: true, ..r };
-        let done = HashMap::from([("done".to_string(), closed(rec("en-593", 9)))]);
+        let done = HashMap::from([("done".to_string(), closed(rec("acme-593", 9)))]);
         assert_eq!(
-            find(&done, &pr(7), "en-593", &["app"]),
+            find(&done, &pr(7), "acme-593", &["app"]),
             Some(Found::Closed("done".into()))
         );
         let reopened = HashMap::from([
-            ("done".to_string(), closed(rec("en-593", 9))),
-            ("again".to_string(), rec("en-593", 1)),
+            ("done".to_string(), closed(rec("acme-593", 9))),
+            ("again".to_string(), rec("acme-593", 1)),
         ]);
         assert_eq!(
-            find(&reopened, &pr(7), "en-593", &["app"]),
+            find(&reopened, &pr(7), "acme-593", &["app"]),
             Some(Found::Open("again".into())),
             "an open session wins over a newer closed one"
         );
         let opened = HashMap::from([
-            ("pr".to_string(), closed(opened_for(7, "en-593", 1))),
-            ("issue".to_string(), rec("en-593", 9)),
+            ("pr".to_string(), closed(opened_for(7, "acme-593", 1))),
+            ("issue".to_string(), rec("acme-593", 9)),
         ]);
         assert_eq!(
-            find(&opened, &pr(7), "en-593", &["app"]),
+            find(&opened, &pr(7), "acme-593", &["app"]),
             Some(Found::Closed("pr".into())),
             "the pull request's own session wins even closed"
         );
@@ -303,22 +303,26 @@ mod tests {
     #[test]
     fn each_pull_request_has_its_own_session() {
         let sessions = HashMap::from([
-            ("old".to_string(), rec("en-593", 1)),
-            ("new".to_string(), rec("en-593", 2)),
-            ("pr8".to_string(), opened_for(8, "en-593-3", 0)),
-            ("pr9".to_string(), opened_for(9, "en-593", 0)),
+            ("old".to_string(), rec("acme-593", 1)),
+            ("new".to_string(), rec("acme-593", 2)),
+            ("pr8".to_string(), opened_for(8, "acme-593-3", 0)),
+            ("pr9".to_string(), opened_for(9, "acme-593", 0)),
             ("chat".to_string(), SessionRec::default()),
         ]);
         let find = |number, head| open(find(&sessions, &pr(number), head, &["app"]));
         assert_eq!(
-            find(7, "en-593").as_deref(),
+            find(7, "acme-593").as_deref(),
             Some("new"),
             "newest on the branch"
         );
-        assert_eq!(find(9, "en-593").as_deref(), Some("pr9"), "opened for it");
-        assert_eq!(find(8, "en-593-3").as_deref(), Some("pr8"));
-        assert_eq!(find(10, "en-593-3"), None, "pr8's branch is not its own");
-        assert_eq!(find(11, "en-593-4"), None, "stacked branches are not owned");
+        assert_eq!(find(9, "acme-593").as_deref(), Some("pr9"), "opened for it");
+        assert_eq!(find(8, "acme-593-3").as_deref(), Some("pr8"));
+        assert_eq!(find(10, "acme-593-3"), None, "pr8's branch is not its own");
+        assert_eq!(
+            find(11, "acme-593-4"),
+            None,
+            "stacked branches are not owned"
+        );
         assert_eq!(find(12, "main"), None);
         let other_repo = PullRequestRef {
             repo: "o/lib".into(),

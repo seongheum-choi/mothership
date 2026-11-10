@@ -128,13 +128,13 @@ mod tests {
 
     #[test]
     fn lists_repos_by_kind() {
-        let mut vault = Repo::single("/notes/vault".into(), "main".into());
-        vault.git = false;
-        let repos = [Repo::single("/src/app".into(), "main".into()), vault];
+        let mut notes = Repo::single("/notes/notes".into(), "main".into());
+        notes.git = false;
+        let repos = [Repo::single("/src/app".into(), "main".into()), notes];
         assert_eq!(
             repo_list(&repos),
             "- `app`: /src/app, a git checkout; run `git -C /src/app pull` first when freshness \
-             matters\n- `vault`: /notes/vault, a plain directory (not git)\n"
+             matters\n- `notes`: /notes/notes, a plain directory (not git)\n"
         );
     }
 }

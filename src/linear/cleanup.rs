@@ -221,11 +221,11 @@ mod tests {
     #[test]
     fn closed_issue_worktrees_go_from_their_own_repository() {
         let app = Repo::single("/src/app".into(), "main".into());
-        let vault = Repo {
+        let notes = Repo {
             git: false,
-            ..Repo::single("/notes/vault".into(), "main".into())
+            ..Repo::single("/notes/notes".into(), "main".into())
         };
-        let repos = [app, Repo::single("/src/lib".into(), "main".into()), vault];
+        let repos = [app, Repo::single("/src/lib".into(), "main".into()), notes];
         let wt = Path::new("/wt");
         let pick = |recorded: Option<&str>, workspace: &str, clone: Option<&str>| {
             cleanup_repo(
@@ -246,10 +246,10 @@ mod tests {
         assert!(pick(None, "/wt/SH-1", Some("/src/gone")).is_err());
         assert!(pick(Some("gone"), "/wt/SH-1", None).is_err());
         assert!(
-            pick(Some("vault"), "/notes/vault", None).is_err(),
+            pick(Some("notes"), "/notes/notes", None).is_err(),
             "a non-git repository is the workspace itself"
         );
-        assert!(pick(Some("vault"), "/wt/SH-1", None).is_err());
+        assert!(pick(Some("notes"), "/wt/SH-1", None).is_err());
         assert!(pick(Some("app"), "/src/app", None).is_err());
         assert!(pick(Some("app"), "/elsewhere/SH-1", None).is_err());
         assert!(pick(Some("app"), "/wt/../src/app", None).is_err());

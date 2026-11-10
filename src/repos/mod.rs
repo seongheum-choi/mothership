@@ -103,7 +103,7 @@ mod tests {
             r#"[
               {"name": "app", "path": "/src/app", "labels": ["backend"],
                "linear_teams": ["APP"], "linear_projects": ["launch"]},
-              {"name": "vault", "path": "~/vault", "git": false,
+              {"name": "notes", "path": "~/notes", "git": false,
                "labels": ["notes", "label-id"],
                "linear_teams": ["Personal"]}
             ]"#,
@@ -121,7 +121,7 @@ mod tests {
             Some("app")
         );
         assert_eq!(
-            owning(&repos, Path::new("/Users/me/vault")),
+            owning(&repos, Path::new("/Users/me/notes")),
             None,
             "not git"
         );

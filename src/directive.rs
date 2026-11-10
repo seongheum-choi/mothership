@@ -65,7 +65,7 @@ mod tests {
 
     #[test]
     fn finds_the_first_named_value() {
-        assert_eq!(first("Fix it.\n[repo= vault ]", "repo"), Some("vault"));
+        assert_eq!(first("Fix it.\n[repo= notes ]", "repo"), Some("notes"));
         assert_eq!(first("[repo=]", "repo"), None);
         assert_eq!(first("add `[repo=<name>]` or `[repo=…]`", "repo"), None);
         assert_eq!(

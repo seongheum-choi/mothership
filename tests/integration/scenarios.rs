@@ -87,7 +87,7 @@ pub(crate) fn issue(n: u32, description: &str) -> Value {
         "title": format!("Issue {n}"),
         "url": format!("https://linear.app/acme/issue/SH-{n}"),
         "description": description,
-        "branchName": format!("nate/sh-{n}"),
+        "branchName": format!("alice/sh-{n}"),
         "state": {"type": "unstarted"},
         "team": {
             "id": "team-1", "key": "SH", "name": "Shop",
@@ -234,7 +234,7 @@ async fn linear_session_gets_a_response(ctx: Ctx) -> Result<()> {
         "{}",
         cwd.display()
     );
-    ensure!(git(cwd, &["symbolic-ref", "--short", "HEAD"])? == "nate/sh-1");
+    ensure!(git(cwd, &["symbolic-ref", "--short", "HEAD"])? == "alice/sh-1");
     ensure!(main_clone(cwd)? == h.home.join("src/app").display().to_string());
     ensure!(call["surface"] == "linear" && call["resume"].is_null());
 
@@ -675,11 +675,11 @@ async fn linear_closed_issue_cleans_up_its_worktree(ctx: Ctx) -> Result<()> {
         (session["closed"] == true && session["workspace"].is_null()).then_some(session)
     })
     .await?;
-    ensure!(session["branch"] == "nate/sh-16", "{session}");
+    ensure!(session["branch"] == "alice/sh-16", "{session}");
     let worktrees = git(&main, &["worktree", "list", "--porcelain"])?;
     ensure!(!worktrees.contains("SH-16"), "{worktrees}");
     ensure!(
-        git(&main, &["branch", "--list", "nate/sh-16"])?.contains("nate/sh-16"),
+        git(&main, &["branch", "--list", "alice/sh-16"])?.contains("alice/sh-16"),
         "the branch stays"
     );
     Ok(())
@@ -700,7 +700,7 @@ async fn linear_closed_issue_keeps_worktrees_still_in_use(ctx: Ctx) -> Result<()
     let shared_dir = worked_on(&h, "s17", &shared).await?;
     // A stacked issue on the same branch reuses the checkout git will not make twice.
     let mut stacked = issue(18, "[repo=app] On top.");
-    stacked["branchName"] = json!("nate/sh-17");
+    stacked["branchName"] = json!("alice/sh-17");
     ensure!(worked_on(&h, "s18", &stacked).await? == shared_dir);
 
     let dirty = issue(19, "[repo=app] Half done.");
@@ -910,7 +910,7 @@ async fn linear_lost_worktree_is_cut_again_where_its_branch_is(ctx: Ctx) -> Resu
         state: Some(json!({"sessions": {"s40": {
             "issue_id": issue["id"], "identifier": issue["identifier"],
             "title": issue["title"], "url": issue["url"],
-            "branch": "nate/sh-40",
+            "branch": "alice/sh-40",
         }}})),
         ..Setup::default()
     };
@@ -928,19 +928,19 @@ async fn linear_lost_worktree_is_cut_again_where_its_branch_is(ctx: Ctx) -> Resu
             "HEAD^{tree}",
         ],
     )?;
-    git(&lib, &["update-ref", "refs/heads/nate/sh-40", work.trim()])?;
+    git(&lib, &["update-ref", "refs/heads/alice/sh-40", work.trim()])?;
 
     ensure!(h.linear(prompted("s40", &issue, "carry on")).await? == 200);
     let thought = h.activity("s40", "thought", 1).await?;
     ensure!(
         body(&thought)
-            == "Working in `lib` (the repository with this session's branch `nate/sh-40`).",
+            == "Working in `lib` (the repository with this session's branch `alice/sh-40`).",
         "{thought}"
     );
     let call = h.prompt_with("carry on").await?;
     let cwd = Path::new(call["cwd"].as_str().context("cwd")?);
     ensure!(main_clone(cwd)? == lib.display().to_string());
-    ensure!(git(cwd, &["branch", "--show-current"])?.trim() == "nate/sh-40");
+    ensure!(git(cwd, &["branch", "--show-current"])?.trim() == "alice/sh-40");
     ensure!(git(cwd, &["log", "-1", "--format=%s"])?.trim() == "work so far");
     Ok(())
 }
@@ -1111,7 +1111,7 @@ fn pull_request(head_repo: &str) -> Value {
     json!({
         "number": 7,
         "html_url": "https://github.com/o/r/pull/7",
-        "head": {"ref": "nate/sh-8", "repo": {"full_name": head_repo}},
+        "head": {"ref": "alice/sh-8", "repo": {"full_name": head_repo}},
     })
 }
 
@@ -1141,7 +1141,7 @@ async fn github_feedback_loop_is_paused(ctx: Ctx) -> Result<()> {
     held_session(&h, "s8", 8).await?;
     let event = "pull_request_review_comment";
     for n in 1..=12 {
-        let comment = line_comment(n, "OWNER", &format!("@impala round {n}."), "o/r");
+        let comment = line_comment(n, "OWNER", &format!("@acme-bot round {n}."), "o/r");
         ensure!(h.github(event, &format!("d-{n}"), &comment).await? == 200);
     }
     let error = h.activity("s8", "error", 1).await?;
@@ -1169,7 +1169,7 @@ async fn github_feedback_loop_is_paused(ctx: Ctx) -> Result<()> {
 async fn github_feedback_continues_the_session(ctx: Ctx) -> Result<()> {
     let setup = Setup {
         github: true,
-        env: vec![("FAKE_GH_HEAD_REF", "nate/sh-8".into())],
+        env: vec![("FAKE_GH_HEAD_REF", "alice/sh-8".into())],
         ..Setup::default()
     };
     let h = Harness::start(&ctx, setup).await?;
@@ -1179,13 +1179,13 @@ async fn github_feedback_continues_the_session(ctx: Ctx) -> Result<()> {
     h.activity("s8", "response", 1).await?;
 
     let event = "pull_request_review_comment";
-    let outsider = line_comment(1, "NONE", "@impala outsider says rm -rf", "o/r");
+    let outsider = line_comment(1, "NONE", "@acme-bot outsider says rm -rf", "o/r");
     ensure!(h.github(event, "d-1", &outsider).await? == 200);
-    let fork = line_comment(2, "OWNER", "@impala fork comment", "mallory/r");
+    let fork = line_comment(2, "OWNER", "@acme-bot fork comment", "mallory/r");
     ensure!(h.github(event, "d-2", &fork).await? == 200);
     let aside = line_comment(6, "OWNER", "aside to a reviewer", "o/r");
     ensure!(h.github(event, "d-6", &aside).await? == 200);
-    let owner = line_comment(3, "OWNER", "@Impala: owner line comment", "o/r");
+    let owner = line_comment(3, "OWNER", "@Acme-bot: owner line comment", "o/r");
     ensure!(h.github(event, "d-3", &owner).await? == 200);
     ensure!(h.github(event, "d-3", &owner).await? == 200, "redelivery");
     ensure!(h.activity("s8", "response", 2).await?.is_object());
@@ -1196,7 +1196,7 @@ async fn github_feedback_continues_the_session(ctx: Ctx) -> Result<()> {
         "issue": {"number": 7, "html_url": "https://github.com/o/r/pull/7", "pull_request": {"url": "x"}},
         "comment": {
             "id": 4, "user": {"login": "someone", "type": "User"},
-            "author_association": "OWNER", "body": "owner conversation comment @impala", "html_url": "c",
+            "author_association": "OWNER", "body": "owner conversation comment @acme-bot", "html_url": "c",
         },
     });
     ensure!(h.github("issue_comment", "d-4", &conversation).await? == 200);
@@ -1237,14 +1237,14 @@ async fn github_feedback_reaches_a_lost_worktree_session(ctx: Ctx) -> Result<()>
         state: Some(json!({"sessions": {"s41": {
             "issue_id": issue["id"], "identifier": issue["identifier"],
             "title": issue["title"], "url": issue["url"],
-            "branch": "nate/sh-41", "workspace": "/nonexistent/worktrees/SH-41",
+            "branch": "alice/sh-41", "workspace": "/nonexistent/worktrees/SH-41",
         }}})),
         ..Setup::default()
     };
     let h = Harness::start(&ctx, setup).await?;
     h.mock.add_issue(&issue);
     let lib = h.home.join("src/lib");
-    git(&lib, &["branch", "nate/sh-41"])?;
+    git(&lib, &["branch", "alice/sh-41"])?;
 
     let comment = json!({
         "action": "created",
@@ -1252,11 +1252,11 @@ async fn github_feedback_reaches_a_lost_worktree_session(ctx: Ctx) -> Result<()>
         "pull_request": {
             "number": 9,
             "html_url": "https://github.com/o/lib/pull/9",
-            "head": {"ref": "nate/sh-41", "repo": {"full_name": "o/lib"}},
+            "head": {"ref": "alice/sh-41", "repo": {"full_name": "o/lib"}},
         },
         "comment": {
             "id": 41, "user": {"login": "someone", "type": "User"},
-            "author_association": "OWNER", "body": "@impala tidy this up",
+            "author_association": "OWNER", "body": "@acme-bot tidy this up",
             "path": "src/lib.rs", "line": 3, "html_url": "https://github.com/o/lib/pull/9#r41",
         },
     });
@@ -1268,7 +1268,7 @@ async fn github_feedback_reaches_a_lost_worktree_session(ctx: Ctx) -> Result<()>
     let call = h.prompt_with("tidy this up").await?;
     let cwd = Path::new(call["cwd"].as_str().context("cwd")?);
     ensure!(main_clone(cwd)? == lib.display().to_string());
-    ensure!(git(cwd, &["branch", "--show-current"])?.trim() == "nate/sh-41");
+    ensure!(git(cwd, &["branch", "--show-current"])?.trim() == "alice/sh-41");
     Ok(())
 }
 
@@ -1310,7 +1310,7 @@ async fn github_mention_opens_a_session_per_pull_request(ctx: Ctx) -> Result<()>
     h.activity("s8", "response", 1).await?;
 
     let event = "pull_request_review_comment";
-    let stacked = pr_comment(9, "nate/sh-8-2", "", 91, "@impala second pull request");
+    let stacked = pr_comment(9, "alice/sh-8-2", "", 91, "@acme-bot second pull request");
     ensure!(h.github(event, "d-91", &stacked).await? == 200);
     let call = h.prompt_with("second pull request").await?;
     let prompt = call["prompt"].as_str().context("prompt")?;
@@ -1318,7 +1318,7 @@ async fn github_mention_opens_a_session_per_pull_request(ctx: Ctx) -> Result<()>
     ensure!(prompt.contains("opened from GitHub for pull request https://github.com/o/r/pull/9"));
     let cwd = Path::new(call["cwd"].as_str().context("cwd")?);
     ensure!(cwd.ends_with("SH-8-pr9"), "{}", cwd.display());
-    ensure!(git(cwd, &["branch", "--show-current"])?.trim() == "nate/sh-8-2");
+    ensure!(git(cwd, &["branch", "--show-current"])?.trim() == "alice/sh-8-2");
     let opened = h.mock.read(|r| r.opened_sessions.clone());
     let link = json!({"label": "o/r#9", "url": "https://github.com/o/r/pull/9"});
     ensure!(
@@ -1341,10 +1341,10 @@ async fn github_mention_opens_a_session_per_pull_request(ctx: Ctx) -> Result<()>
     h.logged("[opened-1] linear created: opened by mothership")
         .await?;
 
-    let again = pr_comment(9, "nate/sh-8-2", "", 92, "@impala more on the second");
+    let again = pr_comment(9, "alice/sh-8-2", "", 92, "@acme-bot more on the second");
     ensure!(h.github(event, "d-92", &again).await? == 200);
     h.activity("opened-1", "response", 2).await?;
-    let first = pr_comment(7, "nate/sh-8", "", 71, "@impala on the first");
+    let first = pr_comment(7, "alice/sh-8", "", 71, "@acme-bot on the first");
     ensure!(h.github(event, "d-71", &first).await? == 200);
     h.activity("s8", "response", 2).await?;
     ensure!(h.mock.read(|r| r.opened_sessions.len()) == 1, "opened once");
@@ -1380,9 +1380,9 @@ async fn github_mention_on_a_branch_a_session_moved_to_continues_it(ctx: Ctx) ->
     h.activity("s8", "response", 1).await?;
     let first = h.prompt_with("context of SH-8").await?;
     let worktree = PathBuf::from(first["cwd"].as_str().context("cwd")?);
-    git(&worktree, &["checkout", "-q", "-b", "nate/sh-8-2"])?;
+    git(&worktree, &["checkout", "-q", "-b", "alice/sh-8-2"])?;
 
-    let stacked = pr_comment(9, "nate/sh-8-2", "", 91, "@impala second pull request");
+    let stacked = pr_comment(9, "alice/sh-8-2", "", 91, "@acme-bot second pull request");
     ensure!(
         h.github("pull_request_review_comment", "d-91", &stacked)
             .await?
@@ -1410,7 +1410,7 @@ async fn github_mention_without_an_issue_is_answered_on_github(ctx: Ctx) -> Resu
     )
     .await?;
     let body = "See https://linear.app/acme/issue/SH-404";
-    let comment = pr_comment(7, "feature/login", body, 1, "@impala look at this");
+    let comment = pr_comment(7, "feature/login", body, 1, "@acme-bot look at this");
     ensure!(
         h.github("pull_request_review_comment", "d-1", &comment)
             .await?
@@ -1447,7 +1447,7 @@ async fn github_fork_conversation_comment_is_ignored(ctx: Ctx) -> Result<()> {
     let setup = Setup {
         github: true,
         env: vec![
-            ("FAKE_GH_HEAD_REF", "nate/sh-22".into()),
+            ("FAKE_GH_HEAD_REF", "alice/sh-22".into()),
             ("FAKE_GH_HEAD_REPO", "mallory/r".into()),
         ],
         ..Setup::default()
@@ -1464,7 +1464,7 @@ async fn github_fork_conversation_comment_is_ignored(ctx: Ctx) -> Result<()> {
         "issue": {"number": 7, "html_url": "https://github.com/o/r/pull/7", "pull_request": {"url": "x"}},
         "comment": {
             "id": 5, "user": {"login": "someone", "type": "User"},
-            "author_association": "OWNER", "body": "@impala fork conversation comment", "html_url": "c",
+            "author_association": "OWNER", "body": "@acme-bot fork conversation comment", "html_url": "c",
         },
     });
     ensure!(h.github("issue_comment", "d-5", &conversation).await? == 200);

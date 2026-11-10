@@ -85,8 +85,8 @@ mod tests {
         assert_eq!(recorded_branch(&rec), None, "first turn: ask Linear");
         rec.branch = Some(String::new());
         assert_eq!(recorded_branch(&rec), None);
-        rec.branch = Some("nate/sh-7".into());
+        rec.branch = Some("alice/sh-7".into());
         rec.workspace = Some(PathBuf::from("/gone/SH-7"));
-        assert_eq!(recorded_branch(&rec), Some("nate/sh-7"));
+        assert_eq!(recorded_branch(&rec), Some("alice/sh-7"));
     }
 }

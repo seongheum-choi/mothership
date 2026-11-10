@@ -74,7 +74,7 @@ expect "commit on a branch with no upstream" block "$wt"
 mkdir "$tmp/bin"
 cat >"$tmp/bin/curl" <<'FAKE'
 #!/usr/bin/env bash
-[[ $(cat) == 'user = "impala:p\"w"' ]] || exit 22
+[[ $(cat) == 'user = "acme-bot:p\"w"' ]] || exit 22
 url=${*: -1}
 [[ $url == *'+-is:abandoned' ]] || exit 22
 sha=${url##*commit:}
@@ -84,7 +84,7 @@ if grep -qx "$sha" "$GERRIT_COMMITS" 2>/dev/null; then echo '[{"_number":12}]'; 
 FAKE
 chmod +x "$tmp/bin/curl"
 saved_path=$PATH
-export PATH="$tmp/bin:$PATH" GERRIT_URL=https://gerrit.test GERRIT_USERNAME=impala
+export PATH="$tmp/bin:$PATH" GERRIT_URL=https://gerrit.test GERRIT_USERNAME=acme-bot
 export GERRIT_HTTP_PASSWORD='p"w' GERRIT_COMMITS="$tmp/gerrit-commits"
 expect "commit Gerrit does not have" block "$wt"
 git -C "$wt" rev-parse HEAD >"$GERRIT_COMMITS"

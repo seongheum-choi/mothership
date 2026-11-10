@@ -23,7 +23,7 @@ pub const ALL: &[(&str, Scenario)] = scenarios![
 ];
 
 /// The repository's `origin`: a Gerrit project on the mock's host, over SSH as pilots clone it.
-const ORIGIN: &str = "ssh://impala@127.0.0.1:29418/team/app";
+const ORIGIN: &str = "ssh://acme-bot@127.0.0.1:29418/team/app";
 
 /// Runs the installed `gerrit-reply` with `args` and `body` on stdin, in the environment an
 /// agent gets for this mock; returns its exit code. Async: the mock it calls runs on this
@@ -117,7 +117,7 @@ fn comment_added(url: &str, number: u64, topic: &str, email: &str, message: &str
             "url": format!("{url}/c/team/app/+/{number}"), "status": "NEW",
         },
         "patchSet": {"number": 2, "revision": "abc"},
-        "author": {"name": "Nate", "email": email, "username": "nate"},
+        "author": {"name": "Alice", "email": email, "username": "alice"},
         "comment": message,
         "eventCreatedOn": 1_700_000_000,
     })
@@ -129,7 +129,7 @@ fn review(
     message: &str,
     comments: &[(&str, &str, Option<u64>, &str)],
 ) -> (Value, Value) {
-    let author = json!({"_account_id": 1, "name": "Nate", "email": email});
+    let author = json!({"_account_id": 1, "name": "Alice", "email": email});
     let date = "2026-11-07 10:05:00.000000000";
     let messages = json!([{"id": "m1", "author": author, "date": date, "message": message, "_revision_number": 2}]);
     let mut by_path = serde_json::Map::new();
@@ -167,7 +167,7 @@ async fn gerrit_review_continues_the_session_of_its_topic(ctx: Ctx) -> Result<()
         GERRIT_TRUSTED,
         message,
         &[
-            ("c1", "src/lib.rs", Some(3), "@impala rename this"),
+            ("c1", "src/lib.rs", Some(3), "@acme-bot rename this"),
             ("c2", "/PATCHSET_LEVEL", None, "Looks close."),
         ],
     );
@@ -194,7 +194,7 @@ async fn gerrit_review_continues_the_session_of_its_topic(ctx: Ctx) -> Result<()
 
     let call = h.prompt_with("rename this").await?;
     let prompt = call["prompt"].as_str().unwrap_or_default();
-    let head = format!("Review from Nate on Gerrit change {url}/c/team/app/+/12 (patch set 2)");
+    let head = format!("Review from Alice on Gerrit change {url}/c/team/app/+/12 (patch set 2)");
     ensure!(prompt.starts_with(&head), "{prompt}");
     for part in [
         "At src/lib.rs:3 (patch set 2); answer with `gerrit-reply 12 2 c1 src/lib.rs 3`:",

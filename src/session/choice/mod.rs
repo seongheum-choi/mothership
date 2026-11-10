@@ -225,7 +225,7 @@ mod tests {
         let mode = fields(None, Some("haiku"), Some("high"));
         let scopes = || Scopes {
             mode: Some(("research", &mode)),
-            repo: Some(("vault", &repo)),
+            repo: Some(("notes", &repo)),
         };
         let Chosen { models, note, .. } = choose(&rec, &scopes(), &defaults(None));
         assert_eq!(
@@ -236,7 +236,7 @@ mod tests {
         assert_eq!(
             note.as_deref(),
             Some(
-                "Model: haiku (repo `vault`), fallback: haiku (mode `research`), \
+                "Model: haiku (repo `notes`), fallback: haiku (mode `research`), \
                  effort: high (mode `research`)"
             )
         );
@@ -325,7 +325,7 @@ mod tests {
         repo.runner = Some(Runner::Codex);
         let scopes = || Scopes {
             mode: None,
-            repo: Some(("vault", &repo)),
+            repo: Some(("notes", &repo)),
         };
         let mut rec = SessionRec::default();
         let chosen = choose(&rec, &scopes(), &defaults(None));
@@ -333,7 +333,7 @@ mod tests {
         assert_eq!(
             chosen.note.as_deref(),
             Some(
-                "Runner: codex (repo `vault`), model: opus (instance default), \
+                "Runner: codex (repo `notes`), model: opus (instance default), \
                  effort: default (instance default)"
             )
         );

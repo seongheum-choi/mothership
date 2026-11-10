@@ -102,22 +102,22 @@ mod tests {
     #[test]
     fn picks_the_comments_written_with_the_review() {
         let event = event();
-        let nate = json!({"_account_id": 1, "name": "Nate", "email": "nate@example.com"});
+        let alice = json!({"_account_id": 1, "name": "Alice", "email": "alice@example.com"});
         let other = json!({"_account_id": 2, "email": "other@example.com"});
         let messages = json!([
-            {"id": "m1", "author": nate, "date": "2026-11-07 10:00:00.000000000", "message": "Patch Set 1:\n\n(1 comment)"},
-            {"id": "m2", "author": nate, "date": "2026-11-07 10:05:00.000000000", "message": event.message},
-            {"id": "m3", "author": nate, "date": "2026-11-07 10:06:00.000000000", "message": "Patch Set 2: Code-Review+1"},
+            {"id": "m1", "author": alice, "date": "2026-11-07 10:00:00.000000000", "message": "Patch Set 1:\n\n(1 comment)"},
+            {"id": "m2", "author": alice, "date": "2026-11-07 10:05:00.000000000", "message": event.message},
+            {"id": "m3", "author": alice, "date": "2026-11-07 10:06:00.000000000", "message": "Patch Set 2: Code-Review+1"},
             {"id": "m4", "author": other, "date": "2026-11-07 10:05:00.000000000", "message": event.message},
         ]);
         let comment = |id: &str, author: &Value, updated: &str, line: Option<u64>| json!({"id": id, "author": author, "updated": updated, "line": line, "patch_set": 2, "message": format!(" {id} text ")});
         let comments = json!({
             "src/lib.rs": [
-                comment("old", &nate, "2026-11-07 10:00:00.000000000", Some(1)),
-                comment("new", &nate, "2026-11-07 10:05:00.123000000", Some(3)),
+                comment("old", &alice, "2026-11-07 10:00:00.000000000", Some(1)),
+                comment("new", &alice, "2026-11-07 10:05:00.123000000", Some(3)),
                 comment("theirs", &other, "2026-11-07 10:05:00.000000000", Some(3)),
             ],
-            "/PATCHSET_LEVEL": [comment("top", &nate, "2026-11-07 10:05:00.000000000", None)],
+            "/PATCHSET_LEVEL": [comment("top", &alice, "2026-11-07 10:05:00.000000000", None)],
         });
         let found = select(&messages, &comments, &event).expect("not the agent's own");
         let ids: Vec<&str> = found.iter().map(|c| c.id.as_str()).collect();
@@ -141,7 +141,7 @@ mod tests {
     #[test]
     fn the_agents_own_review_is_dropped() {
         let event = event();
-        let author = json!({"email": "nate@example.com"});
+        let author = json!({"email": "alice@example.com"});
         let tagged = json!([{"author": author, "date": "2026-11-07 10:05:00.000000000", "message": event.message, "tag": TAG}]);
         assert_eq!(select(&tagged, &json!({}), &event), None);
         let none = json!([{"author": {"email": "x@example.com"}, "date": "d", "message": "m"}]);

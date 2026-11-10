@@ -234,7 +234,7 @@ mod tests {
             r#"[{"name": "app", "path": "/src/app", "prompt_file": "~/p.md",
                  "mcp_configs": ["/etc/mcp.json"], "commands": {"pnpm-install": "pnpm i"}},
                 {"name": "lib", "path": "/src/lib/", "base_branch": "trunk"},
-                {"name": "vault", "path": "~/vault", "git": false}]"#,
+                {"name": "notes", "path": "~/notes", "git": false}]"#,
             &home(),
         )
         .unwrap();
@@ -245,7 +245,7 @@ mod tests {
         assert!(repos[1].commands.is_empty());
         assert_eq!(repos[1].path, PathBuf::from("/src/lib"));
         assert_eq!(repos[1].base_branch, "trunk");
-        assert_eq!(repos[2].path, PathBuf::from("/Users/me/vault"));
+        assert_eq!(repos[2].path, PathBuf::from("/Users/me/notes"));
         assert!(!repos[2].git);
         assert_eq!(prompts, [Some(PathBuf::from("/Users/me/p.md")), None, None]);
         assert_eq!(repos[0].models, ModelFields::default());
@@ -290,11 +290,11 @@ mod tests {
     #[test]
     fn expand_normalizes_slashes() {
         let expand = |p: &str| expand(p, &home()).unwrap();
-        assert_eq!(expand("~/vault/"), PathBuf::from("/Users/me/vault"));
+        assert_eq!(expand("~/notes/"), PathBuf::from("/Users/me/notes"));
         assert_eq!(expand("/a//b/./c/"), PathBuf::from("/a/b/c"));
         assert_eq!(
-            expand("/notes/vault/").display().to_string(),
-            "/notes/vault",
+            expand("/notes/notes/").display().to_string(),
+            "/notes/notes",
             "sandbox rules are built from this text"
         );
     }

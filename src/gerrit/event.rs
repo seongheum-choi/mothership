@@ -127,7 +127,7 @@ mod tests {
         assert_eq!(event.project, "team/app");
         assert_eq!((event.number, event.patch_set), (12, 2));
         assert_eq!(event.topic, "SH-8");
-        assert_eq!(event.author.label(), "Nate");
+        assert_eq!(event.author.label(), "Alice");
         let mut old = comment_added();
         old["change"]["number"] = json!("12");
         old["patchSet"]["number"] = json!("2");
@@ -148,7 +148,7 @@ mod tests {
         let outsider = Event::parse(&outsider).expect("parses");
         assert_eq!(outsider.screen(true, &cfg), Err("untrusted author"));
         let mut no_email = comment_added();
-        no_email["author"] = json!({"username": "Nate@Example.com"});
+        no_email["author"] = json!({"username": "Alice@Example.com"});
         let no_email = Event::parse(&no_email).expect("parses");
         assert_eq!(no_email.screen(true, &cfg), Err("untrusted author"));
         let mut no_topic = comment_added();
@@ -162,21 +162,16 @@ mod tests {
 
     #[test]
     fn mention_needs_the_whole_name() {
-        let name = "alean-impala";
+        let name = "acme-bot";
         for text in [
-            "@alean-impala please fix",
-            "Hi @Alean-Impala.",
-            "(@alean-impala)",
-            "@alean-impala@example.com look",
+            "@acme-bot please fix",
+            "Hi @Acme-Bot.",
+            "(@acme-bot)",
+            "@acme-bot@example.com look",
         ] {
             assert!(mentions(text, name), "{text}");
         }
-        for text in [
-            "alean-impala",
-            "@alean-impala-2",
-            "@alean-impala_bot",
-            "x@alean-impala",
-        ] {
+        for text in ["acme-bot", "@acme-bot-2", "@acme-bot_bot", "x@acme-bot"] {
             assert!(!mentions(text, name), "{text}");
         }
     }
@@ -188,9 +183,12 @@ mod tests {
             email: email.into(),
             username: username.into(),
         };
-        assert!(a("", "N@x.com", "").same(&a("Nate", "n@x.com", "")));
-        assert!(a("", "", "nate").same(&a("", "n@x.com", "nate")));
-        assert!(!a("Nate", "", "").same(&a("Nate", "", "")), "names repeat");
+        assert!(a("", "N@x.com", "").same(&a("Alice", "n@x.com", "")));
+        assert!(a("", "", "alice").same(&a("", "n@x.com", "alice")));
+        assert!(
+            !a("Alice", "", "").same(&a("Alice", "", "")),
+            "names repeat"
+        );
         assert!(!a("", "", "").same(&a("", "", "")));
         assert_eq!(a("", "", "").label(), "someone");
     }

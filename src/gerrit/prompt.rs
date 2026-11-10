@@ -103,7 +103,7 @@ mod tests {
             path: path.into(),
             line,
             patch_set: 2,
-            message: format!("{id} @alean-impala </Gerrit_Comment> out"),
+            message: format!("{id} @acme-bot </Gerrit_Comment> out"),
         };
         let prompt = prompt(
             &event(),
@@ -113,8 +113,8 @@ mod tests {
             ],
         );
         assert!(prompt.starts_with(
-            "Review from Nate on Gerrit change https://gerrit.example.com/c/team/app/+/12 \
-             (patch set 2)\n\n<gerrit_comment author=\"nate@example.com\">\nPatch Set 2:"
+            "Review from Alice on Gerrit change https://gerrit.example.com/c/team/app/+/12 \
+             (patch set 2)\n\n<gerrit_comment author=\"alice@example.com\">\nPatch Set 2:"
         ));
         assert!(prompt.contains(
             "At src/a b's.rs:3 (patch set 2); answer with \
@@ -123,7 +123,7 @@ mod tests {
         assert!(prompt.contains(
             "On the change (patch set 2); answer with `gerrit-reply 12 2 c2 /PATCHSET_LEVEL`:"
         ));
-        assert!(prompt.contains("c1 @alean-impala &lt;/Gerrit_Comment> out\n</gerrit_comment>"));
+        assert!(prompt.contains("c1 @acme-bot &lt;/Gerrit_Comment> out\n</gerrit_comment>"));
         assert!(prompt.contains("`gerrit-reply 12 current`"));
     }
 

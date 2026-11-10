@@ -223,11 +223,11 @@ mod tests {
         // Directive beats labels, labels beat project, project beats team.
         assert_eq!(
             pick(IssueFacts {
-                description: Some("Fix it. [repo=vault]".into()),
+                description: Some("Fix it. [repo=notes]".into()),
                 labels: labels(&["backend"]),
                 ..IssueFacts::default()
             }),
-            Ok(("vault", "`[repo=vault]` in the issue".into()))
+            Ok(("notes", "`[repo=notes]` in the issue".into()))
         );
         assert_eq!(
             pick(IssueFacts {
@@ -235,7 +235,7 @@ mod tests {
                 project: launch(),
                 ..IssueFacts::default()
             }),
-            Ok(("vault", "label `Notes`".into()))
+            Ok(("notes", "label `Notes`".into()))
         );
         assert_eq!(
             pick(IssueFacts {
@@ -250,7 +250,7 @@ mod tests {
                 labels: vec![entity("Documentation", &["label-id"])],
                 ..IssueFacts::default()
             }),
-            Ok(("vault", "label `Documentation`".into())),
+            Ok(("notes", "label `Documentation`".into())),
             "labels match by id"
         );
         assert_eq!(
@@ -321,7 +321,7 @@ mod tests {
                 labels: labels(&["backend", "notes"]),
                 ..IssueFacts::default()
             })
-            .contains("more than one repository (app, vault)")
+            .contains("more than one repository (app, notes)")
         );
     }
 }
