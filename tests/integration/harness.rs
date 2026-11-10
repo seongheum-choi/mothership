@@ -198,7 +198,7 @@ impl Harness {
                 .kill_on_drop(true)
                 .spawn()
                 .context("starting mothership")?;
-            match wait_ready(&http, &url, &mut child).await {
+            match wait_ready(&http, &url, &log, &mut child).await {
                 Ok(()) => {
                     return Ok(Self {
                         dir,
@@ -385,15 +385,24 @@ fn new_dir(ctx: &Ctx) -> Result<PathBuf> {
     Ok(dir)
 }
 
-/// Waits until mothership answers `/status`, failing early if it exits.
-async fn wait_ready(http: &reqwest::Client, url: &str, child: &mut Child) -> Result<()> {
+/// Waits until mothership answers `/status`, failing early if it exits. Another scenario's
+/// mothership may hold the port and answer instead, so the answer counts only once this one
+/// has logged that it listens there.
+async fn wait_ready(
+    http: &reqwest::Client,
+    url: &str,
+    log: &Path,
+    child: &mut Child,
+) -> Result<()> {
+    let listening = format!("listening on {} ", url.trim_start_matches("http://"));
     let deadline = Instant::now() + PATIENCE;
     loop {
         if let Some(status) = child.try_wait()? {
             bail!("mothership exited during startup ({status})");
         }
+        let bound = std::fs::read_to_string(log).is_ok_and(|l| l.contains(&listening));
         let status = http.get(format!("{url}/status")).send().await;
-        if status.is_ok_and(|r| r.status().is_success()) {
+        if bound && status.is_ok_and(|r| r.status().is_success()) {
             return Ok(());
         }
         if Instant::now() > deadline {
