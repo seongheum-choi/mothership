@@ -91,6 +91,8 @@ pub fn claude() -> ExitCode {
             "surface": std::env::var("MOTHERSHIP_SURFACE").ok(),
             "prompt": text,
             "tool_pid": tool.as_ref().map(std::process::Child::id),
+            "tmpdir": std::env::var("TMPDIR").ok(),
+            "claude_tmpdir": std::env::var("CLAUDE_CODE_TMPDIR").ok(),
         }));
         if *holding.get_or_insert(text.contains(HOLD)) && !text.contains(RELEASE) {
             continue;

@@ -330,6 +330,32 @@ mod tests {
         std::fs::remove_dir_all(&home).unwrap();
     }
 
+    /// A session's temporary files live in its own directory, so another session's Bash, held
+    /// to these rules by the sandbox, can neither read nor write them.
+    #[test]
+    fn denies_other_sessions_temporary_files() {
+        let home = std::env::temp_dir().join(format!("mothership-tmp-{}", std::process::id()));
+        let state = home.join(".mothership");
+        for dir in ["worktrees/A", "progress/a/tmp", "progress/b/tmp"] {
+            std::fs::create_dir_all(state.join(dir)).unwrap();
+        }
+        let own = state.join("progress/a");
+        let paths = Paths {
+            read: vec![],
+            write: vec![own.clone()],
+            skip_deny: vec![],
+        };
+        let made = settings(&home, &state, &state.join("worktrees/A"), &[], &[], &paths);
+        let deny: Vec<String> =
+            serde_json::from_value(made["permissions"]["deny"].clone()).unwrap();
+        let other = state.join("progress/b").display().to_string();
+        assert!(deny.contains(&format!("Read(/{other}/**)")), "{deny:?}");
+        assert!(deny.contains(&format!("Edit(/{other}/**)")), "{deny:?}");
+        assert!(!deny.iter().any(|r| r.contains("progress/a")), "{deny:?}");
+        assert_eq!(made["sandbox"]["filesystem"]["allowWrite"], json!([own]));
+        std::fs::remove_dir_all(&home).unwrap();
+    }
+
     /// `.env` holds the instance's tokens and secrets. Every workspace sits below `state`, so
     /// `.env` is a sibling on the way and gets a `Read` deny, which Claude Code applies to the
     /// Read tool and folds into the OS sandbox around everything Bash runs (`cat`, `python`).

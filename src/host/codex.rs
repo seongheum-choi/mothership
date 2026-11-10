@@ -161,7 +161,7 @@ pub fn binaries(bin: &Path) -> Vec<PathBuf> {
 /// (the session's read and write rules, Codex's home and binary readable) and the session's
 /// directory as its own, then `CODEX_BIN`, so Codex reads only what Claude Code's sandbox lets
 /// the session read. Its environment is a run's (see [`super::env`]), not mothership's, with
-/// `TMPDIR` in the session's directory, since `/tmp` is not writable and no other session's.
+/// the session's own `TMPDIR` from the turn, since `/tmp` is not writable and no other session's.
 /// Without `HOST_SANDBOX` there is none, and the turn fails rather than read the whole home.
 pub fn runner(app: &App, key: &str, launch: &Launch) -> anyhow::Result<Confined> {
     let sandbox = (app.cfg.agent.host_sandbox.clone())
@@ -170,8 +170,6 @@ pub fn runner(app: &App, key: &str, launch: &Launch) -> anyhow::Result<Confined>
     let bin =
         crate::agent::limit::locate(bin, app.agent_path().as_deref()).unwrap_or_else(|| bin.into());
     let own = app.session_dir(key);
-    let tmp = own.join("tmp");
-    std::fs::create_dir_all(&tmp).with_context(|| format!("making {}", tmp.display()))?;
     let codex = CodexHome::of(app, key);
     let filter = super::run_root(&app.cfg.home).join(super::seccomp::FILE);
     let prefix = super::confinement(
@@ -183,8 +181,7 @@ pub fn runner(app: &App, key: &str, launch: &Launch) -> anyhow::Result<Confined>
         Some(&codex),
     )
     .map_err(anyhow::Error::msg)?;
-    let mut env = super::env(&launch.settings, &launch.env);
-    env.push(("TMPDIR".into(), tmp.display().to_string()));
+    let env = super::env(&launch.settings, &launch.env);
     Ok(Confined {
         argv: prefix
             .into_iter()

@@ -362,7 +362,16 @@ async fn linear_agent_is_launched_in_the_sandbox(ctx: Ctx) -> Result<()> {
     ensure!(h.linear(created("s10", &issue, "context of SH-10")).await? == 200);
     h.activity("s10", "response", 1).await?;
 
-    let args = argv(&h.prompt_with("context of SH-10").await?);
+    let call = h.prompt_with("context of SH-10").await?;
+    // Temporary files go to the session's own directory, which no other session may read.
+    let tmp = state.join("progress/s10/tmp");
+    ensure!(
+        tmp.is_dir()
+            && call["tmpdir"] == tmp.display().to_string()
+            && call["claude_tmpdir"] == tmp.display().to_string(),
+        "{call}"
+    );
+    let args = argv(&call);
     // `HOME` holds `.mothership` and `src/app`; the worktree is `.mothership/worktrees/SH-10`.
     // `host-runs/` holds runs' private directories and `codex/` sessions' parts of Codex's
     // home, which no session may read or write.

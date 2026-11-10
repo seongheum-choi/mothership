@@ -151,15 +151,22 @@ impl<S: Surface> Turn<'_, S> {
     }
 }
 
-/// The session's directory for this turn: its progress file and the runs it may ask for,
-/// named to the agent in `launch`'s environment, with a [`host::Watch`] serving those runs.
+/// The session's directory for this turn: its progress file, its temporary directory (`TMPDIR`
+/// and `CLAUDE_CODE_TMPDIR`, so no session reads another's temporary files) and the runs it may
+/// ask for, named to the agent in `launch`'s environment, with a [`host::Watch`] serving those
+/// runs.
 fn prepare(app: &Arc<App>, key: &str, launch: &mut Launch) -> Result<(ProgressTail, host::Watch)> {
     let dir = app.session_dir(key);
     if std::fs::symlink_metadata(&dir).is_ok_and(|m| !m.is_dir()) {
         // The progress file of the layout before session directories.
         std::fs::remove_file(&dir)?;
     }
-    std::fs::create_dir_all(&dir)?;
+    let tmp = dir.join("tmp");
+    std::fs::create_dir_all(&tmp)?;
+    // After `AGENT_ENV`, so a shared `TMPDIR` from `.env` is overridden.
+    for var in ["TMPDIR", "CLAUDE_CODE_TMPDIR"] {
+        launch.env.push((var.into(), tmp.display().to_string()));
+    }
     let progress = ProgressTail::create(dir.join("progress.log"))?;
     launch.env.push((
         "MOTHERSHIP_PROGRESS_FILE".into(),
