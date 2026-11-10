@@ -363,12 +363,16 @@ async fn linear_agent_is_launched_in_the_sandbox(ctx: Ctx) -> Result<()> {
     h.activity("s10", "response", 1).await?;
 
     let call = h.prompt_with("context of SH-10").await?;
-    // Temporary files go to the session's own directory, which no other session may read.
-    let tmp = state.join("progress/s10/tmp");
+    // Temporary files go to the session's own directory, with a name of a fixed length that
+    // keeps the sandbox's sockets under `sun_path`; no other session may read or write it.
+    let tmp = PathBuf::from(call["tmpdir"].as_str().unwrap_or_default());
+    let name = tmp.file_name().unwrap_or_default().to_string_lossy();
     ensure!(
         tmp.is_dir()
-            && call["tmpdir"] == tmp.display().to_string()
-            && call["claude_tmpdir"] == tmp.display().to_string(),
+            && tmp.parent() == Some(state.join("session-tmp").as_path())
+            && name.len() == 16
+            && name.chars().all(|c| c.is_ascii_hexdigit())
+            && call["claude_tmpdir"] == call["tmpdir"],
         "{call}"
     );
     let args = argv(&call);
@@ -401,7 +405,7 @@ async fn linear_agent_is_launched_in_the_sandbox(ctx: Ctx) -> Result<()> {
             "enabled": true,
             "allowUnsandboxedCommands": false,
             "failIfUnavailable": true,
-            "filesystem": {"allowWrite": [state.join("progress/s10")]},
+            "filesystem": {"allowWrite": [state.join("progress/s10"), tmp]},
             "network": {"allowLocalBinding": true, "allowMachLookup": ["com.apple.trustd.agent"]},
             "credentials": {"envVars": [{"name": "CLAUDE_CODE_OAUTH_TOKEN", "mode": "deny"}]},
         },
@@ -460,16 +464,23 @@ async fn linear_progress_from_bash_becomes_a_thought(ctx: Ctx) -> Result<()> {
     .await?;
     let args = argv(&h.prompt_with(&prompt).await?);
     let settings: Value = serde_json::from_str(flag(&args, "--settings")?)?;
-    // Of the progress directory, a session may write only its own.
+    // Of the progress and temporary directories, a session may write only its own.
     let progress = h.home.join(".mothership/progress/s13");
+    let write = &settings["sandbox"]["filesystem"]["allowWrite"];
     ensure!(
-        settings["sandbox"]["filesystem"]["allowWrite"] == json!([progress]),
+        write[0] == json!(progress)
+            && write[1]
+                .as_str()
+                .is_some_and(|t| t.contains("/.mothership/session-tmp/"))
+            && write.as_array().map(Vec::len) == Some(2),
         "{settings}"
     );
     let deny = deny_rules(&args)?;
     ensure!(
-        !deny.iter().any(|r| r.contains("/progress")),
-        "progress directory denied: {deny:#?}"
+        !deny
+            .iter()
+            .any(|r| r.contains("/progress") || r.contains("/session-tmp")),
+        "own directories denied: {deny:#?}"
     );
     Ok(())
 }
@@ -1807,9 +1818,9 @@ async fn codex_runner_answers_with_thoughts_and_a_response(ctx: Ctx) -> Result<(
         env.contains(&"FAKE_LOG".into()) && !env.contains(&"LINEAR_CLIENT_SECRET".into()),
         "{env:?}"
     );
-    let session = h.home.join(".mothership/progress/s40");
+    let tmp = PathBuf::from(call["tmpdir"].as_str().unwrap_or_default());
     ensure!(
-        call["tmpdir"] == session.join("tmp").display().to_string(),
+        tmp.parent() == Some(h.home.join(".mothership/session-tmp").as_path()),
         "{call}"
     );
     // Codex runs under `HOST_SANDBOX` with the session's read rules, its own sandbox off.
@@ -1832,7 +1843,8 @@ async fn codex_runner_answers_with_thoughts_and_a_response(ctx: Ctx) -> Result<(
                 && l.contains(&subpath(&h.home.join("notes"))))
             && !profile.contains(&subpath(&h.home.join(".codex")))
             && profile.contains(&subpath(&h.home.join(".codex/sessions")))
-            && profile.contains(&format!("(allow file-write* {}", subpath(&cwd))),
+            && profile.contains(&format!("(allow file-write* {}", subpath(&cwd)))
+            && profile.contains(&subpath(&tmp)),
         "{profile}"
     );
     ensure!(

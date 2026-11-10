@@ -52,6 +52,12 @@ pub struct App {
 
 impl App {
     pub fn new(cfg: Config) -> Result<Arc<Self>> {
+        match agent::check_session_tmp(&cfg.home) {
+            Err(e) if std::env::var_os("MOTHERSHIP_ALLOW_LONG_TMPDIR").is_some() => {
+                tracing::warn!("{e:#}");
+            }
+            checked => checked?,
+        }
         std::fs::create_dir_all(&cfg.home)
             .with_context(|| format!("creating {}", cfg.home.display()))?;
         let store = Store::open(cfg.home.join("state.json"))?;
