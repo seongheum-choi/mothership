@@ -125,6 +125,10 @@ async fn run(filter: Option<&str>) -> ExitCode {
             }
         }
     }
+    if let Err(e) = harness::no_leftovers().await {
+        failed += 1;
+        println!("after the scenarios ... FAILED\n  {e:#}");
+    }
     println!(
         "\nintegration: {passed} passed; {skipped} skipped; {failed} failed; finished in {:.1}s\n",
         started.elapsed().as_secs_f64()
