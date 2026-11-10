@@ -1117,11 +1117,11 @@ async fn github_feedback_loop_is_paused(ctx: Ctx) -> Result<()> {
     h.logged("[s8] turn stopped after ").await?;
     h.logged("[s8] github feedback paused, @someone ignored")
         .await?;
-    ensure!(h.prompts_with("round 11.").is_empty(), "over the cap heard");
-    ensure!(
-        h.prompts_with("round 12.").is_empty(),
-        "paused session heard"
-    );
+    // Deliveries are handled side by side, so which two rounds the cap refused varies.
+    let heard = (1..=12)
+        .filter(|n| !h.prompts_with(&format!("round {n}.")).is_empty())
+        .count();
+    ensure!(heard <= 10, "{heard} rounds heard, over the cap of 10");
     let errors = h.activities("s8");
     let errors = errors.iter().filter(|a| a["type"] == "error").count();
     ensure!(errors == 1, "told once, not {errors} times");
