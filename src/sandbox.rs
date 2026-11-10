@@ -121,6 +121,15 @@ const READ: &str = "Read";
 /// never consulted and warns at startup.
 const EDIT: &str = "Edit";
 
+/// `Read` and `Edit` rules for every entry under `root` but `own`: other sessions' directories
+/// beside a session's own outside `MOTHERSHIP_HOME`.
+pub fn deny_others(root: &Path, own: &Path) -> Vec<String> {
+    let own = [own.to_path_buf()];
+    let mut rules = deny_rules(root, &own, READ);
+    rules.extend(deny_rules(root, &own, EDIT));
+    rules
+}
+
 /// `tool` rules for every entry under `root` that is not on the way to `allowed`.
 fn deny_rules(root: &Path, allowed: &[PathBuf], tool: &str) -> Vec<String> {
     let targets: Vec<Vec<String>> = allowed
