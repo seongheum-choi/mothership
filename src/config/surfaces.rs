@@ -16,6 +16,8 @@ pub struct LinearConfig {
     /// `LINEAR_API_URL`, the GraphQL and OAuth token host. Left unset except by the integration
     /// tests, which point it at a local mock.
     pub api_url: String,
+    /// `LINEAR_TRUSTED_USERS`: Linear user ids or emails who may call the agent; empty, anyone.
+    pub trusted_users: Vec<String>,
 }
 
 impl LinearConfig {
@@ -27,6 +29,7 @@ impl LinearConfig {
             workspace: vars.get("LINEAR_WORKSPACE"),
             seed_tokens,
             api_url: linear_api_url(vars.get("LINEAR_API_URL")),
+            trusted_users: list(vars, "LINEAR_TRUSTED_USERS"),
         })
     }
 }
@@ -36,6 +39,8 @@ pub struct ZulipConfig {
     pub bot_email: String,
     pub api_key: String,
     pub webhook_token: String,
+    /// `ZULIP_TRUSTED_EMAILS`: sender emails the bot answers; empty, anyone.
+    pub trusted_emails: Vec<String>,
 }
 
 impl ZulipConfig {
@@ -49,6 +54,7 @@ impl ZulipConfig {
             bot_email: vars.require("ZULIP_BOT_EMAIL")?,
             api_key: vars.require("ZULIP_API_KEY")?,
             webhook_token: vars.require("ZULIP_WEBHOOK_TOKEN")?,
+            trusted_emails: list(vars, "ZULIP_TRUSTED_EMAILS"),
         }))
     }
 }
@@ -75,10 +81,7 @@ impl GitHubConfig {
         }
         Ok(Some(Self {
             webhook_secret,
-            trusted_logins: vars
-                .get("GITHUB_TRUSTED_LOGINS")
-                .map(|list| parse_list(&list))
-                .unwrap_or_default(),
+            trusted_logins: list(vars, "GITHUB_TRUSTED_LOGINS"),
             mention_login,
         }))
     }
@@ -129,10 +132,7 @@ impl GerritConfig {
         };
         let username = vars.require("GERRIT_USERNAME")?;
         let webhook_token = vars.get("GERRIT_WEBHOOK_TOKEN");
-        let trusted_emails = vars
-            .get("GERRIT_TRUSTED_EMAILS")
-            .map(|list| parse_list(&list))
-            .unwrap_or_default();
+        let trusted_emails = list(vars, "GERRIT_TRUSTED_EMAILS");
         if webhook_token.is_some() && trusted_emails.is_empty() {
             bail!("GERRIT_WEBHOOK_TOKEN is set but GERRIT_TRUSTED_EMAILS lists nobody");
         }
@@ -152,6 +152,22 @@ impl GerritConfig {
     }
 }
 
+/// The comma-separated list in `key`, empty when unset.
+fn list(vars: &Vars, key: &str) -> Vec<String> {
+    vars.get(key).map(|l| parse_list(&l)).unwrap_or_default()
+}
+
+/// Whether someone named by any of `names` (an id, an email) may call the agent: anyone when
+/// `trusted` is empty, else only a name it lists, in any letter case. Someone the event does
+/// not name is refused.
+pub fn trusts(trusted: &[String], names: &[Option<&str>]) -> bool {
+    trusted.is_empty()
+        || names
+            .iter()
+            .flatten()
+            .any(|n| trusted.iter().any(|t| t.eq_ignore_ascii_case(n)))
+}
+
 /// `LINEAR_API_URL` without trailing slashes, or Linear's own host when it is unset.
 fn linear_api_url(setting: Option<String>) -> String {
     setting.map_or_else(
@@ -162,7 +178,19 @@ fn linear_api_url(setting: Option<String>) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::linear_api_url;
+    use super::{linear_api_url, trusts};
+
+    #[test]
+    fn an_empty_list_trusts_anyone_and_a_list_only_its_names() {
+        assert!(trusts(&[], &[None]));
+        assert!(trusts(&[], &[Some("eve@x")]));
+        let list = ["user-1".to_string(), "Alice@Example.com".to_string()];
+        assert!(trusts(&list, &[Some("user-1"), None]));
+        assert!(trusts(&list, &[Some("user-9"), Some("alice@example.com")]));
+        assert!(!trusts(&list, &[Some("user-9"), Some("eve@example.com")]));
+        assert!(!trusts(&list, &[None, None]), "unnamed is refused");
+        assert!(!trusts(&list, &[Some("")]));
+    }
 
     #[test]
     fn linear_api_url_defaults_to_linear_and_drops_trailing_slashes() {

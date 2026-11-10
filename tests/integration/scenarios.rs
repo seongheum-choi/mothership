@@ -133,7 +133,7 @@ pub(crate) fn created(sid: &str, issue: &Value, context: &str) -> Value {
 }
 
 /// An @mention: Linear's `created` event whose comment is the mention itself.
-fn mentioned(sid: &str, issue: &Value, comment: &str, context: &str) -> Value {
+pub(crate) fn mentioned(sid: &str, issue: &Value, comment: &str, context: &str) -> Value {
     json!({
         "type": "AgentSessionEvent", "action": "created", "organizationId": ORG,
         "agentSession": session(sid, issue, comment), "promptContext": context,
@@ -149,7 +149,7 @@ fn completed(issue: &Value) -> Value {
     })
 }
 
-fn prompted(sid: &str, issue: &Value, body: &str) -> Value {
+pub(crate) fn prompted(sid: &str, issue: &Value, body: &str) -> Value {
     json!({
         "type": "AgentSessionEvent", "action": "prompted", "organizationId": ORG,
         "agentSession": session(sid, issue, DELEGATION_MARKER), "agentActivity": {"content": {"body": body}},

@@ -8,6 +8,7 @@ mod gerrit_scenarios;
 mod harness;
 mod mock;
 mod scenarios;
+mod trust_scenarios;
 
 use scenarios::Scenario;
 use std::{
@@ -80,6 +81,7 @@ fn selected(filter: Option<&str>) -> impl Iterator<Item = &'static (&'static str
     scenarios::ALL
         .iter()
         .chain(gerrit_scenarios::ALL)
+        .chain(trust_scenarios::ALL)
         .filter(move |(name, _)| filter.is_none_or(|f| name.contains(f)))
 }
 

@@ -52,6 +52,7 @@ Agents run as `claude -p --input-format stream-json --output-format stream-json`
 | An agent runtime | An `agent::Runner` variant and a module in `src/agent/` that builds its command line and turns its output into `agent::Event`s |
 | Skills for every session | Drop a Claude Code plugin directory into `<home>/plugins/`; it loads on the next turn |
 | A working mode picked by Linear labels | A [`<home>/modes/<name>.md`](#modes) file |
+| A personal bot only its owner can call | `LINEAR_TRUSTED_USERS` and `ZULIP_TRUSTED_EMAILS`; see [Who can call the agent](#who-can-call-the-agent) |
 
 ### Bundled plugins
 
@@ -75,6 +76,7 @@ Settings come from the process environment or `<home>/.env`, and the environment
 | `BASE_URL` | required | Public URL; the OAuth redirect is `<BASE_URL>/callback` |
 | `LINEAR_CLIENT_ID`, `LINEAR_CLIENT_SECRET`, `LINEAR_WEBHOOK_SECRET` | required | |
 | `REPO_PATH` | required without `repos.json` | Main clone that worktrees are cut from; ignored when [`<home>/repos.json`](#repositories) exists |
+| `LINEAR_TRUSTED_USERS` | | Comma-separated Linear user ids or emails who may [call the agent](#who-can-call-the-agent); unset, anyone in the workspace can |
 | `LINEAR_WORKSPACE` | recommended | The Linear workspace (URL key or ID) this instance serves; startup, `/callback` and token refresh refuse a token from any other. Unset, the first workspace to install the app is pinned |
 | `BIND` | `127.0.0.1:3456` | |
 | `AGENT_NAME` | `mothership` | Exported as `MOTHERSHIP_AGENT` |
@@ -105,6 +107,7 @@ Settings come from the process environment or `<home>/.env`, and the environment
 | `GERRIT_TRUSTED_EMAILS` | required with `GERRIT_WEBHOOK_TOKEN` | Comma-separated account emails whose reviews are heard |
 | `GERRIT_MENTION` | `GERRIT_USERNAME` | What a review writes after `@` to address the agent; reviews that mention nobody by it are ignored |
 | `ZULIP_SITE`, `ZULIP_BOT_EMAIL`, `ZULIP_API_KEY`, `ZULIP_WEBHOOK_TOKEN` | | Turn on Zulip (`POST /zulip-webhook`) |
+| `ZULIP_TRUSTED_EMAILS` | | Comma-separated sender emails the Zulip bot [answers](#who-can-call-the-agent); unset, it answers anyone |
 | `CLOUDFLARE_TOKEN`, `CLOUDFLARED_BIN` | | Supervise a remotely-managed Cloudflare tunnel |
 | `LINEAR_ACCESS_TOKEN`, `LINEAR_REFRESH_TOKEN` | | Seed tokens, used only while `state.json` has none |
 
@@ -290,6 +293,16 @@ The switch only applies to a runner a label, a mode, a repository or the instanc
 Open `<BASE_URL>/oauth/authorize` to install the app with `actor=app`. It works only while no token is stored, because the endpoint is public. To install again, clear `linear` in `state.json` and restart. Tokens refresh by themselves when Linear rejects them.
 
 One instance serves one Linear workspace, and its repository settings belong to that instance, so run a separate instance per workspace (a company one and a personal one, say). At startup, and whenever a token is stored or refreshed, mothership asks Linear which workspace the token belongs to and pins it. Webhooks whose `organizationId` is not the pinned workspace get `403` and a warning naming the organizations and the event type, never the body. Until a token is stored, every webhook is refused. Set `LINEAR_WORKSPACE` so that a stray install from the wrong workspace cannot become the pinned one; mothership warns at startup when it is unset.
+
+## Who can call the agent
+
+Every agent runs on its instance owner's machine, Claude account and `GH_TOKEN`, so on a Linear workspace or Zulip shared with other people's bots, a personal instance should answer only its owner. By default anyone can call it, which suits an instance a team shares.
+
+- **Linear:** with `LINEAR_TRUSTED_USERS` set, a session created by someone it does not list, by delegation or @mention, starts no agent and gets the response "This agent only works for its owner."; a reply in any session by someone it does not list is ignored, with one response saying so, and a running turn carries on. What counts is who called the agent (the session's `creator`, the reply's `agentActivity.user`), not who created the issue. A session Linear names no creator for, as when automation started it, is refused; sessions mothership opens itself for a pull request are not checked, since GitHub feedback has its own list.
+- **Zulip:** with `ZULIP_TRUSTED_EMAILS` set, a message whose `sender_email` it does not list gets the same short answer, no :eyes: and no agent.
+- Entries match in any letter case, the answers never name who is listed, and each refusal is logged with the session key and the person's id (`[<key>] refused a session from Linear user <id>`), never their email. Both lists are read at startup.
+
+To find your own Linear user id, run `{ viewer { id } }` with a personal API key (Settings → Account → Security & Access): `curl -s https://api.linear.app/graphql -H "Authorization: <key>" -H 'Content-Type: application/json' -d '{"query":"{ viewer { id } }"}'`; or list your email instead.
 
 ## GitHub auth
 
