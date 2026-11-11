@@ -146,6 +146,17 @@ pub fn agent_env(cfg: &GerritConfig, env: &mut Vec<(String, String)>, inherited:
     ]);
 }
 
+/// Environment for the git mothership itself runs against `origin`, such as the fetch before a
+/// worktree is cut: with Gerrit on, the credentials and helper agents get, so an `origin` under
+/// `GERRIT_URL` answers it; without Gerrit, nothing, and git runs as it always did.
+pub fn git_env(cfg: Option<&GerritConfig>) -> Vec<(String, String)> {
+    let mut env = Vec::new();
+    if let Some(cfg) = cfg {
+        agent_env(cfg, &mut env, std::env::var("GIT_CONFIG_COUNT").ok());
+    }
+    env
+}
+
 /// Answers git's `get` with the credentials from the environment, so they are never written to
 /// a file in the agent's reach; `store` and `erase` do nothing.
 const CREDENTIAL_HELPER: &str = "!f() { if [ \"$1\" = get ]; then printf 'username=%s\\npassword=%s\\n' \
@@ -190,6 +201,14 @@ mod tests {
             .rev()
             .find(|(k, _)| k == key)
             .map(|(_, v)| v.as_str())
+    }
+
+    #[test]
+    fn git_env_without_gerrit_changes_nothing() {
+        assert_eq!(git_env(None), Vec::<(String, String)>::new());
+        let env = git_env(Some(&cfg()));
+        assert_eq!(get(&env, "GERRIT_USERNAME"), Some("acme-bot"));
+        assert!(get(&env, "GIT_CONFIG_COUNT").is_some());
     }
 
     #[test]

@@ -31,7 +31,9 @@ impl Linear {
             },
         };
         let dir = app.cfg.worktrees_dir.join(dir_name(rec));
-        let workspace = worktree::ensure(&repo.path, &dir, &branch, &repo.base_branch).await?;
+        let git_env = crate::gerrit::git_env(app.cfg.gerrit.as_ref());
+        let workspace =
+            worktree::ensure(&repo.path, &dir, &branch, &repo.base_branch, &git_env).await?;
         let branch = worktree::current_branch(&workspace).await.unwrap_or(branch);
         app.store.update(|s| {
             if let Some(r) = s.sessions.get_mut(key) {

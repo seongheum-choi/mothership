@@ -9,9 +9,16 @@ use tokio::process::Command;
 /// An existing `dir` is reused as is. An existing checkout of the branch (an earlier session, another tool's worktree) is
 /// reused, because git refuses a second one. A branch that exists locally or on origin is
 /// continued. A new branch starts from `origin/<base>` with no upstream, so a bare
-/// `git push` can never target the base branch.
-pub async fn ensure(repo: &Path, dir: &Path, branch: &str, base: &str) -> Result<PathBuf> {
-    if let Err(e) = git(repo, &["fetch", "origin"]).await {
+/// `git push` can never target the base branch. The fetch from origin runs with `fetch_env`
+/// added, such as the credentials of [`crate::gerrit::git_env`].
+pub async fn ensure(
+    repo: &Path,
+    dir: &Path,
+    branch: &str,
+    base: &str,
+    fetch_env: &[(String, String)],
+) -> Result<PathBuf> {
+    if let Err(e) = git_with(repo, &["fetch", "origin"], fetch_env).await {
         tracing::warn!(
             "git fetch in {} failed, using local refs: {e:#}",
             repo.display()
@@ -137,10 +144,15 @@ fn checked_out_at(porcelain: &str, branch: &str) -> Option<PathBuf> {
 }
 
 async fn git(repo: &Path, args: &[&str]) -> Result<String> {
+    git_with(repo, args, &[]).await
+}
+
+async fn git_with(repo: &Path, args: &[&str], env: &[(String, String)]) -> Result<String> {
     let out = Command::new("git")
         .arg("-C")
         .arg(repo)
         .args(args)
+        .envs(env.iter().cloned())
         .output()
         .await?;
     if !out.status.success() {
@@ -178,5 +190,137 @@ mod tests {
             clone_of(Path::new("/src/app.git")),
             PathBuf::from("/src/app.git")
         );
+    }
+
+    /// Serves the bare repository `root` over git's dumb HTTP protocol to clients that send
+    /// `acme-bot:secret` as Basic credentials, and answers everyone else 401, as Gerrit's `/a/`
+    /// URLs do. Returns its URL.
+    fn authenticated_origin(root: PathBuf) -> String {
+        use std::io::{BufRead, BufReader, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("binding a port");
+        let url = format!("http://{}", listener.local_addr().expect("local address"));
+        std::thread::spawn(move || {
+            for stream in listener.incoming().flatten() {
+                let mut reader = BufReader::new(&stream);
+                let mut lines = Vec::new();
+                loop {
+                    let mut line = String::new();
+                    if reader.read_line(&mut line).unwrap_or(0) == 0 || line == "\r\n" {
+                        break;
+                    }
+                    lines.push(line.trim_end().to_string());
+                }
+                let path = lines
+                    .first()
+                    .and_then(|l| l.split(' ').nth(1))
+                    .unwrap_or("/")
+                    .split('?')
+                    .next()
+                    .unwrap_or("/")
+                    .to_string();
+                let authorized = lines
+                    .iter()
+                    .any(|l| l.eq_ignore_ascii_case("authorization: Basic YWNtZS1ib3Q6c2VjcmV0"));
+                let (status, body) = if !authorized {
+                    (
+                        "401 Unauthorized\r\nWWW-Authenticate: Basic realm=\"git\"",
+                        Vec::new(),
+                    )
+                } else if let Ok(body) = std::fs::read(root.join(path.trim_start_matches('/'))) {
+                    ("200 OK", body)
+                } else {
+                    ("404 Not Found", Vec::new())
+                };
+                let mut out = &stream;
+                let head = format!(
+                    "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                let _ = out.write_all(head.as_bytes());
+                let _ = out.write_all(&body);
+            }
+        });
+        url
+    }
+
+    fn run(dir: &Path, args: &[&str]) -> String {
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(["-c", "user.name=test", "-c", "user.email=test@example.com"])
+            .args(args)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .output()
+            .expect("git runs");
+        assert!(out.status.success(), "git {args:?}: {out:?}");
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    }
+
+    #[tokio::test]
+    async fn the_fetch_signs_in_to_a_gerrit_origin() {
+        let tmp = std::env::temp_dir().join(format!("mothership-fetch-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).expect("temp dir");
+        let (src, origin, clone) = (tmp.join("src"), tmp.join("origin.git"), tmp.join("clone"));
+        run(&tmp, &["init", "-q", "-b", "main", "src"]);
+        run(&src, &["commit", "-q", "--allow-empty", "-m", "first"]);
+        run(&tmp, &["clone", "-q", "--bare", "src", "origin.git"]);
+        run(&tmp, &["clone", "-q", "origin.git", "clone"]);
+        let url = authenticated_origin(origin.clone());
+        run(
+            &clone,
+            &["remote", "set-url", "origin", &format!("{url}/a/app")],
+        );
+        // The server maps `/a/app/...` onto the bare repository's files.
+        std::fs::create_dir_all(origin.join("a")).expect("dir");
+        std::os::unix::fs::symlink(&origin, origin.join("a/app")).expect("symlink");
+        run(&src, &["commit", "-q", "--allow-empty", "-m", "second"]);
+        run(
+            &src,
+            &["push", "-q", origin.to_str().expect("utf-8"), "main"],
+        );
+        run(&origin, &["update-server-info"]);
+        let second = run(&src, &["rev-parse", "HEAD"]);
+
+        // No global helper, no prompt, no proxy for the loopback origin.
+        let base: Vec<(String, String)> = [
+            ("GIT_CONFIG_GLOBAL", "/dev/null"),
+            ("GIT_CONFIG_NOSYSTEM", "1"),
+            ("GIT_TERMINAL_PROMPT", "0"),
+            ("GIT_ASKPASS", ""),
+            ("SSH_ASKPASS", ""),
+            ("no_proxy", "*"),
+            ("NO_PROXY", "*"),
+        ]
+        .iter()
+        .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
+        .collect();
+        let stale = ensure(&clone, &tmp.join("A-1"), "a-1", "main", &base)
+            .await
+            .expect("cut from local refs");
+        assert_ne!(
+            run(&stale, &["rev-parse", "HEAD"]),
+            second,
+            "no credentials"
+        );
+
+        let gerrit = crate::config::GerritConfig {
+            url: url.clone(),
+            username: "acme-bot".into(),
+            http_password: "secret".into(),
+            webhook_token: None,
+            trusted_emails: Vec::new(),
+            mention: "acme-bot".into(),
+        };
+        let mut env = base.clone();
+        env.extend(crate::gerrit::git_env(Some(&gerrit)));
+        let fresh = ensure(&clone, &tmp.join("A-2"), "a-2", "main", &env)
+            .await
+            .expect("cut from origin");
+        assert_eq!(run(&fresh, &["rev-parse", "HEAD"]), second);
+        let config = std::fs::read_to_string(clone.join(".git/config")).expect("config");
+        assert!(!config.contains("secret"), "{config}");
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }
