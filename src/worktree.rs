@@ -31,6 +31,7 @@ pub async fn ensure(
     if dir.exists() {
         // The issue's own worktree. Reuse it on whatever branch it is now: skills move it
         // across stacked branches, and it may belong to another clone of the same repository.
+        // The caller keeps another repository's worktree out of `dir` with [`of_another_repository`].
         if git(dir, &["rev-parse", "--is-inside-work-tree"])
             .await
             .is_ok()
@@ -79,6 +80,46 @@ pub async fn current_branch(worktree: &Path) -> Option<String> {
         .await
         .ok()?;
     Some(head.trim().to_string()).filter(|b| !b.is_empty())
+}
+
+/// Whether `dir` is a git worktree of a repository other than the one whose main clone is
+/// `repo`. A worktree cut from `repo`, or from another clone with the same `origin`, is of the
+/// same repository; a missing directory or one that is not a git worktree is of none.
+pub async fn of_another_repository(dir: &Path, repo: &Path) -> bool {
+    if !dir.exists() {
+        return false;
+    }
+    let Ok(clone) = main_clone(dir).await else {
+        return false;
+    };
+    if same_path(&clone, repo) {
+        return false;
+    }
+    match (origin_url(&clone).await, origin_url(repo).await) {
+        (Some(a), Some(b)) => !same_origin(&a, &b),
+        _ => true,
+    }
+}
+
+fn same_path(a: &Path, b: &Path) -> bool {
+    match (a.canonicalize(), b.canonicalize()) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => a == b,
+    }
+}
+
+async fn origin_url(repo: &Path) -> Option<String> {
+    let url = git(repo, &["remote", "get-url", "origin"]).await.ok()?;
+    Some(url.trim().to_string()).filter(|u| !u.is_empty())
+}
+
+/// Two `origin` URLs name the same repository when they differ only by a trailing `/` or `.git`.
+fn same_origin(a: &str, b: &str) -> bool {
+    let bare = |u: &str| {
+        let u = u.trim_end_matches('/');
+        u.strip_suffix(".git").unwrap_or(u).to_string()
+    };
+    bare(a) == bare(b)
 }
 
 /// The main clone `worktree` was cut from, from its shared git directory.
@@ -178,6 +219,22 @@ mod tests {
             Some(PathBuf::from("/wt/A-1"))
         );
         assert_eq!(checked_out_at(porcelain, "dev/a-10"), None);
+    }
+
+    #[test]
+    fn origins_match_up_to_a_trailing_git_or_slash() {
+        assert!(same_origin(
+            "git@github.com:acme/app.git",
+            "git@github.com:acme/app"
+        ));
+        assert!(same_origin(
+            "https://example.com/a/app/",
+            "https://example.com/a/app"
+        ));
+        assert!(!same_origin(
+            "https://example.com/a/app",
+            "https://example.com/a/app-test"
+        ));
     }
 
     #[test]
