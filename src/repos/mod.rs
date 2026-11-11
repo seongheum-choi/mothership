@@ -9,6 +9,7 @@ pub use load::load;
 pub use select::{IssueFacts, Ref, select};
 
 use crate::config::ModelFields;
+use crate::review::ReviewBackend;
 use select::same;
 use std::path::{Path, PathBuf};
 
@@ -44,6 +45,8 @@ pub struct Repo {
     /// Shell commands by name that mothership runs for a session outside its sandbox: see
     /// [`crate::host`].
     pub commands: std::collections::BTreeMap<String, String>,
+    /// `review_backend`: where finished work goes, in place of `REVIEW_BACKEND`.
+    pub review: Option<ReviewBackend>,
 }
 
 impl Repo {
@@ -64,7 +67,13 @@ impl Repo {
             git: true,
             models: ModelFields::default(),
             commands: std::collections::BTreeMap::new(),
+            review: None,
         }
+    }
+
+    /// The review backend of this repository's sessions: its own, else the instance's.
+    pub fn review_backend(&self, instance: ReviewBackend) -> ReviewBackend {
+        self.review.unwrap_or(instance)
     }
 
     /// What an issue session is told to do with finished work. A repository's own prompt

@@ -4,10 +4,14 @@
 
 pub mod intake;
 
+use crate::repos::Repo;
 use anyhow::bail;
+use serde::Deserialize;
 use std::str::FromStr;
 
-#[derive(Clone, Copy)]
+/// `REVIEW_BACKEND`, or a `repos.json` entry's `review_backend`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum ReviewBackend {
     GitHub,
     Gerrit,
@@ -46,5 +50,22 @@ impl FromStr for ReviewBackend {
             "gerrit" => Ok(Self::Gerrit),
             other => bail!("unknown REVIEW_BACKEND {other:?} (supported: github, gerrit)"),
         }
+    }
+}
+
+/// Warns about the git repositories that review in Gerrit while `GERRIT_URL` is unset: their
+/// agents get no Gerrit credentials, and no review of theirs is heard.
+pub fn warn_without_gerrit(repos: &[Repo], instance: ReviewBackend, gerrit_url: bool) {
+    let names: Vec<&str> = repos
+        .iter()
+        .filter(|r| r.git && r.review_backend(instance) == ReviewBackend::Gerrit)
+        .map(|r| r.name.as_str())
+        .collect();
+    if !gerrit_url && !names.is_empty() {
+        tracing::warn!(
+            "settings: {} review in Gerrit but GERRIT_URL is unset: agents get no Gerrit \
+             credentials and Gerrit reviews are not heard",
+            names.join(", ")
+        );
     }
 }

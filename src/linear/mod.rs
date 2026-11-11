@@ -120,7 +120,7 @@ impl Surface for Linear {
             app.cfg
                 .extra_prompt
                 .as_deref()
-                .unwrap_or(app.cfg.review.instructions()),
+                .unwrap_or(repo.review_backend(app.cfg.review).instructions()),
         );
         system_prompt.push_str(&work_instructions(mode.as_ref(), &delivery));
         if app.cfg.agent.host_sandbox.is_some() {
