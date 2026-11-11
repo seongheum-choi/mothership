@@ -29,7 +29,9 @@ impl ReviewBackend {
                  worktree was cut from and `<issue key>` is the issue's key exactly as above, \
                  and put the Gerrit change URL in your final reply. To change it after review, \
                  amend the commit, keeping its Change-Id, and push it the same way: that \
-                 uploads a new patch set."
+                 uploads a new patch set. To point at a line on a change, explaining it or \
+                 asking about it, pipe the text into `gerrit-reply <change> <patch-set> --new \
+                 <path> <line>`, which leaves it as an unresolved comment."
             }
         }
     }

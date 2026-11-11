@@ -25,8 +25,10 @@ pub(super) fn install(home: &Path) -> Result<PathBuf> {
     Ok(bin_dir)
 }
 
-/// `gerrit-reply <change> <patch-set> [<comment-id> <path> [<line>]]`, body on stdin: a reply
-/// that resolves the comment's thread, or else a review message on the patch set. Posted to
+/// `gerrit-reply <change> <patch-set> [<comment-id> <path> [<line>] | --new <path> <line>]`,
+/// body on stdin: a reply that resolves the comment's thread, a new comment on the line that
+/// leaves its thread open for an answer, or else a review message on the patch set. `--new`
+/// marks the new comment: by argument count alone it would read as a reply. Posted to
 /// `POST /a/changes/{change}/revisions/{patch-set}/review` with [`TAG`], with the credentials
 /// from the environment, which reach curl on its standard input rather than its command line.
 fn reply_script() -> String {
@@ -35,9 +37,16 @@ fn reply_script() -> String {
 # Installed by mothership. Posts a Gerrit review reply tagged so that mothership does not take
 # it for new feedback.
 set -eu
-if [ $# -ne 2 ] && [ $# -ne 4 ] && [ $# -ne 5 ]; then
-    echo "usage: gerrit-reply <change> <patch-set> [<comment-id> <path> [<line>]] < body" >&2
+usage() {{
+    echo "usage: gerrit-reply <change> <patch-set> [<comment-id> <path> [<line>] | --new <path> <line>] < body" >&2
     exit 2
+}}
+if [ $# -ne 2 ] && [ $# -ne 4 ] && [ $# -ne 5 ]; then
+    usage
+fi
+if [ $# -ge 3 ] && [ "$3" = --new ]; then
+    [ $# -eq 5 ] || usage
+    case $5 in '' | *[!0-9]*) usage ;; esac
 fi
 text="$(cat)"
 if [ -z "$(printf '%s' "$text" | tr -d '[:space:]')" ]; then
@@ -46,6 +55,9 @@ if [ -z "$(printf '%s' "$text" | tr -d '[:space:]')" ]; then
 fi
 if [ $# -eq 2 ]; then
     review=$(jq -n --arg m "$text" '{{tag: "{TAG}", message: $m}}')
+elif [ "$3" = --new ]; then
+    review=$(jq -n --arg m "$text" --arg path "$4" --arg line "$5" '
+        {{tag: "{TAG}", comments: {{($path): [{{line: ($line | tonumber), message: $m, unresolved: true}}]}}}}')
 else
     review=$(jq -n --arg m "$text" --arg id "$3" --arg path "$4" --arg line "${{5:-}}" '
         {{in_reply_to: $id, message: $m, unresolved: false}}

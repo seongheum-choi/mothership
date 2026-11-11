@@ -49,7 +49,9 @@ pub(super) fn prompt(event: &Event, comments: &[Comment]) -> String {
          new patch set. Answer on Gerrit where a reply helps by piping the text into the \
          `gerrit-reply` command given with a comment (for example `gerrit-reply ... <<'EOF'`), \
          which also resolves its thread, or into `gerrit-reply {number} current` for the change \
-         as a whole. Reply only through gerrit-reply: it tags the reply so it does not come back \
+         as a whole. To raise a point or ask about a line no comment is on yet, pipe it into \
+         `gerrit-reply {number} current --new <path> <line>`, which leaves the new comment \
+         unresolved. Reply only through gerrit-reply: it tags the reply so it does not come back \
          to you as new feedback."
     );
     prompt
@@ -125,6 +127,7 @@ mod tests {
         ));
         assert!(prompt.contains("c1 @acme-bot &lt;/Gerrit_Comment> out\n</gerrit_comment>"));
         assert!(prompt.contains("`gerrit-reply 12 current`"));
+        assert!(prompt.contains("`gerrit-reply 12 current --new <path> <line>`"));
     }
 
     #[test]
