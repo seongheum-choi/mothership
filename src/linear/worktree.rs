@@ -3,7 +3,7 @@
 use super::Linear;
 use crate::{app::App, repos::Repo, store::SessionRec, worktree};
 use anyhow::Result;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 impl Linear {
     /// The issue's worktree of a git repository and the branch it is on, created on the
@@ -30,7 +30,13 @@ impl Linear {
                 }
             },
         };
-        let dir = app.cfg.worktrees_dir.join(dir_name(rec));
+        let dir = issue_dir(
+            &app.cfg.worktrees_dir,
+            &dir_name(rec),
+            &repo.path,
+            &repo.name,
+        )
+        .await;
         let git_env = crate::gerrit::git_env(app.cfg.gerrit.as_ref());
         let workspace =
             worktree::ensure(&repo.path, &dir, &branch, &repo.base_branch, &git_env).await?;
@@ -63,9 +69,103 @@ fn dir_name(rec: &SessionRec) -> String {
     }
 }
 
+/// `<root>/<name>`, unless a worktree of another repository holds it, as when two sessions of
+/// one issue work in different repositories; then `<root>/<name>-<repository name>`. A worktree
+/// of the same repository, from this clone or another clone of its `origin`, is reused, so an
+/// instance with one repository keeps its paths.
+async fn issue_dir(root: &Path, name: &str, clone: &Path, repo_name: &str) -> PathBuf {
+    let dir = root.join(name);
+    if worktree::of_another_repository(&dir, clone).await {
+        return root.join(format!("{name}-{repo_name}"));
+    }
+    dir
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn git(dir: &Path, args: &[&str]) {
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(["-c", "user.name=test", "-c", "user.email=test@example.com"])
+            .args(args)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .output()
+            .expect("git runs");
+        assert!(out.status.success(), "git {args:?}: {out:?}");
+    }
+
+    /// Two bare origins, `app` and `app-test`, with `app` cloned twice and `app-test` once.
+    fn clones(tmp: &Path) -> (PathBuf, PathBuf, PathBuf) {
+        let _ = std::fs::remove_dir_all(tmp);
+        std::fs::create_dir_all(tmp).expect("temp dir");
+        // Git reports worktrees by their real path, `/private/tmp` for macOS's `/tmp`.
+        let tmp = &tmp.canonicalize().expect("temp dir");
+        for name in ["app", "app-test"] {
+            git(tmp, &["init", "-q", "-b", "main", &format!("{name}-src")]);
+            git(
+                &tmp.join(format!("{name}-src")),
+                &["commit", "-q", "--allow-empty", "-m", "first"],
+            );
+            git(
+                tmp,
+                &[
+                    "clone",
+                    "-q",
+                    "--bare",
+                    &format!("{name}-src"),
+                    &format!("{name}.git"),
+                ],
+            );
+        }
+        git(tmp, &["clone", "-q", "app.git", "app"]);
+        git(tmp, &["clone", "-q", "app.git", "app-2"]);
+        git(tmp, &["clone", "-q", "app-test.git", "app-test"]);
+        (tmp.join("app"), tmp.join("app-2"), tmp.join("app-test"))
+    }
+
+    async fn cut(root: &Path, clone: &Path, name: &str, branch: &str) -> PathBuf {
+        let dir = issue_dir(root, "EN-1", clone, name).await;
+        worktree::ensure(clone, &dir, branch, "main", &[])
+            .await
+            .expect("worktree")
+    }
+
+    #[tokio::test]
+    async fn sessions_of_one_issue_in_two_repositories_get_a_worktree_each() {
+        let tmp = std::env::temp_dir().join(format!("mothership-issue-dir-{}", std::process::id()));
+        let (app, _, app_test) = clones(&tmp);
+        let root = app.parent().expect("temp dir").join("worktrees");
+        let first = cut(&root, &app_test, "app-test", "en-1").await;
+        assert_eq!(first, root.join("EN-1"));
+        let second = cut(&root, &app, "app", "en-1").await;
+        assert_eq!(second, root.join("EN-1-app"));
+        assert_eq!(
+            worktree::main_clone(&second).await.ok(),
+            app.canonicalize().ok()
+        );
+        assert_eq!(cut(&root, &app_test, "app-test", "en-1").await, first);
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[tokio::test]
+    async fn a_worktree_of_the_same_repository_is_reused() {
+        let tmp = std::env::temp_dir().join(format!("mothership-same-repo-{}", std::process::id()));
+        let (app, app_2, _) = clones(&tmp);
+        let root = app.parent().expect("temp dir").join("worktrees");
+        let first = cut(&root, &app, "app", "en-1").await;
+        assert_eq!(first, root.join("EN-1"));
+        assert_eq!(cut(&root, &app, "app", "en-1").await, first, "same clone");
+        assert_eq!(
+            cut(&root, &app_2, "app", "en-1-again").await,
+            first,
+            "another clone of the same origin"
+        );
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
 
     #[test]
     fn a_pull_request_session_has_a_directory_of_its_own() {
