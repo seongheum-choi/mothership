@@ -15,6 +15,7 @@ use crate::{
     github::{GitHub, UserToken},
     linear::Linear,
     repos::Repo,
+    review::warn_without_gerrit,
     session::Registry,
     store::Store,
     zulip::Zulip,
@@ -75,6 +76,7 @@ impl App {
         }
         let home_dir = PathBuf::from(std::env::var("HOME").context("HOME is not set")?);
         let live = Live::load(&cfg.home, &home_dir)?;
+        warn_without_gerrit(&live.repos(), cfg.review, cfg.gerrit.is_some());
         let github = cfg
             .github
             .as_ref()
@@ -135,6 +137,7 @@ impl App {
         let Some(repos) = self.live.refresh() else {
             return;
         };
+        warn_without_gerrit(&repos, self.cfg.review, self.cfg.gerrit.is_some());
         if let Some(github) = &self.github {
             github.set_repos(&repos);
         }
