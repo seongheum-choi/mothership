@@ -6,6 +6,7 @@ use super::select::same;
 use crate::agent::Runner;
 use crate::config::{ModelFields, check_effort};
 use crate::directive::valid_name;
+use crate::review::ReviewBackend;
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 use std::{
@@ -36,6 +37,8 @@ struct Entry {
     model: Option<String>,
     fallback_model: Option<String>,
     effort: Option<String>,
+    /// `github` or `gerrit`; serde names any other value.
+    review_backend: Option<ReviewBackend>,
     #[serde(default = "default_git")]
     git: bool,
 }
@@ -178,6 +181,7 @@ pub(super) fn parse(text: &str, user_home: &Path) -> Result<(Vec<Repo>, Vec<Opti
                 .map(|p| resolve("mcp_configs", p))
                 .collect::<Result<_>>()?,
             git: entry.git,
+            review: entry.review_backend,
             commands: entry.commands,
             name,
             models,
@@ -285,6 +289,27 @@ mod tests {
             &home(),
         );
         assert!(format!("{:#}", err.unwrap_err()).contains("unknown variant `gpt`"));
+    }
+
+    #[test]
+    fn a_repository_review_backend_beats_the_instance_one() {
+        let (repos, _) = parse(
+            r#"[{"name": "a", "path": "/a", "review_backend": "gerrit"},
+                {"name": "b", "path": "/b", "review_backend": "github"},
+                {"name": "c", "path": "/c"}]"#,
+            &home(),
+        )
+        .unwrap();
+        let backend = |i: usize, instance| repos[i].review_backend(instance);
+        assert_eq!(backend(0, ReviewBackend::GitHub), ReviewBackend::Gerrit);
+        assert_eq!(backend(1, ReviewBackend::Gerrit), ReviewBackend::GitHub);
+        assert_eq!(backend(2, ReviewBackend::GitHub), ReviewBackend::GitHub);
+        assert_eq!(backend(2, ReviewBackend::Gerrit), ReviewBackend::Gerrit);
+        let err = parse(
+            r#"[{"name": "a", "path": "/a", "review_backend": "gitlab"}]"#,
+            &home(),
+        );
+        assert!(format!("{:#}", err.unwrap_err()).contains("unknown variant `gitlab`"));
     }
 
     #[test]
