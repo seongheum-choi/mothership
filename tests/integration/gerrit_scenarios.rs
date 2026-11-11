@@ -54,8 +54,9 @@ fn installed(tool: &str) -> bool {
 }
 
 /// With `REVIEW_BACKEND=gerrit`, sessions are told to push to `refs/for/` with the issue key as
-/// topic. `gerrit-reply` answers a comment in its thread, resolving it, or the patch set, both
-/// tagged so mothership can tell them from feedback; an empty reply posts nothing.
+/// topic. `gerrit-reply` answers a comment in its thread, resolving it, starts a new unresolved
+/// comment on a line with `--new`, or answers the patch set, all tagged so mothership can tell
+/// them from feedback; an empty reply or a wrong call posts nothing.
 async fn gerrit_sessions_push_for_review_and_reply(ctx: Ctx) -> Result<()> {
     if !installed("jq") || !installed("curl") {
         return Err(Skipped("gerrit-reply needs jq and curl").into());
@@ -81,10 +82,25 @@ async fn gerrit_sessions_push_for_review_and_reply(ctx: Ctx) -> Result<()> {
     let quoted = "Done \"quoted\" and\n`code`.";
     ensure!(gerrit_reply(&h, &["12", "2", "c1", "src/a b.rs", "3"], quoted).await? == 0);
     ensure!(gerrit_reply(&h, &["12", "current"], "Thanks.").await? == 0);
+    ensure!(gerrit_reply(&h, &["12", "2", "c2", "/PATCHSET_LEVEL"], "Done.").await? == 0);
+    ensure!(gerrit_reply(&h, &["12", "2", "--new", "src/a.rs", "7"], "Why?").await? == 0);
     ensure!(
         gerrit_reply(&h, &["12", "current"], " \n").await? == 2,
         "empty"
     );
+    for args in [
+        &["12"][..],
+        &["12", "2", "c1"],
+        &["12", "2", "c1", "src/a.rs", "3", "x"],
+        &["12", "2", "--new", "src/a.rs"],
+        &["12", "2", "--new", "src/a.rs", "seven"],
+        &["12", "2", "--new", "src/a.rs", ""],
+    ] {
+        ensure!(
+            gerrit_reply(&h, args, "Why?").await? == 2,
+            "usage: {args:?}"
+        );
+    }
     let reviews = h
         .gerrit
         .as_ref()
@@ -102,6 +118,20 @@ async fn gerrit_sessions_push_for_review_and_reply(ctx: Ctx) -> Result<()> {
             "12".to_string(),
             "current".to_string(),
             json!({"tag": "mothership", "message": "Thanks."}),
+        ),
+        (
+            "12".to_string(),
+            "2".to_string(),
+            json!({"tag": "mothership", "comments": {"/PATCHSET_LEVEL": [
+                {"in_reply_to": "c2", "message": "Done.", "unresolved": false},
+            ]}}),
+        ),
+        (
+            "12".to_string(),
+            "2".to_string(),
+            json!({"tag": "mothership", "comments": {"src/a.rs": [
+                {"line": 7, "message": "Why?", "unresolved": true},
+            ]}}),
         ),
     ];
     ensure!(reviews == want, "{reviews:#?}");
