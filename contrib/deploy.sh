@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # Rebuilds mothership on macOS and restarts its launchd agent without breaking the privacy
-# (TCC) approval: pull, build, sign with a fixed identity, wait until idle, swap the binary,
-# kickstart. See "Agent does not start (macOS privacy prompts)" in the README.
+# (TCC) approval: pull, build, sign with a fixed identity, wait until idle and drain, swap the
+# binary, kickstart. See "Agent does not start (macOS privacy prompts)" in the README.
 #
 # Every path and name is a variable; override any of them in the environment:
 #   MOTHERSHIP_SRC=~/src/mothership MOTHERSHIP_BIN=~/.local/bin/mothership contrib/deploy.sh
-# FORCE=1 restarts without waiting for idle, killing any running turn.
+# FORCE=1 restarts without waiting for idle, killing any running turn. IDLE_TIMEOUT (1800) bounds
+# the wait for idle; HOLD_LIMIT (180) bounds how long a drain holds new turns.
 set -euo pipefail
 
 src=${MOTHERSHIP_SRC:-$HOME/mothership}
@@ -17,6 +18,10 @@ keychain=${SIGN_KEYCHAIN:-$HOME/Library/Keychains/mothership.keychain-db}
 # Optional: a file holding the keychain password, so the script runs unattended.
 keychain_pw=${SIGN_KEYCHAIN_PW_FILE:-$HOME/.mothership/.keychain-pw}
 idle_timeout=${IDLE_TIMEOUT:-1800}
+hold_limit=${HOLD_LIMIT:-180}
+
+# shellcheck source=contrib/wait-idle.sh
+source "$(cd "$(dirname "$0")" && pwd)/wait-idle.sh"
 
 cd "$src"
 git pull --ff-only
@@ -42,30 +47,16 @@ codesign --force --sign "$identity" --keychain "$keychain" --identifier mothersh
     target/release/mothership
 codesign --verify target/release/mothership
 
-# A restart kills running agents, so wait until no turn is running. Meanwhile a mothership that
-# reports `draining` holds new turns (SIGUSR1) and runs them after the restart, so the running
-# ones are the last; if this script stops before restarting, SIGUSR2 lets the held turns start.
+# A restart kills running agents, so wait until no turn is running, draining only once idle
+# and for at most HOLD_LIMIT seconds (see contrib/wait-idle.sh). If this script stops while the
+# drain holds turns, SIGUSR2 lets them start.
 service=gui/$(id -u)/$label
-drained=
-trap '[[ $drained == 1 ]] && launchctl kill SIGUSR2 "$service"' EXIT
-deadline=$((SECONDS + idle_timeout))
-while [[ ${FORCE:-} != 1 ]]; do
-    if ! status=$(curl -fsS "$status_url" 2>/dev/null); then
-        echo "mothership is not answering on $status_url; nothing to wait for" >&2
-        break
-    fi
-    if [[ -z $drained ]] && grep -q '"draining"' <<<"$status"; then
-        launchctl kill SIGUSR1 "$service"
-        drained=1
-        continue
-    fi
-    grep -q '"status":"idle"' <<<"$status" && break
-    if ((SECONDS > deadline)); then
-        echo "mothership still busy after ${idle_timeout}s; not restarting" >&2
-        exit 1
-    fi
-    sleep 10
-done
+drain() { launchctl kill SIGUSR1 "$service"; }
+undrain() { launchctl kill SIGUSR2 "$service"; }
+trap '[[ $drained == 1 ]] && undrain' EXIT
+if [[ ${FORCE:-} != 1 ]]; then
+    wait_idle
+fi
 
 mkdir -p "$(dirname "$bin")"
 cp target/release/mothership "$bin.new"
