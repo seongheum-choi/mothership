@@ -151,6 +151,7 @@ impl Surface for Linear {
 
     async fn update(&self, app: &Arc<App>, key: &str, update: Update) {
         let (content, ephemeral) = match update {
+            Update::Waiting(wait) => return self.show_wait(app, key, &wait).await,
             Update::Working => {
                 self.start_turn(key);
                 (thought("Working on it…"), true)

@@ -20,6 +20,8 @@ use std::{
 use tokio::sync::mpsc;
 use turn::worker;
 
+pub use background::Wait;
+
 /// Where requests come from and where progress and results go.
 pub trait Surface: Send + Sync + Sized + 'static {
     /// Per-prompt data handed back when the turn that answered the prompt ends
@@ -79,6 +81,8 @@ pub enum Update {
     Progress(String),
     /// A prompt that arrived mid-turn was passed to the running agent.
     Noted,
+    /// The agent answered and waits for its background tasks, or that wait ended.
+    Waiting(Wait),
 }
 
 impl Update {
@@ -92,7 +96,7 @@ impl Update {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Outcome {
     Reply(String),
     Failed(String),

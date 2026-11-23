@@ -1014,7 +1014,8 @@ async fn linear_agent_that_never_starts_is_stopped(ctx: Ctx) -> Result<()> {
 }
 
 /// A turn that ends while its background task runs keeps the agent until the task finishes, and
-/// the answer it wakes up to reaches the thread with nobody prompting it.
+/// the answer it wakes up to reaches the thread with nobody prompting it, once though the agent
+/// gives it twice. The session's plan shows the wait in progress, then completed.
 async fn linear_background_work_outlives_the_turn(ctx: Ctx) -> Result<()> {
     let h = Harness::start(&ctx, Setup::default()).await?;
     let issue = issue(62, "Build it in the background.");
@@ -1026,10 +1027,22 @@ async fn linear_background_work_outlives_the_turn(ctx: Ctx) -> Result<()> {
     ensure!(body(&first) == "Started in the background.", "{first}");
     let second = h.activity("s62", "response", 2).await?;
     ensure!(body(&second) == BACKGROUND_DONE, "{second}");
+    h.logged("unasked and the same as the last: not reported again")
+        .await?;
+    let responses = h.activities("s62");
+    let responses: Vec<_> = responses
+        .iter()
+        .filter(|a| a["type"] == "response")
+        .collect();
+    ensure!(responses.len() == 2, "{responses:?}");
+    let plans = plans(&h, "s62");
     ensure!(
-        thoughts(&h, "s62").contains(&waiting_note(1)),
-        "{:?}",
-        thoughts(&h, "s62")
+        plans
+            == [
+                json!([{"content": waiting_note(1), "status": "inProgress"}]),
+                json!([{"content": "Background tasks finished.", "status": "completed"}]),
+            ],
+        "{plans:?}"
     );
     let call = h.prompt_with(&context).await?;
     ensure!(h.calls("claude").len() == 1, "no relaunch was needed");
@@ -1037,7 +1050,7 @@ async fn linear_background_work_outlives_the_turn(ctx: Ctx) -> Result<()> {
 }
 
 /// Background work still running after `AGENT_BACKGROUND_TIMEOUT` is given up on: the agent's
-/// input closes so it can exit, and the thread is told.
+/// input closes so it can exit, and the session's plan says so.
 async fn linear_background_work_past_the_limit_is_given_up(ctx: Ctx) -> Result<()> {
     let env = vec![("AGENT_BACKGROUND_TIMEOUT", "1".into())];
     let h = Harness::start(
@@ -1054,11 +1067,14 @@ async fn linear_background_work_past_the_limit_is_given_up(ctx: Ctx) -> Result<(
     ensure!(h.linear(created("s63", &issue, &context)).await? == 200);
 
     h.activity("s63", "response", 1).await?;
-    eventually("give-up thought", || {
-        thoughts(&h, "s63")
-            .iter()
-            .any(|t| t.starts_with("Background work is still running after 1s"))
-            .then_some(())
+    eventually("the plan step given up", || {
+        let plans = plans(&h, "s63");
+        let step = &plans.last()?[0];
+        let given_up = step["status"] == "canceled"
+            && step["content"]
+                .as_str()?
+                .starts_with("Background work is still running after 1s");
+        given_up.then_some(())
     })
     .await?;
     let call = h.prompt_with(&context).await?;
@@ -1102,6 +1118,17 @@ async fn linear_turns_wait_while_draining(ctx: Ctx) -> Result<()> {
     let call = h.prompt_with(&context).await?;
     h.terminate().await?;
     exited(call["pid"].as_u64().context("fake agent pid")?).await
+}
+
+/// The plans set on `sid`, oldest first.
+fn plans(h: &Harness, sid: &str) -> Vec<Value> {
+    h.mock.read(|r| {
+        r.session_updates
+            .iter()
+            .filter(|u| u["id"] == sid && u["input"].get("plan").is_some())
+            .map(|u| u["input"]["plan"].clone())
+            .collect()
+    })
 }
 
 fn waiting_note(tasks: usize) -> String {
