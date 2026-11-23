@@ -3,7 +3,8 @@
 
 use super::{
     Msg, Outcome, Surface, Update,
-    background::{Background, Next},
+    background::Background,
+    log::Answers,
     relay::{ProgressTail, Relay},
     turn::Turn,
 };
@@ -57,6 +58,7 @@ impl<S: Surface> Turn<'_, S> {
         tokio::pin!(start_deadline);
         let mut started = false;
         let mut background = Background::new(app.cfg.agent.background_timeout);
+        let mut answers = Answers::default();
         let mut limited = None;
         let mut switching = false;
         loop {
@@ -94,7 +96,7 @@ impl<S: Surface> Turn<'_, S> {
                                 }
                                 self.answered(&mut agent, &mut background).await;
                                 let outcome = outcome(text, is_error, pinned && limited.is_some());
-                                self.finish(std::mem::take(tickets), outcome).await;
+                                self.answer(&mut answers, std::mem::take(tickets), outcome).await;
                             }
                             Event::Usage(usage) => tracing::info!("[{key}] {runner} usage: {usage}"),
                             event => {
@@ -107,29 +109,23 @@ impl<S: Surface> Turn<'_, S> {
                 }
                 Some(msg) = rx.recv() => {
                     if self.on_msg(&mut agent, msg, prompt, tickets, queued).await? {
+                        self.left(&mut background).await;
                         return Ok(Ended::Done);
                     }
                 }
                 () = tokio::time::sleep_until(background.deadline()), if background.waiting() => {
                     agent.close_input();
-                    let text = background.give_up();
-                    tracing::warn!("[{key}] {text}");
-                    surface.update(app, key, Update::thought(text)).await;
+                    self.tell_wait(background.give_up()).await;
                 }
                 () = &mut start_deadline, if !started => {
                     agent.kill().await;
                     return Err(not_started(runner, start_timeout));
                 }
-                _ = tick.tick() => {
-                    for line in progress.read_new() {
-                        surface.update(app, key, Update::Progress(line)).await;
-                    }
-                }
+                _ = tick.tick() => self.relay_progress(progress).await,
             }
         }
-        for line in progress.read_new() {
-            surface.update(app, key, Update::Progress(line)).await;
-        }
+        self.relay_progress(progress).await;
+        self.left(&mut background).await;
         let status = agent.wait().await?;
         if let (true, Some(resets_at)) = (switching, limited) {
             return Ok(Ended::Limited { resets_at });
@@ -140,17 +136,11 @@ impl<S: Surface> Turn<'_, S> {
         Ok(Ended::Done)
     }
 
-    /// After an answer: closes the agent's input, or keeps it open for the background tasks it
-    /// still runs and says so the first time.
-    async fn answered(&self, agent: &mut Agent, background: &mut Background) {
-        match background.answered() {
-            Next::Close => agent.close_input(),
-            Next::Wait(text) => {
-                tracing::info!("[{}] {text}", self.key);
-                let note = Update::thought(text);
-                self.reg.surface.update(self.app, self.key, note).await;
-            }
-            Next::KeepWaiting => {}
+    /// Posts the lines tools added to the progress file since the last look.
+    async fn relay_progress(&self, progress: &mut ProgressTail) {
+        for line in progress.read_new() {
+            let update = Update::Progress(line);
+            self.reg.surface.update(self.app, self.key, update).await;
         }
     }
 

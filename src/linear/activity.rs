@@ -1,6 +1,12 @@
-//! How agent output reads in a Linear session: thoughts, actions and the todo checklist.
+//! How agent output reads in a Linear session: thoughts, actions, the todo checklist, and the
+//! session's plan showing a wait for background work.
 
-use crate::session::Outcome;
+use super::Linear;
+use crate::{
+    app::App,
+    session::{Outcome, Wait},
+};
+use anyhow::{Result, bail};
 use serde_json::{Value, json};
 
 pub(super) fn thought(body: &str) -> Value {
@@ -67,9 +73,65 @@ pub(super) fn outcome(outcome: &Outcome) -> Value {
     }
 }
 
+/// The session's plan while the agent waits for its background tasks: one step, in progress
+/// until the wait ends. Linear replaces the whole plan on each update.
+pub(super) fn plan(wait: &Wait) -> Value {
+    let status = match wait {
+        Wait::Started { .. } => "inProgress",
+        Wait::Finished => "completed",
+        Wait::Abandoned(_) => "canceled",
+    };
+    json!([{ "content": wait.note(), "status": status }])
+}
+
+impl Linear {
+    /// Shows the wait in the session's plan (a technology preview of Linear's), or in an
+    /// ephemeral thought when the plan cannot be set.
+    pub(super) async fn show_wait(&self, app: &App, key: &str, wait: &Wait) {
+        if let Err(e) = self.set_plan(app, key, plan(wait)).await {
+            tracing::warn!("[{key}] plan update failed, posting a thought instead: {e:#}");
+            self.activity(app, key, thought(&wait.note()), true).await;
+        }
+    }
+
+    async fn set_plan(&self, app: &App, key: &str, plan: Value) -> Result<()> {
+        let data = self
+            .graphql(
+                app,
+                "mutation($id: String!, $input: AgentSessionUpdateInput!) { \
+                 agentSessionUpdate(id: $id, input: $input) { success } }",
+                json!({ "id": key, "input": { "plan": plan } }),
+            )
+            .await?;
+        if data["agentSessionUpdate"]["success"] != true {
+            bail!("agentSessionUpdate did not succeed");
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_background_wait_is_one_plan_step() {
+        let step = |wait: &Wait| {
+            let plan = plan(wait);
+            (plan[0]["status"].clone(), plan[0]["content"].clone())
+        };
+        let started = Wait::Started { tasks: 1 };
+        assert_eq!(step(&started), (json!("inProgress"), json!(started.note())));
+        assert_eq!(
+            step(&Wait::Finished),
+            (json!("completed"), json!("Background tasks finished."))
+        );
+        assert_eq!(
+            step(&Wait::Abandoned("Gave up.".into())),
+            (json!("canceled"), json!("Gave up."))
+        );
+        assert_eq!(plan(&Wait::Finished).as_array().map(Vec::len), Some(1));
+    }
 
     #[test]
     fn todo_write_becomes_a_checklist() {

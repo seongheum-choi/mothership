@@ -27,7 +27,8 @@ pub const HOST_COMMAND: &str = "[host-command]";
 /// A prompt containing this starts a background task, the way an `Agent` or background `Bash`
 /// call does, and ends the turn while it runs. The task finishes shortly after; if input is still
 /// open then, the fake wakes on its notification and answers [`BACKGROUND_DONE`] in a second
-/// result. Closing input first exits the fake with the task lost.
+/// result, given twice the way Claude Code once did. Closing input first exits the fake with
+/// the task lost.
 pub const BACKGROUND: &str = "[background]";
 /// Like [`BACKGROUND`], with a task that never finishes.
 pub const BACKGROUND_HANG: &str = "[background-hang]";
@@ -370,15 +371,21 @@ fn background(out: &mut impl Write, pid: u32, finishes: bool) {
     }
     std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_millis(300));
-        let mut out = std::io::stdout();
-        for line in [
+        let done = json!({"type": "result", "subtype": "success", "is_error": false, "result": BACKGROUND_DONE});
+        let lines: String = [
             json!({"type": "system", "subtype": "task_notification", "task_id": "t1", "status": "completed"}),
             json!({"type": "system", "subtype": "background_tasks_changed", "tasks": []}),
             json!({"type": "system", "subtype": "init", "session_id": format!("fake-{pid}")}),
-            json!({"type": "result", "subtype": "success", "is_error": false, "result": BACKGROUND_DONE}),
-        ] {
-            emit(&mut out, &line);
-        }
+            done.clone(),
+            done,
+        ]
+        .iter()
+        .map(|line| line.to_string() + "\n")
+        .collect();
+        // One write, so the input mothership closes at the first result cannot end the fake
+        // before the repeat is out.
+        let mut out = std::io::stdout();
+        let _ = out.write_all(lines.as_bytes()).and_then(|()| out.flush());
     });
 }
 
