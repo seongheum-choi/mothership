@@ -59,6 +59,7 @@ pub const ALL: &[(&str, Scenario)] = scenarios![
     github_mention_opens_a_session_per_pull_request,
     github_mention_on_a_branch_a_session_moved_to_continues_it,
     github_mention_without_an_issue_is_answered_on_github,
+    github_mention_without_an_issue_is_answered_once,
     zulip_mention_gets_a_reply,
     sigterm_stops_running_agents,
     reload_routes_to_a_repository_added_between_turns,
@@ -1419,7 +1420,9 @@ async fn github_mention_without_an_issue_is_answered_on_github(ctx: Ctx) -> Resu
     h.logged("no Linear issue in its description or branch")
         .await?;
     let gh = eventually("a gh pr comment", || {
-        h.calls("gh").into_iter().find(|c| c["args"][0] == "pr")
+        h.calls("gh")
+            .into_iter()
+            .find(|c| c["args"][0] == "pr" && c["args"][1] == "comment")
     })
     .await?;
     let args: Vec<&str> = gh["args"]
@@ -1438,6 +1441,44 @@ async fn github_mention_without_an_issue_is_answered_on_github(ctx: Ctx) -> Resu
     );
     ensure!(h.mock.read(|r| r.opened_sessions.is_empty()));
     ensure!(h.prompts_with("look at this").is_empty());
+    Ok(())
+}
+
+/// A mention on a pull request that already has the marked answer that no issue was found is
+/// only logged: the answer is not posted again.
+async fn github_mention_without_an_issue_is_answered_once(ctx: Ctx) -> Result<()> {
+    let earlier = "I couldn't find the Linear issue for this pull request, so I did not start.\n\n\
+                   <!-- mothership -->";
+    let setup = Setup {
+        github: true,
+        env: vec![(
+            "FAKE_GH_PR_COMMENTS",
+            json!(["@acme-bot look", earlier]).to_string(),
+        )],
+        ..Setup::default()
+    };
+    let h = Harness::start(&ctx, setup).await?;
+    let comment = pr_comment(7, "feature/login", "", 1, "@acme-bot look again");
+    ensure!(
+        h.github("pull_request_review_comment", "d-1", &comment)
+            .await?
+            == 200
+    );
+    h.logged("already answered that no issue was found").await?;
+    let calls = h.calls("gh");
+    ensure!(
+        calls
+            .iter()
+            .any(|c| c["args"][0] == "pr" && c["args"][1] == "view"),
+        "{calls:?}"
+    );
+    ensure!(
+        !calls
+            .iter()
+            .any(|c| c["args"][0] == "pr" && c["args"][1] == "comment"),
+        "answered again: {calls:?}"
+    );
+    ensure!(h.mock.read(|r| r.opened_sessions.is_empty()));
     Ok(())
 }
 

@@ -11,6 +11,9 @@ use anyhow::{Context, Result, bail};
 use serde_json::Value;
 use std::{path::Path, sync::Arc};
 
+/// How the reply that no Linear issue was found begins, and how mothership knows it again.
+const NO_ISSUE: &str = "I couldn't find the Linear issue for this pull request";
+
 /// Opens a Linear session for the pull request of `feedback` and starts its first turn with
 /// the feedback, or answers on GitHub that no Linear issue was found. `names` are the
 /// repositories whose origin the pull request is in.
@@ -21,11 +24,20 @@ pub(super) async fn open(app: Arc<App>, feedback: Feedback, head: Head, names: &
             "github {pr_url} on {}: no Linear issue in its description or branch",
             head.branch
         );
-        let text = "I couldn't find the Linear issue for this pull request, so I did not \
-                    start. Link the issue in the description \
-                    (`https://linear.app/<workspace>/issue/<KEY-123>`) or name the branch after \
-                    it (`<key-123>-…`), then mention me again.";
-        if let Err(e) = reply(&app, &feedback, text).await {
+        match answered_no_issue(&app, &feedback).await {
+            Ok(true) => {
+                tracing::info!("github {pr_url}: already answered that no issue was found");
+                return;
+            }
+            Ok(false) => {}
+            Err(e) => tracing::warn!("github {pr_url}: reading its comments failed: {e:#}"),
+        }
+        let text = format!(
+            "{NO_ISSUE}, so I did not start. Link the issue in the description \
+             (`https://linear.app/<workspace>/issue/<KEY-123>`) or name the branch after it \
+             (`<key-123>-…`), then mention me again."
+        );
+        if let Err(e) = reply(&app, &feedback, &text).await {
             tracing::warn!("github {pr_url}: replying that no issue was found failed: {e:#}");
         }
         return;
@@ -141,34 +153,110 @@ fn key_at(text: &str) -> Option<String> {
     Some(format!("{}-{}", team.to_ascii_uppercase(), &rest[..digits]))
 }
 
+/// Whether the pull request already has mothership's reply that no issue was found. Its own
+/// comments tell, so the answer outlasts a restart without anything in `state.json`.
+async fn answered_no_issue(app: &App, feedback: &Feedback) -> Result<bool> {
+    let number = feedback.number.to_string();
+    let out = gh(
+        app,
+        feedback,
+        &[
+            "pr",
+            "view",
+            &number,
+            "--repo",
+            &feedback.repo,
+            "--json",
+            "comments",
+        ],
+    )
+    .await?;
+    let view: Value = serde_json::from_slice(&out).context("parsing gh pr view")?;
+    Ok(has_no_issue_reply(&view))
+}
+
+/// Whether a `gh pr view --json comments` answer holds a marked reply that no issue was found.
+fn has_no_issue_reply(view: &Value) -> bool {
+    view["comments"].as_array().is_some_and(|comments| {
+        comments.iter().any(|c| {
+            let body = c["body"].as_str().unwrap_or_default();
+            body.starts_with(NO_ISSUE) && body.contains(MARKER)
+        })
+    })
+}
+
 /// A conversation comment on the pull request, marked like `gh-reply`'s so it never comes
 /// back as feedback.
 async fn reply(app: &App, feedback: &Feedback, text: &str) -> Result<()> {
+    let number = feedback.number.to_string();
+    let body = format!("{text}\n\n{MARKER}");
+    gh(
+        app,
+        feedback,
+        &[
+            "pr",
+            "comment",
+            &number,
+            "--repo",
+            &feedback.repo,
+            "--body",
+            &body,
+        ],
+    )
+    .await?;
+    Ok(())
+}
+
+/// Runs `gh <args>` in the clone of the pull request's repository and returns its output.
+async fn gh(app: &App, feedback: &Feedback, args: &[&str]) -> Result<Vec<u8>> {
     let github = app.github.as_ref().context("github feedback is off")?;
     let origins = github.origins();
     let clone: &Path = origins
         .clone_of(&feedback.repo)
         .with_context(|| format!("no repository has origin {}", feedback.repo))?;
     let out = tokio::process::Command::new("gh")
-        .args(["pr", "comment", &feedback.number.to_string()])
-        .args(["--repo", &feedback.repo, "--body"])
-        .arg(format!("{text}\n\n{MARKER}"))
+        .args(args)
         .current_dir(clone)
         .output()
         .await
         .context("running gh")?;
     if !out.status.success() {
         bail!(
-            "gh pr comment: {}",
+            "gh {}: {}",
+            args.iter().take(2).copied().collect::<Vec<_>>().join(" "),
             String::from_utf8_lossy(&out.stderr).trim()
         );
     }
-    Ok(())
+    Ok(out.stdout)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_marked_no_issue_reply_is_found_once_posted() {
+        let view = |bodies: &[&str]| {
+            serde_json::json!({
+                "comments": bodies.iter().map(|b| serde_json::json!({ "body": b })).collect::<Vec<_>>()
+            })
+        };
+        let posted = format!("{NO_ISSUE}, so I did not start. …\n\n{MARKER}");
+        assert!(has_no_issue_reply(&view(&["@acme-bot review", &posted])));
+        assert!(!has_no_issue_reply(&view(&[])), "no comments yet");
+        assert!(
+            !has_no_issue_reply(&serde_json::json!({})),
+            "no comments field"
+        );
+        assert!(
+            !has_no_issue_reply(&view(&[&format!("Done.\n\n{MARKER}")])),
+            "another mothership reply"
+        );
+        assert!(
+            !has_no_issue_reply(&view(&[&format!("> {NO_ISSUE}\n\nWhy not?")])),
+            "someone quoting it without the marker"
+        );
+    }
 
     #[test]
     fn keys_come_from_description_links_then_the_branch() {
