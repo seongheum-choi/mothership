@@ -304,14 +304,26 @@ fn busy_tool() -> Option<std::process::Child> {
 }
 
 /// `gh api repos/<owner>/<name>/pulls/<n>`: a pull request whose head is `FAKE_GH_HEAD_REF` in
-/// `FAKE_GH_HEAD_REPO`, by default the same repository. `gh pr comment` succeeds. Anything else
-/// fails.
+/// `FAKE_GH_HEAD_REPO`, by default the same repository. `gh pr view <n> --json comments`: the
+/// comments whose bodies `FAKE_GH_PR_COMMENTS` lists as a JSON array, by default none.
+/// `gh pr comment` succeeds. Anything else fails.
 pub fn gh() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     record(&json!({ "tool": "gh", "args": args }));
     let pull = match args.as_slice() {
         [api, path] if api == "api" => pull_request(path),
         [pr, comment, ..] if pr == "pr" && comment == "comment" => return ExitCode::SUCCESS,
+        [pr, view, .., json, comments]
+            if pr == "pr" && view == "view" && json == "--json" && comments == "comments" =>
+        {
+            let bodies: Vec<String> = std::env::var("FAKE_GH_PR_COMMENTS")
+                .ok()
+                .and_then(|v| serde_json::from_str(&v).ok())
+                .unwrap_or_default();
+            let comments: Vec<Value> = bodies.iter().map(|b| json!({ "body": b })).collect();
+            println!("{}", json!({ "comments": comments }));
+            return ExitCode::SUCCESS;
+        }
         _ => None,
     };
     let Some((repo, number)) = pull else {
