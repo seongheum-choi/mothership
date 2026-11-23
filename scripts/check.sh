@@ -18,6 +18,6 @@ if ((too_long)); then exit 1; fi
 cargo fmt --check
 cargo clippy --all-targets --quiet -- -D warnings
 cargo test --quiet
-for test in plugins/*/tests/*.test.sh; do
+for test in plugins/*/tests/*.test.sh contrib/tests/*.test.sh; do
     "$test"
 done

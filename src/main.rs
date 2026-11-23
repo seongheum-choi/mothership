@@ -116,8 +116,8 @@ fn drain_signal_streams() -> Result<Signals> {
     Ok((drain, resume))
 }
 
-/// SIGUSR1 holds new turns for a restart (`contrib/deploy.sh` sends it while it waits for the
-/// running ones); SIGUSR2 ends that and runs what was held.
+/// SIGUSR1 holds new turns for a restart (`contrib/deploy.sh` sends it once the instance is idle);
+/// SIGUSR2 ends that and runs what was held.
 async fn drain_signals(app: std::sync::Arc<app::App>, (mut drain, mut resume): Signals) {
     loop {
         tokio::select! {
