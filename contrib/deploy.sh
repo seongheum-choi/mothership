@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Rebuilds mothership on macOS and restarts its launchd agent without breaking the privacy
 # (TCC) approval: pull, build, sign with a fixed identity, wait until idle and drain, swap the
-# binary, kickstart. See "Agent does not start (macOS privacy prompts)" in the README.
+# binary, kickstart, and roll back if it does not answer. See "Agent does not start (macOS
+# privacy prompts)" in the README.
 #
 # Every path and name is a variable; override any of them in the environment:
 #   MOTHERSHIP_SRC=~/src/mothership MOTHERSHIP_BIN=~/.local/bin/mothership contrib/deploy.sh
@@ -22,6 +23,8 @@ hold_limit=${HOLD_LIMIT:-180}
 
 # shellcheck source=contrib/wait-idle.sh
 source "$(cd "$(dirname "$0")" && pwd)/wait-idle.sh"
+# shellcheck source=contrib/swap-binary.sh
+source "$(cd "$(dirname "$0")" && pwd)/swap-binary.sh"
 
 cd "$src"
 git pull --ff-only
@@ -58,18 +61,13 @@ if [[ ${FORCE:-} != 1 ]]; then
     wait_idle
 fi
 
-mkdir -p "$(dirname "$bin")"
-cp target/release/mothership "$bin.new"
-mv -f "$bin.new" "$bin"
+restart() { launchctl kickstart -k "$service"; }
+# launchd's stderr log, which holds what a binary that dies at start printed.
+logs() {
+    local path
+    path=$(launchctl print "$service" 2>/dev/null | awk -F' = ' '/stderr path/ {print $2; exit}' || true)
+    echo "tail -n 20 ${path:-<StandardErrorPath of $label>}"
+}
 # The new process starts undrained and runs the held turns itself.
 drained=restarted
-launchctl kickstart -k "$service"
-for _ in {1..30}; do
-    if curl -fsS "$status_url" 2>/dev/null | grep -q "\"commit\":\"$commit\""; then
-        echo "deployed $commit to $bin"
-        exit 0
-    fi
-    sleep 1
-done
-echo "$bin was replaced, but $status_url does not report commit $commit within 30s" >&2
-exit 1
+swap_binary target/release/mothership
