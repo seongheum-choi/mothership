@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Rebuilds mothership on Linux and restarts its systemd user service without killing running
-# turns: pull, build, wait until idle and drain, swap the binary, restart, check the commit.
+# turns: pull, build, wait until idle and drain, swap the binary, restart, check the commit, and
+# roll back if it is not reported.
 # The macOS counterpart is contrib/deploy.sh; Linux has no TCC, so nothing is signed here.
 #
 # Every path and name is a variable; override any of them in the environment:
@@ -18,6 +19,8 @@ hold_limit=${HOLD_LIMIT:-180}
 
 # shellcheck source=contrib/wait-idle.sh
 source "$(cd "$(dirname "$0")" && pwd)/wait-idle.sh"
+# shellcheck source=contrib/swap-binary.sh
+source "$(cd "$(dirname "$0")" && pwd)/swap-binary.sh"
 
 cd "$src"
 git pull --ff-only
@@ -36,18 +39,8 @@ if [[ ${FORCE:-} != 1 ]]; then
     wait_idle
 fi
 
-mkdir -p "$(dirname "$bin")"
-cp target/release/mothership "$bin.new"
-mv -f "$bin.new" "$bin"
+restart() { systemctl --user restart "$unit"; }
+logs() { echo "journalctl --user -u $unit -n 20"; }
 # The new process starts undrained and runs the held turns itself.
 drained=restarted
-systemctl --user restart "$unit"
-for _ in {1..30}; do
-    if curl -fsS "$status_url" 2>/dev/null | grep -q "\"commit\":\"$commit\""; then
-        echo "deployed $commit to $bin"
-        exit 0
-    fi
-    sleep 1
-done
-echo "$bin was replaced, but $status_url does not report commit $commit within 30s" >&2
-exit 1
+swap_binary target/release/mothership
