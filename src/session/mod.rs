@@ -64,6 +64,8 @@ pub struct Activity {
     pub last_event: u64,
     /// Background tasks the agent still runs.
     pub background: usize,
+    /// The agent answered and keeps running only for those tasks.
+    pub waiting: bool,
 }
 
 #[derive(Debug, PartialEq)]
@@ -193,6 +195,7 @@ impl<S: Surface> Registry<S> {
             started: now,
             last_event: now,
             background: 0,
+            waiting: false,
         };
         let mut map = self.activity.lock().expect("activity lock poisoned");
         map.insert(key.to_string(), activity);
@@ -204,6 +207,20 @@ impl<S: Surface> Registry<S> {
         if let Some(activity) = map.get_mut(key) {
             change(activity);
         }
+    }
+
+    /// Whether a worker runs for `key`: a turn, or prompts about to start one.
+    pub fn running(&self, key: &str) -> bool {
+        self.live
+            .lock()
+            .expect("live lock poisoned")
+            .contains_key(key)
+    }
+
+    /// `key`'s running turn, as `/status` would show it.
+    pub fn activity(&self, key: &str) -> Option<Activity> {
+        let map = self.activity.lock().expect("activity lock poisoned");
+        map.get(key).cloned()
     }
 
     /// The running turns, for `/status`.

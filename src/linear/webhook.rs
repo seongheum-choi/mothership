@@ -90,6 +90,10 @@ async fn handle(app: Arc<App>, p: Value) {
             tracing::info!("[{sid}] linear created: opened by mothership, already started");
             return;
         }
+        Some("prompted") if app.linear.surface.posted_here(&p).await => {
+            tracing::info!("[{sid}] linear prompted: a reply from the CLI, already running");
+            return;
+        }
         Some(action @ ("created" | "prompted"))
             if !trusts(&app.cfg.linear.trusted_users, &caller(&p)) =>
         {

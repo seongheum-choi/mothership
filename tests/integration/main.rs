@@ -2,6 +2,7 @@
 //! Gerrit and the Claude Code and Codex CLIs. The harness is our own, so this executable can
 //! also play `claude`, `codex` and `gh` when it is started under those names.
 
+mod cli_scenarios;
 mod fake;
 mod gerrit;
 mod gerrit_scenarios;
@@ -82,6 +83,7 @@ fn selected(filter: Option<&str>) -> impl Iterator<Item = &'static (&'static str
         .iter()
         .chain(gerrit_scenarios::ALL)
         .chain(trust_scenarios::ALL)
+        .chain(cli_scenarios::ALL)
         .filter(move |(name, _)| filter.is_none_or(|f| name.contains(f)))
 }
 

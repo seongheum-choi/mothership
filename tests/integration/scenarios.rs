@@ -399,6 +399,12 @@ async fn linear_agent_is_launched_in_the_sandbox(ctx: Ctx) -> Result<()> {
         deny_file(&state.join("state.json")),
     ];
     deny.push(deny_edit_file(&state.join(".env")));
+    // The control socket is there where this sandbox let mothership make it.
+    let socket = state.join("cli.sock");
+    if socket.exists() {
+        deny.insert(1, deny_file(&socket));
+        deny.push(deny_edit_file(&socket));
+    }
     deny.push(deny_edit_dir(&state.join("codex")));
     deny.push(deny_edit_dir(&state.join("host-runs")));
     deny.push(deny_edit_dir(&state.join("mcp")));
@@ -579,6 +585,11 @@ async fn linear_mode_from_labels_shapes_the_agent(ctx: Ctx) -> Result<()> {
         deny_dir(&state.join("modes")),
         deny_file(&state.join("state.json")),
     ];
+    let socket = state.join("cli.sock");
+    if socket.exists() {
+        expected.insert(0, deny_file(&socket));
+        expected.push(deny_edit_file(&socket));
+    }
     expected.push(deny_edit_dir(&state.join("codex")));
     expected.push(deny_edit_dir(&state.join("host-runs")));
     expected.push(deny_edit_dir(&state.join("mcp")));

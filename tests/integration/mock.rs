@@ -34,6 +34,11 @@ pub struct Recorded {
     pub opened_sessions: Vec<Value>,
     /// `issueUpdate` variables.
     pub issue_updates: Vec<Value>,
+    /// Each session's activities as `agentSession(id:) { activities }` pages them, oldest
+    /// first; a test seeds them.
+    pub session_activities: HashMap<String, Vec<Value>>,
+    /// `commentCreate` inputs; the n-th (from 1) creates comment `comment-<n>`.
+    pub comments: Vec<Value>,
     /// `/oauth/token` forms.
     pub token_grants: Vec<HashMap<String, String>>,
     /// Zulip `POST /messages` forms.
@@ -86,6 +91,10 @@ impl Mock {
         f(&self.recorded.lock().expect("mock state poisoned"))
     }
 
+    pub fn write(&self, f: impl FnOnce(&mut Recorded)) {
+        f(&mut self.recorded.lock().expect("mock state poisoned"));
+    }
+
     pub fn add_issue(&self, issue: &Value) {
         let id = issue["id"].as_str().expect("test issues have an id");
         self.recorded
@@ -127,6 +136,18 @@ async fn graphql(
     } else if query.contains("issueUpdate") {
         recorded.issue_updates.push(variables.clone());
         json!({"issueUpdate": {"success": true}})
+    } else if query.contains("commentCreate") {
+        recorded.comments.push(variables["input"].clone());
+        let id = format!("comment-{}", recorded.comments.len());
+        json!({"commentCreate": {"success": true, "comment": {"id": id}}})
+    } else if query.contains("activities(") {
+        match activity_page(&recorded, variables) {
+            Ok(page) => page,
+            Err(message) => {
+                let errors = json!({"errors": [{"message": message}]});
+                return (StatusCode::BAD_REQUEST, Json(errors)).into_response();
+            }
+        }
     } else if query.contains("issue(") {
         let id = variables["id"].as_str().unwrap_or_default();
         let issue = recorded.issues.get(id).or_else(|| {
@@ -141,6 +162,31 @@ async fn graphql(
         return (StatusCode::BAD_REQUEST, Json(errors)).into_response();
     };
     Json(json!({ "data": data })).into_response()
+}
+
+/// One page of a session's seeded activities: `after` is the index the page starts at. Like
+/// Linear, it refuses pages of more than 250.
+fn activity_page(recorded: &Recorded, variables: &Value) -> Result<Value, String> {
+    let sid = variables["id"].as_str().unwrap_or_default();
+    let all = recorded
+        .session_activities
+        .get(sid)
+        .map_or(&[][..], Vec::as_slice);
+    let first = variables["first"].as_u64().unwrap_or(50);
+    if first > 250 {
+        return Err(format!("first: {first} is over 250"));
+    }
+    let first = usize::try_from(first).unwrap_or(250);
+    let start = variables["after"]
+        .as_str()
+        .and_then(|c| c.parse().ok())
+        .unwrap_or(0usize)
+        .min(all.len());
+    let end = (start + first).min(all.len());
+    Ok(json!({"agentSession": {"activities": {
+        "pageInfo": {"hasNextPage": end < all.len(), "endCursor": end.to_string()},
+        "nodes": &all[start..end],
+    }}}))
 }
 
 async fn token(
