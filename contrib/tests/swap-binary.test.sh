@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Runs contrib/swap-binary.sh against a fake service and fake binaries, and checks that a good
-# binary deploys as before and that one which never answers is rolled back to the old one.
+# binary deploys as before and that one which never answers is rolled back to the old one, also
+# when the binary is the build output itself.
 set -euo pipefail
 
 # shellcheck source=contrib/swap-binary.sh
@@ -22,6 +23,9 @@ curl() {
 logs() { echo "journalctl --user -u fake"; }
 sleep() { :; }
 
+# Where the build writes the new binary; the deploy scripts' `bin` may be this very file.
+built=$dir/new
+
 # expect <name> <old binary or -> <new binary> <want result> <want running> <want output>
 expect() {
     local name=$1 result=0 output
@@ -32,10 +36,11 @@ expect() {
         echo "$2" >"$bin"
         restart
     fi
-    echo "$3" >"$dir/new"
+    keep_previous
+    echo "$3" >"$built"
     commit=abc1234
     # Not in $(...): its subshell would keep `running` from the test.
-    swap_binary "$dir/new" >"$dir/out" 2>&1 || result=$?
+    swap_binary "$built" >"$dir/out" 2>&1 || result=$?
     output=$(<"$dir/out")
     local got="result=$result running=$running"
     local want="result=$4 running=$5"
@@ -57,6 +62,11 @@ expect "the failure names where the log is" old0000 dies 1 old0000 "journalctl -
 expect "an old binary that dies too is reported down" dies dies 1 dies "the instance is down"
 expect "the first deploy has nothing to roll back to" - dies 1 dies "no previous binary"
 expect "the first deploy that answers is deployed" - abc1234 0 abc1234 "deployed abc1234"
+
+built=$bin
+expect "a binary built in place is deployed" old0000 abc1234 0 abc1234 "deployed abc1234"
+expect "a binary built in place that dies is rolled back to the old one" old0000 dies 1 old0000 \
+    "answers again with commit old0000"
 
 if ((failures)); then
     echo "$failures failed" >&2
