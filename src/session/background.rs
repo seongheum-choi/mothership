@@ -145,6 +145,8 @@ impl<S: Surface> Turn<'_, S> {
         } else {
             tracing::info!("[{}] {note}", self.key);
         }
+        let waiting = matches!(wait, Wait::Started { .. });
+        self.reg.note(self.key, |a| a.waiting = waiting);
         let update = Update::Waiting(wait);
         self.reg.surface.update(self.app, self.key, update).await;
     }

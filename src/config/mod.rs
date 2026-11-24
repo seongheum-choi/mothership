@@ -82,8 +82,7 @@ pub struct AgentConfig {
 impl Config {
     pub fn load() -> Result<Self> {
         let user_home = PathBuf::from(std::env::var("HOME").context("HOME is not set")?);
-        let home = std::env::var("MOTHERSHIP_HOME")
-            .map_or_else(|_| user_home.join(".mothership"), PathBuf::from);
+        let home = home_of(&user_home);
         let vars = Vars::load(&home);
 
         let extra_prompt = vars
@@ -183,6 +182,17 @@ impl Config {
         dirs.sort();
         dirs
     }
+}
+
+/// `MOTHERSHIP_HOME`, or `.mothership` in the user's home: where a running instance keeps its
+/// state, so the CLI finds the instance there too.
+pub fn home() -> Result<PathBuf> {
+    let user_home = PathBuf::from(std::env::var("HOME").context("HOME is not set")?);
+    Ok(home_of(&user_home))
+}
+
+fn home_of(user_home: &Path) -> PathBuf {
+    std::env::var("MOTHERSHIP_HOME").map_or_else(|_| user_home.join(".mothership"), PathBuf::from)
 }
 
 /// `SANDBOX_READ`, `SANDBOX_WRITE` and `SANDBOX_SKIP_DENY`; each session adds its own directory

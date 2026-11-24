@@ -1,8 +1,11 @@
-//! mothership: runs Claude Code agents for Linear agent sessions and Zulip conversations.
+//! mothership: runs Claude Code agents for Linear agent sessions and Zulip conversations, and
+//! its command line asks a running instance about them.
 
 mod agent;
 mod app;
+mod cli;
 mod config;
+mod control;
 mod directive;
 mod gerrit;
 mod github;
@@ -22,10 +25,22 @@ mod zulip;
 
 use anyhow::{Context, Result};
 use std::io::IsTerminal;
+use std::process::ExitCode;
 use std::time::Duration;
 
+/// Arguments are read before anything else: a `session` command or `--help` must not touch
+/// the home directory or the port of the instance that is already running.
+fn main() -> Result<ExitCode> {
+    match cli::Command::parse(std::env::args().skip(1)) {
+        Some(cli::Command::Serve) => serve().map(|()| ExitCode::SUCCESS),
+        Some(cli::Command::Session(session)) => cli::session(session),
+        Some(cli::Command::Help) => Ok(cli::usage(true)),
+        None => Ok(cli::usage(false)),
+    }
+}
+
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn serve() -> Result<()> {
     tracing_subscriber::fmt()
         .with_target(false)
         .with_ansi(std::io::stdout().is_terminal()) // plain text in pm2/systemd logs
@@ -86,6 +101,10 @@ async fn main() -> Result<()> {
     let listener = tokio::net::TcpListener::bind(&app.cfg.bind)
         .await
         .with_context(|| format!("binding {}", app.cfg.bind))?;
+    // After the port: a second instance on this home stops there, before it takes the socket.
+    let control = control::listen(&app)
+        .inspect_err(|e| tracing::warn!("`mothership session` is off: {e:#}"))
+        .is_ok();
     tracing::info!(
         "listening on {} (zulip {}, github {}, gerrit {}, repos: {})",
         app.cfg.bind,
@@ -102,6 +121,9 @@ async fn main() -> Result<()> {
         .with_graceful_shutdown(shutdown_signal())
         .await?;
     // The HTTP server stopped accepting requests; stop the agents it left running.
+    if control {
+        control::remove(&app.cfg.home);
+    }
     app.shutdown(Duration::from_secs(10)).await;
     tracing::info!("shutdown complete");
     Ok(())

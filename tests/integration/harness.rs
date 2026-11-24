@@ -309,6 +309,30 @@ impl Harness {
         Ok(res.json().await?)
     }
 
+    /// Runs `mothership <args>` against this instance's home with `stdin` as its input, as the
+    /// control tower would, and returns how it exited and what it printed.
+    pub async fn cli(&self, args: &[&str], stdin: &str) -> Result<std::process::Output> {
+        use tokio::io::AsyncWriteExt;
+        let mut child = Command::new(env!("CARGO_BIN_EXE_mothership"))
+            .env_clear()
+            .env("HOME", &self.home)
+            .env("MOTHERSHIP_HOME", self.home.join(".mothership"))
+            .args(args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
+            .context("starting the mothership CLI")?;
+        let mut input = child.stdin.take().context("CLI stdin")?;
+        input.write_all(stdin.as_bytes()).await?;
+        drop(input);
+        tokio::time::timeout(PATIENCE, child.wait_with_output())
+            .await
+            .context("the CLI did not exit")?
+            .context("waiting for the CLI")
+    }
+
     /// Everything the fakes were asked, oldest first, filtered by `tool` (`claude`, `codex` or
     /// `gh`).
     pub fn calls(&self, tool: &str) -> Vec<Value> {

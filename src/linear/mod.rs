@@ -4,6 +4,7 @@
 mod activity;
 mod api;
 mod cleanup;
+mod control;
 mod create;
 mod mcp;
 mod oauth;
@@ -12,6 +13,7 @@ mod pr;
 mod prerouting;
 mod routing;
 mod start;
+mod thread;
 mod webhook;
 mod worktree;
 
@@ -33,7 +35,7 @@ use axum::{
 };
 use pin::Workspace;
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     sync::{Arc, Mutex},
 };
 
@@ -45,6 +47,8 @@ pub struct Linear {
     oauth_state: Mutex<Option<String>>,
     /// The one workspace this instance serves; `None` until a token has been checked.
     workspace: Mutex<Option<Workspace>>,
+    /// Comments `mothership session reply` posted, until Linear's webhook for them comes.
+    posted_replies: tokio::sync::Mutex<HashSet<String>>,
     /// Pull requests each session's running turn has mentioned so far.
     turn_prs: Mutex<HashMap<String, Vec<pr::PullRequest>>>,
 }
