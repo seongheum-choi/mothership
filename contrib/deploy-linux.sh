@@ -25,6 +25,8 @@ source "$(cd "$(dirname "$0")" && pwd)/swap-binary.sh"
 cd "$src"
 git pull --ff-only
 commit=$(git rev-parse --short HEAD)
+# Before the build, which overwrites the binary in place when MOTHERSHIP_BIN is its output.
+keep_previous
 # Reported by `/status` as `commit`, to check below that the new binary is the one answering.
 MOTHERSHIP_COMMIT=$commit cargo build --release --locked
 

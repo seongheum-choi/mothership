@@ -1,12 +1,14 @@
 # Replaces the mothership binary, restarts it and rolls back if the new one does not answer;
 # sourced by contrib/deploy.sh and contrib/deploy-linux.sh, which define `restart` for their
-# service manager and `logs` (where the service's last log lines are) and call `swap_binary`.
+# service manager and `logs` (where the service's last log lines are) and call `keep_previous`
+# before building and `swap_binary` after.
 #
-# The binary in place is kept as `<bin>.prev` before the new one replaces it. If `/status` does
+# `keep_previous` keeps the binary in place as `<bin>.prev`. It runs before the build because
+# `bin` may be the build output itself, which the build overwrites with the new binary. If `/status` does
 # not report the new commit within `answer_timeout` seconds, `.prev` goes back in place and the
 # service restarts again, so a binary that dies at start does not leave the instance down.
 #
-# Inputs: bin, commit, status_url, answer_timeout. `swap_binary <new binary>` returns 0 once the
+# Inputs: bin, commit, status_url, answer_timeout. `keep_previous` needs only bin. `swap_binary <new binary>` returns 0 once the
 # new commit answers and 1 otherwise, whether or not the rollback brought the old one back.
 
 answer_timeout=${answer_timeout:-30}
@@ -29,12 +31,15 @@ put() {
     mv -f "$bin.new" "$bin"
 }
 
+keep_previous() {
+    mkdir -p "$(dirname "$bin")"
+    if [[ -e $bin ]]; then cp "$bin" "$bin.prev"; else rm -f "$bin.prev"; fi
+}
+
 swap_binary() {
     local new=$1 previous
     # What the running binary reports, so the rollback can check it is the one answering again.
     previous=$(curl -fsS "$status_url" 2>/dev/null | grep -o '"commit":"[^"]*"' || true)
-    mkdir -p "$(dirname "$bin")"
-    if [[ -e $bin ]]; then cp "$bin" "$bin.prev"; else rm -f "$bin.prev"; fi
     put "$new"
     restart || true
     if answers "\"commit\":\"$commit\""; then
