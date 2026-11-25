@@ -85,13 +85,7 @@ impl Stream {
             nested: false,
         };
         match (v["type"].as_str(), item["type"].as_str()) {
-            (Some("thread.started"), _) => v["thread_id"]
-                .as_str()
-                .map(|id| Event::Started {
-                    session_id: id.to_string(),
-                })
-                .into_iter()
-                .collect(),
+            (Some("thread.started"), _) => Event::started(&v["thread_id"]).into_iter().collect(),
             (Some("item.started"), Some("command_execution")) => {
                 vec![tool("Bash".into(), json!({ "command": item["command"] }))]
             }
@@ -121,13 +115,7 @@ impl Stream {
                 if kind == "agent_message" {
                     self.reply = Some(text.clone());
                 }
-                (!text.is_empty())
-                    .then_some(Event::Text {
-                        text,
-                        nested: false,
-                    })
-                    .into_iter()
-                    .collect()
+                Event::text(&text, false).into_iter().collect()
             }
             (Some("turn.completed"), _) => {
                 // A turn can end on a command or an edit with nothing said after it.

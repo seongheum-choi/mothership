@@ -78,13 +78,9 @@ impl Stream {
         };
         let nested = v["parent_tool_use_id"].is_string();
         match v["type"].as_str() {
-            Some("system") if v["subtype"] == "init" => v["session_id"]
-                .as_str()
-                .map(|id| Event::Started {
-                    session_id: id.to_string(),
-                })
-                .into_iter()
-                .collect(),
+            Some("system") if v["subtype"] == "init" => {
+                Event::started(&v["session_id"]).into_iter().collect()
+            }
             Some("system") if v["subtype"] == "background_tasks_changed" => {
                 vec![Event::Background {
                     live: v["tasks"].as_array().map_or(0, Vec::len),
@@ -126,13 +122,7 @@ impl Stream {
 /// One block of an assistant message.
 fn content(block: &Value, nested: bool) -> Option<Event> {
     match block["type"].as_str() {
-        Some("text") => {
-            let text = block["text"].as_str().unwrap_or_default().trim();
-            (!text.is_empty()).then(|| Event::Text {
-                text: text.to_string(),
-                nested,
-            })
-        }
+        Some("text") => Event::text(block["text"].as_str().unwrap_or_default(), nested),
         Some("tool_use") => Some(Event::Tool {
             name: block["name"].as_str().unwrap_or("Tool").to_string(),
             input: block["input"].clone(),
