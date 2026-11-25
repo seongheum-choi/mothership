@@ -37,8 +37,6 @@ pub struct App {
     pub cfg: Config,
     /// The repository list and model defaults, reloaded when their files change.
     live: Live,
-    /// The user's home directory, which agents may only read where their work is.
-    pub home_dir: PathBuf,
     pub http: reqwest::Client,
     pub store: Store,
     pub linear: Arc<Registry<Linear>>,
@@ -74,8 +72,7 @@ impl App {
         {
             store.update(|s| s.linear = seed.clone());
         }
-        let home_dir = PathBuf::from(std::env::var("HOME").context("HOME is not set")?);
-        let live = Live::load(&cfg.home, &home_dir)?;
+        let live = Live::load(&cfg.home, &cfg.user_home)?;
         warn_without_gerrit(&live.repos(), cfg.review, cfg.gerrit.is_some());
         let github = cfg
             .github
@@ -90,7 +87,6 @@ impl App {
             .transpose()
             .context("setting up Gerrit")?;
         Ok(Arc::new(Self {
-            home_dir,
             live,
             http: reqwest::Client::new(),
             store,
