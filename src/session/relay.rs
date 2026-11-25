@@ -77,10 +77,7 @@ impl ProgressTail {
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir)?;
         }
-        match std::fs::remove_file(&path) {
-            Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e.into()),
-            _ => {}
-        }
+        crate::store::remove_if_present(&path)?;
         let file = OpenOptions::new()
             .read(true)
             .append(true)
