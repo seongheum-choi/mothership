@@ -110,7 +110,7 @@ pub fn args(
             mount(&mut args, path, access, &mut emptied);
         }
     }
-    args.extend(codex.map(super::codex::home_mounts).unwrap_or_default());
+    args.extend(codex.map_or_default(super::codex::home_mounts));
     // Last, once the mounts inside them have their mount points.
     for dir in emptied {
         args.extend(["--remount-ro".to_string(), dir]);
@@ -163,7 +163,7 @@ fn mount(args: &mut Vec<String>, path: &Path, access: Access, emptied: &mut Vec<
 /// or a rule without an absolute path.
 fn target(rule: &str, tool: &str) -> Option<PathBuf> {
     let path = seatbelt::rule_path(rule, tool)?;
-    let path = path.strip_suffix("/**").unwrap_or(path);
+    let path = path.trim_suffix("/**");
     (!path.contains('*')).then(|| PathBuf::from(path))
 }
 

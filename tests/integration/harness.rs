@@ -511,13 +511,12 @@ pub async fn no_leftovers() -> Result<()> {
         std::process::Command::new("pgrep")
             .args(["-f", &pattern])
             .output()
-            .map(|out| {
+            .map_or_default(|out| {
                 String::from_utf8_lossy(&out.stdout)
                     .split_whitespace()
                     .collect::<Vec<_>>()
                     .join(",")
             })
-            .unwrap_or_default()
     };
     if eventually("leftover processes to exit", || {
         pids().is_empty().then_some(())

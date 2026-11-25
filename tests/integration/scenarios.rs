@@ -334,8 +334,8 @@ fn rule_path(rule: &str) -> &Path {
     let inner = rule
         .split_once('(')
         .map_or(rule, |(_, rest)| rest.trim_end_matches(')'));
-    let path = inner.strip_prefix('/').unwrap_or(inner);
-    Path::new(path.strip_suffix("/**").unwrap_or(path))
+    let path = inner.trim_prefix('/');
+    Path::new(path.trim_suffix("/**"))
 }
 
 fn deny_file(path: &Path) -> String {

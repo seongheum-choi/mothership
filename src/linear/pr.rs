@@ -140,8 +140,7 @@ impl Linear {
         let known = app.store.read(|s| {
             s.sessions
                 .get(key)
-                .map(|r| r.pull_requests.clone())
-                .unwrap_or_default()
+                .map_or_default(|r| r.pull_requests.clone())
         });
         prs.retain(|pr| !known.contains(&pr.url));
         if prs.is_empty() {

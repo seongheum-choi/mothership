@@ -76,7 +76,7 @@ fn set(mode: &mut Mode, key: &str, value: Value) -> Result<(), String> {
 
 /// The frontmatter (empty when there is none) and the body after it.
 fn split_frontmatter(text: &str) -> Result<(&str, &str)> {
-    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
+    let text = text.trim_prefix('\u{feff}');
     let Some((first, rest)) = text.split_once('\n') else {
         return Ok(("", text));
     };

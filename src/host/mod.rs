@@ -153,11 +153,7 @@ pub fn confinement(
         return Ok(seccomp::wrapped(sandbox, filter, args));
     }
     let mut always = seatbelt::subpath(Path::new("/dev"));
-    always.extend(
-        codex
-            .map(|c| codex::home_writes(&c.home))
-            .unwrap_or_default(),
-    );
+    always.extend(codex.map_or_default(|c| codex::home_writes(&c.home)));
     let profile = seatbelt::profile(settings, &workspace, &always, own);
     Ok(vec![sandbox.into(), "-p".into(), profile])
 }

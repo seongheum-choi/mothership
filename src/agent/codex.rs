@@ -53,7 +53,7 @@ fn codex_model(model: &str) -> Option<&str> {
     const CLAUDE_ALIASES: &[&str] = &[
         "default", "best", "fable", "opus", "sonnet", "haiku", "opusplan",
     ];
-    let base = model.strip_suffix("[1m]").unwrap_or(model);
+    let base = model.trim_suffix("[1m]");
     let claude = CLAUDE_ALIASES.contains(&base) || base.starts_with("claude-");
     (!claude && !model.is_empty()).then_some(model)
 }

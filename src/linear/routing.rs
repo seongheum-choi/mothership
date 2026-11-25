@@ -63,8 +63,7 @@ impl Linear {
         let (current, workspace, branch) = app.store.read(|s| {
             s.sessions
                 .get(sid)
-                .map(|r| (r.repo.clone(), r.workspace.clone(), r.branch.clone()))
-                .unwrap_or_default()
+                .map_or_default(|r| (r.repo.clone(), r.workspace.clone(), r.branch.clone()))
         });
         let repos = app.repos();
         if let Some(name) = current {
@@ -173,7 +172,7 @@ impl Linear {
 /// What routing looks at: the `issue_routing` result (`None` when the lookup failed), with the
 /// webhook's description when the lookup has none, and the request (the @mention or reply).
 fn issue_facts(routing: Option<&Value>, issue: &Value, request: Option<&str>) -> IssueFacts {
-    let mut facts = routing.map(routing_facts).unwrap_or_default();
+    let mut facts = routing.map_or_default(routing_facts);
     facts.lookup_failed = routing.is_none();
     if facts.description.is_none() {
         facts.description = issue["description"].as_str().map(String::from);
