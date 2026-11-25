@@ -84,18 +84,21 @@ impl Host {
         };
         let status = status.map_err(|e| e.to_string())?;
         group.exited();
-        let drained = |task: tokio::task::JoinHandle<Vec<u8>>| async move {
-            let abort = task.abort_handle();
-            let out = tokio::time::timeout(DRAIN, task).await;
-            abort.abort();
-            out.ok().and_then(Result::ok).unwrap_or_default()
-        };
         Ok(Output {
             status,
             stdout: drained(stdout).await,
             stderr: drained(stderr).await,
         })
     }
+}
+
+/// What `task` (a [`keep_end`]) read once its pipe closed, or by [`DRAIN`] when something
+/// still holds the pipe open.
+pub(super) async fn drained(task: tokio::task::JoinHandle<Vec<u8>>) -> Vec<u8> {
+    let abort = task.abort_handle();
+    let out = tokio::time::timeout(DRAIN, task).await;
+    abort.abort();
+    out.ok().and_then(Result::ok).unwrap_or_default()
 }
 
 /// Reads `pipe` to its end, keeping the last [`OUTPUT_CAP`] bytes; reading on rather than

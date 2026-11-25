@@ -5,7 +5,7 @@
 
 use super::{
     Host,
-    process::{keep_end, tail},
+    process::{drained, keep_end, tail},
     request,
     runtime::RUNTIME_ENV,
     sandbox::{SandboxRun, run_args},
@@ -35,7 +35,7 @@ impl Host {
         // Declared before the container, so the runtime is held until it is removed.
         let _lease = self.container_runtime.acquire().await?;
         // Before it starts, so a run cut short at any point still removes it.
-        let _container = Container {
+        let container = Container {
             runtime: self.container_runtime.cli.clone(),
             name: name.clone(),
         };
@@ -60,11 +60,13 @@ impl Host {
         let waited = tokio::time::timeout(limit, child.wait()).await;
         let status = waited.ok().transpose().map_err(|e| e.to_string())?;
         if status.is_none() {
-            // The command goes on in the container until it is removed; the CLI stops here.
+            // The command goes on in the container until it is removed; a CLI that is a
+            // wrapper may leave processes holding its pipes, so the container goes first.
             let _ = child.start_kill();
+            drop(container);
         }
-        let mut output = output.await.unwrap_or_default();
-        output.extend(complaints.await.unwrap_or_default());
+        let (mut output, complaints) = tokio::join!(drained(output), drained(complaints));
+        output.extend(complaints);
         let log = request::log(&self.runs, id);
         let log = match request::write_new(&log, &output) {
             Ok(()) => log.display().to_string(),
@@ -239,6 +241,42 @@ mod tests {
                 .await
                 .unwrap_err()
                 .contains("cannot start")
+        );
+    }
+
+    #[tokio::test]
+    async fn answers_soon_after_the_timeout_when_the_cli_leaves_a_process_on_its_pipes() {
+        let h = host("wrapper", Some("img"), "");
+        // A wrapper that does not `exec`: killing it leaves its child holding stdout.
+        let cli = h.run_root.join("cli");
+        std::fs::write(
+            &cli,
+            "#!/bin/sh\n[ \"$1\" = exec ] || exit 0\nsleep 30 &\nwait\n",
+        )
+        .unwrap();
+        let mut perms = std::fs::metadata(&cli).unwrap().permissions();
+        std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o755);
+        std::fs::set_permissions(&cli, perms).unwrap();
+        let h = Host {
+            container_runtime: Arc::new(Runtime::new(
+                cli.display().to_string(),
+                None,
+                None,
+                Duration::ZERO,
+            )),
+            ..h
+        };
+        let short = Limits {
+            timeout_secs: 1,
+            ..CEILING
+        };
+        let began = std::time::Instant::now();
+        let v = result(&h, &run("true", short, &[])).await;
+        assert_eq!(v["timed_out"], true, "{v}");
+        assert!(
+            began.elapsed() < Duration::from_secs(10),
+            "{:?}",
+            began.elapsed()
         );
     }
 
