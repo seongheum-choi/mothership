@@ -27,9 +27,9 @@ pub(super) struct Output {
 }
 
 impl Host {
-    /// Runs `program` with `args` in the workspace after `profile`, `HOST_SANDBOX` and its
-    /// arguments (see [`Host::profile`]), with `input` on stdin, only the environment of
-    /// [`super::env`] and `TMPDIR` in `run_dir`, until it exits or [`TIMEOUT`] passes. Its process group is killed either way.
+    /// Runs `program` with `args` in the workspace under `profile` (see [`Host::profile`]),
+    /// with only [`super::env`] and `TMPDIR` in `run_dir`, until it exits or [`TIMEOUT`]
+    /// passes. Its process group is killed either way.
     pub(super) async fn confined(
         &self,
         profile: Vec<String>,

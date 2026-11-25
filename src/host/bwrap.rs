@@ -10,8 +10,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-/// How many levels under a directory a run may write [`guards`] looks for protected names and
-/// `.git`s.
+/// How deep under a writable directory [`guards`] looks for protected names and `.git`s.
 const DEPTH: usize = 3;
 
 /// Hidden from every run besides what the rules hide: users' runtime directories (their

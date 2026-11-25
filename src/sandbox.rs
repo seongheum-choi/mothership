@@ -22,16 +22,16 @@ pub struct Paths {
 
 /// Claude Code settings that deny reads of every home entry not on the way to `workspace`,
 /// `readable`, `paths.read`, `paths.write` or `paths.skip_deny`, deny edits of everything in
-/// `state` (`MOTHERSHIP_HOME`) but `workspace` and `paths.write`, and run Bash
-/// in Claude Code's OS sandbox.
+/// `state` (`MOTHERSHIP_HOME`) but `workspace` and `paths.write`, and run Bash in Claude
+/// Code's OS sandbox.
 ///
 /// For each directory from `home` down to an allowed path, siblings that lead nowhere
 /// allowed get a `Read` deny rule; an allowed path's own subtree stays open. The rules stop
-/// the Read tool, and the sandbox (Seatbelt on macOS, bubblewrap on Linux) folds them into
-/// its filesystem policy, so they bind every process Bash starts as well, not only the
-/// reading commands Claude Code recognises. Writes from Bash are limited to the working
-/// directory and `paths.write`. Without a sandbox the session fails instead of running
-/// unconfined, and the OAuth token is kept out of Bash's environment.
+/// the Read tool, and the sandbox folds them into its filesystem policy, so they bind every
+/// process Bash starts as well, not only the reading commands Claude Code recognises. Writes
+/// from Bash are limited to the working directory and `paths.write`. Without a sandbox the
+/// session fails instead of running unconfined, and the OAuth token is kept out of Bash's
+/// environment.
 ///
 /// The `Edit` rules, which Claude Code applies to every file-editing tool, keep an agent from
 /// changing what later sessions run with: `.env`, `repos.json`, `modes/`, `plugins/` and other
@@ -70,7 +70,8 @@ pub fn settings(
             "allowUnsandboxedCommands": false,
             "failIfUnavailable": true,
             "filesystem": { "allowWrite": paths.write },
-            // Local servers are how agents run and probe what they build; no outside port is involved.
+            // Local servers are how agents run and probe what they build; no outside port is
+            // involved.
             // trustd verifies TLS for Go binaries built without cgo, such as the `gh stack`
             // extension; without it every HTTPS call fails with `x509: OSStatus -26276`.
             "network": {
@@ -225,7 +226,6 @@ pub fn restrict_network(settings: &mut Value, state: &Path) {
     network["allowedDomains"] = json!(domains);
 }
 
-/// `<state>/allowed-domains`, whose absence leaves Bash's network open.
 pub fn allowed_domains(state: &Path) -> PathBuf {
     state.join("allowed-domains")
 }

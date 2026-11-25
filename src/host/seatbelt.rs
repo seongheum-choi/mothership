@@ -76,7 +76,6 @@ const ESCAPES: &str = "(deny job-creation lsopen)\n\
      (deny network-outbound (regex #\"^/\"))\n\
      (allow network-outbound (literal \"/private/var/run/mDNSResponder\"))\n";
 
-/// The `permissions.deny` rules of `settings`.
 pub(super) fn denied(settings: &Value) -> Vec<&str> {
     strings(&settings["permissions"]["deny"]).collect()
 }
@@ -200,7 +199,6 @@ pub(super) fn literal(path: &Path) -> Vec<String> {
     path_filters("literal", path)
 }
 
-/// `(<kind> …)` for `path` and, when it differs, for what it resolves to.
 fn path_filters(kind: &str, path: &Path) -> Vec<String> {
     resolved(path)
         .iter()
