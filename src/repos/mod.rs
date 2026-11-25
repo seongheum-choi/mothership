@@ -46,6 +46,9 @@ pub struct Repo {
     /// Shell commands by name that mothership runs for a session outside its sandbox: see
     /// [`crate::host`].
     pub commands: std::collections::BTreeMap<String, String>,
+    /// `sandbox_image`: the image a `sandbox` host run starts its container from; without it
+    /// the repository's `sandbox` requests are refused.
+    pub sandbox_image: Option<String>,
     /// `review_backend`: where finished work goes, in place of `REVIEW_BACKEND`.
     pub review: Option<ReviewBackend>,
 }
@@ -68,6 +71,7 @@ impl Repo {
             git: true,
             models: ModelFields::default(),
             commands: std::collections::BTreeMap::new(),
+            sandbox_image: None,
             review: None,
         }
     }

@@ -88,6 +88,8 @@ pub struct Launch {
     pub host_settings: Value,
     /// The repository's `commands`, which the session may ask mothership to run.
     pub commands: std::collections::BTreeMap<String, String>,
+    /// The repository's `sandbox_image`, for its `sandbox` runs.
+    pub sandbox_image: Option<String>,
     pub env: Vec<(String, String)>,
 }
 

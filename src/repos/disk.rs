@@ -1,5 +1,5 @@
 //! What `repos.json` cannot say about itself: each entry's directory, clone and files on disk,
-//! and where a clone's `origin` points.
+//! whether two entries' paths overlap, and where a clone's `origin` points.
 
 use super::Repo;
 use anyhow::{Context, Result, bail};
@@ -79,6 +79,36 @@ pub fn origin_url(path: &Path) -> Result<String> {
         );
     }
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+/// Fails when one repository's path, as compared, is or lies inside another's.
+pub(super) fn no_overlap<'a>(paths: impl IntoIterator<Item = (&'a Repo, PathBuf)>) -> Result<()> {
+    let paths: Vec<_> = paths.into_iter().collect();
+    let shown = |repo: &Repo, compared: &Path| {
+        let written = repo.path.display();
+        if compared == repo.path {
+            format!("repo {:?} path {written}", repo.name)
+        } else {
+            format!(
+                "repo {:?} path {written} (resolved {})",
+                repo.name,
+                compared.display()
+            )
+        }
+    };
+    for (i, (repo, path)) in paths.iter().enumerate() {
+        if let Some((other, other_path)) = paths[..i]
+            .iter()
+            .find(|(_, p)| p.starts_with(path) || path.starts_with(p))
+        {
+            bail!(
+                "{} overlaps {}",
+                shown(repo, path),
+                shown(other, other_path)
+            );
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

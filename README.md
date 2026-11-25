@@ -85,6 +85,7 @@ Settings come from the process environment or `<home>/.env`, and the environment
 | `SANDBOX_WRITE` | | Comma-separated paths Bash may write, and every agent may read, besides the working directory, e.g. `~/.cargo/registry,~/.cargo/git`. Symlink targets are added; home itself is refused at startup |
 | `SANDBOX_SKIP_DENY` | | Comma-separated entries directly under home (`~/Documents,~/Desktop`) that get no deny rule, for macOS hosts where the [privacy approval](#agent-does-not-start-macos-privacy-prompts) cannot be given. The trade-off: the Read tool, and every command in Bash, can then read everything in those folders. Paths are not resolved, and anything deeper than one level is refused at startup |
 | `HOST_SANDBOX` | `/usr/bin/sandbox-exec` on macOS, `/usr/bin/bwrap` elsewhere | What confines [host runs](#host-runs) and [Codex](#codex) turns; read at startup. A file named `bwrap` runs them under bubblewrap, any other under `sandbox-exec`. When it is not a file, host runs are off: sessions get no `MOTHERSHIP_RUNS` and no list of the repository's `commands`; Codex turns fail and Claude Code's usage limit no longer moves turns to Codex; and startup warns |
+| `CONTAINER_RUNTIME` | `docker` | The Docker-compatible CLI (`docker`, `podman`, `nerdctl`) that starts [sandbox runs](#sandbox-runs)' containers, looked for on mothership's `PATH`; read at startup. It gets only `PATH`, `HOME`, `DOCKER_HOST`, `DOCKER_CONTEXT`, `DOCKER_CONFIG` and `XDG_RUNTIME_DIR` of mothership's environment |
 | `AGENT_START_TIMEOUT` | `120` | Seconds an agent may run without announcing its session before it is killed and the turn fails |
 | `AGENT_BACKGROUND_TIMEOUT` | `7200` | Seconds an agent that answered may keep running for its [background work](#how-it-works) before its input closes |
 | `BASE_BRANCH` | `main` | Ignored when `repos.json` exists |
@@ -144,6 +145,7 @@ State (Linear tokens, and each conversation's repository, workspace and Claude s
 | `prompt_file` | | Replaces the review backend's instructions (and `APPEND_SYSTEM_PROMPT_FILE`); in a non-git repository it follows the no-commit instructions |
 | `mcp_configs` | | MCP config files added for sessions here, after `MCP_CONFIGS` |
 | `commands` | | Shell commands by name (letters, digits, `-`, `_`) that mothership runs for a session outside its sandbox, under the same rules; see [Host runs](#host-runs) |
+| `sandbox_image` | | The image [sandbox runs](#sandbox-runs) start their containers from, built beforehand by the operator; without it the repository's sandbox runs are refused |
 | `runner`, `model`, `fallback_model`, `effort` | `AGENT_RUNNER`, `CLAUDE_MODEL`, `CLAUDE_FALLBACK_MODEL`, `CLAUDE_EFFORT` | For sessions in this repository; see [Model and effort](#model-and-effort). A `runner` other than `claude` or `codex`, or an `effort` that is not one of the [effort levels](#model-and-effort), stops startup, and a reload keeps the previous list |
 | `review_backend` | `REVIEW_BACKEND` | `github` or `gerrit`: which review backend's instructions this repository's issue sessions get. Any other value stops startup, and a reload keeps the previous list |
 | `git` | `true` | `false`: no worktree; sessions work in `path` directly, and only one turn runs there at a time while other sessions' turns wait; they are told not to commit or open pull requests |
@@ -248,10 +250,12 @@ A Claude Code session cannot start Codex from Bash: its sandbox keeps Codex's bi
 ```json
 {"kind": "codex", "prompt": "…", "schema": {"type": "object"}, "effort": "high", "model": "gpt-5.5"}
 {"kind": "command", "name": "pnpm-install"}
+{"kind": "sandbox", "command": "cargo test --offline", "limits": {"memory_mb": 2048, "timeout_secs": 600}, "artifacts": ["report.json"]}
 ```
 
 - **Codex:** `codex exec --sandbox danger-full-access -C <workspace>` with the prompt on stdin. `schema` is passed as `--output-schema`, `effort` (`low`, `medium`, `high`, `xhigh`, `max` or `ultra`) as `model_reasoning_effort`, `model` as `--model`. The result is the final message, parsed as JSON when a `schema` shaped it.
 - **Command:** one of the repository's `commands` in `repos.json`, a map of names to shell commands (`{"pnpm-install": "cd client && pnpm install --frozen-lockfile"}`), run with `/bin/sh -c` in the workspace and the run's environment, whose `PATH` is the one `AGENT_ENV` forwards or else mothership's own (under launchd, only the system directories), so a command names tools such as mise by their path (`cd client && /opt/homebrew/bin/mise exec -- pnpm install --frozen-lockfile`). The result is the last 20 lines of its output, stderr interleaved, and the path of `<id>.log` next to the request, which holds the output up to its last mebibyte. The session's system prompt lists the repository's commands.
+- **Sandbox:** the repository's code in a disposable container rather than under `HOST_SANDBOX`; see [Sandbox runs](#sandbox-runs).
 
 While the turn lasts, mothership takes one request at a time and writes `<id>.out.json` next to it, either `{"result": …}` or `{"error": "…"}`. Each run's start and end show up as thoughts. A run runs in a process group of its own; the group is killed when the run exits, and the whole tree too when the turn ends or is stopped (before the workspace is released) or after an hour.
 
@@ -280,6 +284,22 @@ bubblewrap confines with mounts: `/` read-only, the directories a run may write 
 - The run has a PID namespace of its own: signals reach only its processes, and nothing it started, `setsid` or not, outlives it.
 - A seccomp filter, passed to `bwrap --seccomp` through `/bin/sh`, makes `socket(AF_UNIX, …)` fail with `EPERM`, which covers abstract sockets that no mount can hide, and so does every `io_uring` call, whose socket operation seccomp never sees, and every call from a 32-bit or x32 process. It exists for x86_64 and aarch64; elsewhere a run or a Codex turn is refused. mothership writes it at startup into `<home>/host-runs`, where no session or run may write. `/run/user` and Docker's socket are hidden as well. What needs a Unix socket fails in a run or a Codex turn: Python's `multiprocessing` with the `forkserver` start method, `logger` and anything else writing to syslog's `/dev/log`, and signing through gpg-agent or ssh-agent (`git commit -S`).
 - For a Codex run, Codex's home is an empty directory that goes with the run, with the home's entries mounted back in: `installation_id` and `auth.json` (a refreshed login must reach the home) writable, links as links, the rest read-only. `sessions`, logs, caches and Codex's other working directories are the session's own, from `<home>/codex/<session>/`, shared with its [Codex](#codex) turns and no other session. The state databases, `history.jsonl`, the models cache and the global state are left out, so each run starts its own; a database shared with Codex outside the run would be corrupted by a journal kept inside it. Whatever else a run writes there is gone after it, so it cannot leave config, rules or skills for later runs.
+
+##### Sandbox runs
+
+A security audit has to run the code it audits, which the Bash sandbox cannot do safely, and Bash cannot start a sandbox of its own inside Claude Code's (`sandbox_apply: Operation not permitted`), nor limit memory or processes. For a repository with a `sandbox_image` in `repos.json`, a `sandbox` request runs its `command` with `/bin/sh -c` in a fresh container started through `CONTAINER_RUNTIME`; for any other repository it is refused. The container:
+
+- has no network but its own loopback (`--network none`), so a database it starts listens there and nothing else is reached;
+- has a read-only root, the workspace mounted read-only at `/work` (its working directory), and a fresh tmpfs at `/scratch`, the only place it can write; there is no `/dev/shm`, and it runs as `nobody` (`65534:65534`) with every capability dropped and `no-new-privileges`;
+- gets the request's `limits`, each at most the ceiling and the ceiling when left out: `memory_mb` (4096, with no swap), `cpus` (2), `pids` (512), `file_size_mb` (1024, the largest file a process may write), `disk_mb` (2048, the size of `/scratch`) and `timeout_secs` (1800); a value over the ceiling refuses the request;
+- sees its image's environment and `HOME=/scratch/home`, `TMPDIR=/scratch/tmp`, `XDG_CACHE_HOME=/scratch/cache` and `CARGO_TARGET_DIR=/scratch/target`, nothing of mothership's or the agent's;
+- gets nothing else of the host: no home directory, credentials, the session's directory, `.git`, or sockets, Docker's included; the image is never pulled (`--pull never`).
+
+The answer is `{"result": {"exit": <code, or null when it timed out>, "timed_out": …, "output": <last 20 lines>, "log": <path of id.log>, "artifacts": {<name>: <path>}, "skipped": {<name>: <why>}}}`, a non-zero exit included. `artifacts` names plain files at the top of `/scratch` (at most 32); each one that is a regular file of at most 16 MiB, within 64 MiB for all of them, is copied to `<id>.artifact.<name>` next to the request, and the rest are listed in `skipped` with why. Nothing else leaves `/scratch`: the container is removed after the run, after a timeout, and when the turn ends or is stopped. A process left in the background that still holds the command's output keeps the run open until its timeout, so a database is started with its output sent to a file (`pg_ctl start -l /scratch/pg.log`). `{"error": …}` means it could not run: no `sandbox_image`, no runtime, no image, or a container that did not start; the agent should treat that as having no sandbox.
+
+The image is the operator's: it holds what the code needs offline, built beforehand by someone trusted, since nothing is downloaded during a run (a Rust toolchain and a crate cache for the repository's `Cargo.lock`, a pnpm store, Postgres for tests that need a database). It needs `/bin/sh`, `mkdir`, `head` and `sleep`, and everything a run uses must be readable by `nobody`.
+
+On Linux, install Docker (or Podman) and give mothership's user access to its daemon. On macOS, use colima's Lima VM: install a Docker CLI (`brew install docker`) and start colima with its default Docker runtime (`colima start`), which points the `docker` context at the VM; the workspace must be under a directory colima mounts into the VM (the home directory by default). Build or load the image into that VM's runtime. When colima is not running, sandbox runs answer with an error.
 
 #### Claude usage limit
 
@@ -428,6 +448,8 @@ cargo run
 [`.cargo/config.toml`](.cargo/config.toml) sets a dependency cooldown: `cargo update` and new dependencies resolve only to crate versions published at least 7 days ago (`registry.global-min-publish-age`). Versions already in `Cargo.lock` are kept; `CARGO_RESOLVER_INCOMPATIBLE_PUBLISH_AGE=allow` overrides it for one command, e.g. for an urgent security release.
 
 `cargo test` includes [`tests/integration`](tests/integration), which runs the built binary against local stand-ins for Linear (through `LINEAR_API_URL`), Zulip, GitHub webhooks, `claude` and `gh`. `cargo test --test integration -- <name>` runs only the scenarios whose name contains `<name>`; a failed one keeps its directory and prints the end of mothership's log.
+
+The [sandbox run](#sandbox-runs) tests in `src/host/container.rs` start real containers through `docker` from a local `busybox` image (`MOTHERSHIP_TEST_SANDBOX_IMAGE` names another), and print `skipped:` and pass where Docker or the image is out of reach, as inside the Bash sandbox; `docker pull busybox` before running them.
 
 An agent working on mothership inside the Bash sandbox cannot pass the scenarios that check a process tree is killed (`linear_stop_kills_the_agent`, `linear_agent_that_never_starts_is_stopped`, `sigterm_stops_running_agents`), since the sandbox blocks signalling those processes; CI is the gate for them.
 

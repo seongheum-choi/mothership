@@ -1,19 +1,22 @@
 //! Runs mothership starts on a session's behalf, for what the agent's own sandbox cannot:
 //! Codex, whose login and binary are out of Bash's reach and whose sandbox cannot nest inside
-//! Claude Code's, and the repository's named commands. The agent writes a request into its
-//! session directory; mothership runs it confined by the session's own rules and writes the
-//! answer next to it.
+//! Claude Code's, the repository's named commands, and its code in a disposable container. The
+//! agent writes a request into its session directory; mothership runs it confined by the
+//! session's own rules, or in the container, and writes the answer next to it.
 
 mod bwrap;
 mod codex;
 mod command;
+mod container;
 mod process;
 mod request;
+mod sandbox;
 mod seatbelt;
 mod seccomp;
 
 pub use codex::{CodexHome, runner as codex_runner};
 pub use command::prompt as commands_prompt;
+pub use sandbox::prompt as sandbox_prompt;
 
 use crate::app::App;
 use request::Request;
@@ -60,6 +63,10 @@ pub struct Host {
     pub codex_home: CodexHome,
     /// `HOST_SANDBOX`: bubblewrap when its file name is `bwrap`, else `sandbox-exec`.
     pub sandbox: String,
+    /// The repository's `sandbox_image`, for `sandbox` runs; `None` refuses them.
+    pub sandbox_image: Option<String>,
+    /// `CONTAINER_RUNTIME`, which starts `sandbox` runs' containers.
+    pub container_runtime: String,
 }
 
 /// Paths a Codex run reads besides the session's: Codex's home (its login and config) and
@@ -210,6 +217,7 @@ impl Host {
         let what = match req {
             Request::Codex(_) => "Codex run".to_string(),
             Request::Command(name) => format!("`{name}`"),
+            Request::Sandbox(_) => "Sandbox run".to_string(),
         };
         self.report(&format!("{what} {id} started"));
         let outcome = match process::RunDir::create(&self.run_root) {
@@ -219,6 +227,7 @@ impl Host {
                     self.command(&dir.0, name, &request::log(&self.runs, id))
                         .await
                 }
+                Request::Sandbox(run) => self.sandbox(id, run).await,
             },
             Err(e) => Err(format!("cannot make a directory for the run: {e}")),
         };
