@@ -84,20 +84,27 @@ pub fn run_root(state: &Path) -> PathBuf {
 /// seccomp filter (see [`seccomp::filter`]) into it, at startup, and makes sure sessions' parts of Codex's home ([`codex::state_root`]) have their directory: both
 /// must exist for sessions' deny rules to name them.
 pub fn reset_run_root(state: &Path) -> std::io::Result<()> {
-    use std::os::unix::fs::DirBuilderExt;
     let root = run_root(state);
     if std::fs::symlink_metadata(&root).is_ok() {
         std::fs::remove_dir_all(&root)?;
     }
-    let mut dirs = std::fs::DirBuilder::new();
-    dirs.recursive(true).mode(0o700);
-    dirs.create(&root)?;
+    private_dir(&root)?;
     // Here, where no session or run may write, rather than in a run's own directory: a session
     // could swap the filter in its directory before its next Codex turn.
     if let Some(filter) = seccomp::filter() {
         request::write_new(&root.join(seccomp::FILE), &filter)?;
     }
-    dirs.create(codex::state_root(state))
+    private_dir(&codex::state_root(state))
+}
+
+/// Makes `dir` and any parents it lacks, private to mothership's user; one already there is
+/// left as it is.
+fn private_dir(dir: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::DirBuilderExt;
+    std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(dir)
 }
 
 /// `CODEX_HOME` as agents get it, or `~/.codex`.

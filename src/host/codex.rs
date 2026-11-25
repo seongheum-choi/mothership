@@ -125,7 +125,7 @@ pub fn home_mounts(codex: &CodexHome) -> Vec<String> {
     for dir in HOME_DIRS {
         let own = codex.state.join(dir);
         // bubblewrap binds only what exists.
-        if let Err(e) = private_dir(&own) {
+        if let Err(e) = super::private_dir(&own) {
             tracing::warn!("cannot make {}: {e}", own.display());
             continue;
         }
@@ -133,14 +133,6 @@ pub fn home_mounts(codex: &CodexHome) -> Vec<String> {
         mounts.extend(["--bind".into(), own.to_string_lossy().into_owned(), at]);
     }
     mounts
-}
-
-fn private_dir(dir: &Path) -> std::io::Result<()> {
-    use std::os::unix::fs::DirBuilderExt;
-    std::fs::DirBuilder::new()
-        .recursive(true)
-        .mode(0o700)
-        .create(dir)
 }
 
 /// Codex's binary and the code-mode host it starts its tools through, which it looks for
