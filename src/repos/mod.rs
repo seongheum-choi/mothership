@@ -10,6 +10,7 @@ pub use load::load;
 pub use select::{IssueFacts, Ref, select};
 
 use crate::config::ModelFields;
+use crate::host::limits::Limits as SandboxLimits;
 use crate::review::ReviewBackend;
 use select::same;
 use std::path::{Path, PathBuf};
@@ -49,6 +50,8 @@ pub struct Repo {
     /// `sandbox_image`: the image a `sandbox` host run starts its container from; without it
     /// the repository's `sandbox` requests are refused.
     pub sandbox_image: Option<String>,
+    /// `sandbox_limits`: the most its `sandbox` runs may use, or why they are refused.
+    pub sandbox_limits: Result<SandboxLimits, String>,
     /// `review_backend`: where finished work goes, in place of `REVIEW_BACKEND`.
     pub review: Option<ReviewBackend>,
 }
@@ -72,6 +75,7 @@ impl Repo {
             models: ModelFields::default(),
             commands: std::collections::BTreeMap::new(),
             sandbox_image: None,
+            sandbox_limits: Ok(SandboxLimits::default()),
             review: None,
         }
     }

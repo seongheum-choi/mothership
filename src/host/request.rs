@@ -1,6 +1,7 @@
 //! What a session asks mothership to run: the request files in its `runs/` directory and
 //! their answers next to them.
 
+use super::limits::Limits;
 use crate::{agent::Runner, config::efforts};
 use serde_json::{Value, json};
 use std::{
@@ -31,7 +32,7 @@ pub struct CodexRun {
 
 /// `{"kind": "codex", "prompt": …, "schema"?: {…}, "effort"?: …, "model"?: …}` or
 /// `{"kind": "command", "name": …}`, or a `sandbox` request (see [`super::sandbox::parse`]).
-pub fn parse(text: &str) -> Result<Request, String> {
+pub fn parse(text: &str, sandbox: &Result<Limits, String>) -> Result<Request, String> {
     let value: Value = serde_json::from_str(text).map_err(|e| format!("not JSON: {e}"))?;
     match value["kind"].as_str() {
         Some("codex") => codex(&value).map(Request::Codex),
@@ -39,7 +40,12 @@ pub fn parse(text: &str) -> Result<Request, String> {
             Some(name) if plain(name) => Ok(Request::Command(name.to_string())),
             _ => Err("`name` must name one of the repository's commands".into()),
         },
-        Some("sandbox") => super::sandbox::parse(&value).map(Request::Sandbox),
+        Some("sandbox") => {
+            let ceiling = sandbox.as_ref().map_err(|e| {
+                format!("this repository's `sandbox_limits` in repos.json are invalid: {e}")
+            })?;
+            super::sandbox::parse(&value, ceiling).map(Request::Sandbox)
+        }
         _ => Err("`kind` must be \"codex\", \"command\" or \"sandbox\"".into()),
     }
 }
@@ -177,6 +183,22 @@ fn plain(s: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn parse(text: &str) -> Result<Request, String> {
+        super::parse(text, &Ok(Limits::default()))
+    }
+
+    #[test]
+    fn a_sandbox_request_is_refused_when_the_repository_limits_are_invalid() {
+        let text = r#"{"kind":"sandbox","command":"true"}"#;
+        assert!(matches!(parse(text), Ok(Request::Sandbox(_))));
+        let refused = super::parse(text, &Err("`sandbox_limits.pids` must be …".into()));
+        assert!(
+            refused
+                .unwrap_err()
+                .contains("`sandbox_limits` in repos.json are invalid")
+        );
+    }
 
     #[test]
     fn parses_a_codex_request() {

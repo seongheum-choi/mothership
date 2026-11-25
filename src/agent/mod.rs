@@ -90,6 +90,8 @@ pub struct Launch {
     pub commands: std::collections::BTreeMap<String, String>,
     /// The repository's `sandbox_image`, for its `sandbox` runs.
     pub sandbox_image: Option<String>,
+    /// The repository's `sandbox_limits`, or why its `sandbox` runs are refused.
+    pub sandbox_limits: Result<crate::host::limits::Limits, String>,
     pub env: Vec<(String, String)>,
 }
 

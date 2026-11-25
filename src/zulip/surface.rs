@@ -53,6 +53,7 @@ fn launch(app: &App, key: &str) -> Result<Launch> {
         mcp_configs: Vec::new(),
         commands: BTreeMap::new(),
         sandbox_image: None,
+        sandbox_limits: Ok(crate::host::limits::Limits::default()),
         permission_mode: app.cfg.agent.chat_permission_mode.clone(),
         scopes: choice::Scopes::default(),
     };

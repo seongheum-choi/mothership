@@ -187,7 +187,7 @@ mod tests {
     use super::*;
     use crate::host::{
         CodexHome, Runtime,
-        sandbox::{CEILING, Limits},
+        limits::{CEILING, Limits},
     };
     use std::{path::PathBuf, sync::Arc};
 
@@ -217,6 +217,7 @@ mod tests {
             },
             sandbox: String::new(),
             sandbox_image: image.map(String::from),
+            sandbox_limits: Ok(CEILING),
             container_runtime: Arc::new(Runtime::new(runtime.into(), None, None, Duration::ZERO)),
         }
     }

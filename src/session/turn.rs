@@ -181,6 +181,7 @@ fn prepare(app: &Arc<App>, key: &str, launch: &mut Launch) -> Result<(ProgressTa
         codex_settings: launch.host_settings.clone(),
         commands: launch.commands.clone(),
         sandbox_image: launch.sandbox_image.clone(),
+        sandbox_limits: launch.sandbox_limits.clone(),
         container_runtime: Arc::clone(&app.container_runtime),
         codex: app
             .codex_bin()
