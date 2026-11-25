@@ -1,6 +1,7 @@
 //! The prompt that quotes a Gerrit review to the session it continues.
 
 use super::{api::Comment, event::Event};
+use crate::review::text::neutralize_closing_tag;
 use std::fmt::Write as _;
 
 /// The review's message, then each comment with the `gerrit-reply` command that answers it in
@@ -59,28 +60,11 @@ pub(super) fn prompt(event: &Event, comments: &[Comment]) -> String {
 
 fn quote(prompt: &mut String, author: &str, text: &str) {
     // A closing tag inside the text would let it pose as text outside the block.
-    let text = neutralize_closing_tag(text.trim());
+    let text = neutralize_closing_tag(text.trim(), "</gerrit_comment");
     let _ = writeln!(
         prompt,
         "<gerrit_comment author=\"{author}\">\n{text}\n</gerrit_comment>"
     );
-}
-
-/// Escapes every `</gerrit_comment`, in any letter case, so quoted text cannot end the block.
-fn neutralize_closing_tag(text: &str) -> String {
-    const TAG: &str = "</gerrit_comment";
-    // ASCII lowercasing keeps byte offsets, so matches in `lower` index into `text`.
-    let lower = text.to_ascii_lowercase();
-    let mut out = String::with_capacity(text.len());
-    let mut last = 0;
-    for (i, _) in lower.match_indices(TAG) {
-        out.push_str(&text[last..i]);
-        out.push_str("&lt;");
-        out.push_str(&text[i + 1..i + TAG.len()]);
-        last = i + TAG.len();
-    }
-    out.push_str(&text[last..]);
-    out
 }
 
 /// `word` as one shell word: as it is when it is plain, else single-quoted.

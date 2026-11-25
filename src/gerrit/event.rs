@@ -1,6 +1,6 @@
 //! What a Gerrit `comment-added` event says, and whether it may reach an agent.
 
-use crate::config::GerritConfig;
+use crate::{config::GerritConfig, review::text};
 use serde_json::Value;
 
 /// A Gerrit account as events and the REST API describe it.
@@ -105,13 +105,8 @@ fn trusts(cfg: &GerritConfig, author: &Account) -> bool {
 /// to `@name` or `@email`, so `@name@example.com` mentions `name` too, while `@name-2`,
 /// `@name_2` and `x@name` do not.
 pub(super) fn mentions(text: &str, name: &str) -> bool {
-    let lower = text.to_ascii_lowercase();
-    let needle = format!("@{}", name.to_ascii_lowercase());
-    let name_char = |c: char| c.is_ascii_alphanumeric() || c == '-' || c == '_';
-    lower.match_indices(&needle).any(|(i, _)| {
-        let before = lower[..i].chars().next_back();
-        let after = lower[i + needle.len()..].chars().next();
-        !before.is_some_and(name_char) && !after.is_some_and(name_char)
+    text::mentions(text, name, |c| {
+        c.is_ascii_alphanumeric() || c == '-' || c == '_'
     })
 }
 
