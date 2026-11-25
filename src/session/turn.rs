@@ -21,15 +21,12 @@ pub(super) async fn worker<S: Surface>(
     loop {
         if queued.is_empty() {
             let msg = {
-                let mut live = reg.live.lock().expect("live lock poisoned");
+                let mut live = reg.live();
                 if let Ok(msg) = rx.try_recv() {
                     msg
                 } else {
                     live.remove(&key);
-                    reg.activity
-                        .lock()
-                        .expect("activity lock poisoned")
-                        .remove(&key);
+                    reg.activity_map().remove(&key);
                     return;
                 }
             };

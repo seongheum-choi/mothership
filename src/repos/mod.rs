@@ -104,6 +104,15 @@ pub fn by_name<'a>(repos: &'a [Repo], name: &str) -> Option<&'a Repo> {
     repos.iter().find(|r| same(&r.name, name))
 }
 
+/// The repositories' names, comma-separated, for the service log.
+pub fn names(repos: &[Repo]) -> String {
+    repos
+        .iter()
+        .map(|r| r.name.as_str())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

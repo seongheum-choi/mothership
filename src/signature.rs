@@ -29,7 +29,7 @@ pub fn constant_time_eq(given: &[u8], expected: &[u8]) -> bool {
 
 /// Decodes hex digits in either case. Anything else, including the sign `from_str_radix` would
 /// accept, is refused.
-pub fn decode_hex(s: &str) -> Option<Vec<u8>> {
+fn decode_hex(s: &str) -> Option<Vec<u8>> {
     if !s.len().is_multiple_of(2) || !s.bytes().all(|b| b.is_ascii_hexdigit()) {
         return None;
     }

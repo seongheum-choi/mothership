@@ -75,7 +75,7 @@ impl GitHubConfig {
             return Ok(None);
         };
         let mention_login = vars.require("GITHUB_MENTION_LOGIN")?;
-        let mention_login = mention_login.trim().trim_start_matches('@').to_string();
+        let mention_login = mention(&mention_login);
         if mention_login.is_empty() {
             bail!("GITHUB_MENTION_LOGIN is empty");
         }
@@ -138,7 +138,7 @@ impl GerritConfig {
         }
         let mention = vars
             .get("GERRIT_MENTION")
-            .map(|m| m.trim().trim_start_matches('@').to_string())
+            .map(|m| mention(&m))
             .filter(|m| !m.is_empty())
             .unwrap_or_else(|| username.clone());
         Ok(Some(Self {
@@ -150,6 +150,11 @@ impl GerritConfig {
             mention,
         }))
     }
+}
+
+/// A mention setting as the name it addresses: without spaces around it or a leading `@`.
+fn mention(setting: &str) -> String {
+    setting.trim().trim_start_matches('@').to_string()
 }
 
 /// Whether someone named by any of `names` (an id, an email) may call the agent: anyone when

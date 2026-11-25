@@ -126,11 +126,7 @@ impl Live {
         *current = Arc::new(repos);
         tracing::info!(
             "settings: repositories reloaded: {}",
-            current
-                .iter()
-                .map(|r| r.name.as_str())
-                .collect::<Vec<_>>()
-                .join(", ")
+            crate::repos::names(&current)
         );
         Some(current.clone())
     }
