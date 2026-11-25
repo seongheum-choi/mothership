@@ -132,19 +132,8 @@ impl Linear {
     }
 
     async fn set_summary(&self, app: &App, sid: &str, summary: &str) -> Result<()> {
-        let data = self
-            .graphql(
-                app,
-                "mutation($id: String!, $input: AgentSessionUpdateInput!) { \
-                 agentSessionUpdate(id: $id, input: $input) { success } }",
-                json!({ "id": sid, "input": { "summary": summary } }),
-            )
-            .await?;
-        anyhow::ensure!(
-            data["agentSessionUpdate"]["success"] == true,
-            "agentSessionUpdate did not succeed"
-        );
-        Ok(())
+        self.update_session(app, sid, json!({ "summary": summary }))
+            .await
     }
 }
 

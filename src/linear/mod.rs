@@ -6,6 +6,7 @@ mod api;
 mod cleanup;
 mod control;
 mod create;
+mod issue;
 mod mcp;
 mod oauth;
 mod pin;

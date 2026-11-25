@@ -8,7 +8,7 @@ use serde_json::Value;
 
 /// The workspace (Linear organization) an OAuth token belongs to.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Workspace {
+pub(super) struct Workspace {
     pub id: String,
     pub url_key: String,
     pub name: String,
@@ -34,7 +34,7 @@ impl Workspace {
 
     /// `LINEAR_WORKSPACE` names the workspace by ID or by URL key (`linear.app/<urlKey>`),
     /// the latter case-insensitively since Linear lowercases it.
-    pub fn is(&self, setting: &str) -> bool {
+    pub(super) fn is(&self, setting: &str) -> bool {
         self.id == setting || self.url_key.eq_ignore_ascii_case(setting)
     }
 }

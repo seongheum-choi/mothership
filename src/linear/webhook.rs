@@ -19,16 +19,15 @@ use axum::{
 use serde_json::{Value, json};
 use std::sync::Arc;
 
-/// `Linear-Signature` is hex(HMAC-SHA256(secret, raw body)). A missing `webhookTimestamp`,
-/// or one more than a minute off, is treated as a replay.
-fn verify(secret: &str, body: &[u8], signature: &str, now_ms: u64) -> bool {
+/// The payload, when `Linear-Signature` is hex(HMAC-SHA256(secret, raw body)) and its
+/// `webhookTimestamp` is within a minute of `now_ms`. A missing one is treated as a replay.
+fn verify(secret: &str, body: &[u8], signature: &str, now_ms: u64) -> Option<Value> {
     if !crate::signature::hmac_sha256_hex_matches(secret, body, signature) {
-        return false;
+        return None;
     }
-    serde_json::from_slice::<Value>(body)
-        .ok()
-        .and_then(|v| v["webhookTimestamp"].as_u64())
-        .is_some_and(|ts| now_ms.abs_diff(ts) <= 60_000)
+    let payload: Value = serde_json::from_slice(body).ok()?;
+    let ts = payload["webhookTimestamp"].as_u64()?;
+    (now_ms.abs_diff(ts) <= 60_000).then_some(payload)
 }
 
 pub(super) async fn webhook(
@@ -43,11 +42,8 @@ pub(super) async fn webhook(
     let now_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX));
-    if !verify(&app.cfg.linear.webhook_secret, &body, signature, now_ms) {
+    let Some(payload) = verify(&app.cfg.linear.webhook_secret, &body, signature, now_ms) else {
         return StatusCode::UNAUTHORIZED;
-    }
-    let Ok(payload) = serde_json::from_slice::<Value>(&body) else {
-        return StatusCode::BAD_REQUEST;
     };
     let event = payload["type"].as_str().unwrap_or_default();
     let org = payload["organizationId"].as_str();
@@ -204,10 +200,13 @@ mod tests {
         let body = br#"{"webhookTimestamp":1000000}"#;
         // python3 -c 'import hmac,hashlib;print(hmac.new(b"s",b"{\"webhookTimestamp\":1000000}",hashlib.sha256).hexdigest())'
         let sig = "2645a623818ff5efc2f7f75075285d3e6f4ef1825d34f77912c56416571211b4";
-        assert!(verify("s", body, sig, 1_030_000));
-        assert!(!verify("s", body, sig, 1_070_000), "stale timestamp");
-        assert!(!verify("t", body, sig, 1_030_000), "wrong secret");
-        assert!(!verify("s", body, "zz", 1_030_000), "not hex");
+        assert!(verify("s", body, sig, 1_030_000).is_some());
+        assert!(
+            verify("s", body, sig, 1_070_000).is_none(),
+            "stale timestamp"
+        );
+        assert!(verify("t", body, sig, 1_030_000).is_none(), "wrong secret");
+        assert!(verify("s", body, "zz", 1_030_000).is_none(), "not hex");
     }
 
     #[test]
