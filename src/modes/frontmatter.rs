@@ -3,7 +3,7 @@
 
 use super::Mode;
 use crate::config::check_effort;
-use anyhow::{Result, bail};
+use anyhow::{Result, anyhow, bail};
 
 /// Permission modes Claude Code accepts for `--permission-mode`.
 const PERMISSION_MODES: &[&str] = &[
@@ -26,47 +26,52 @@ pub(super) fn parse(name: &str, text: &str) -> Result<Mode> {
     };
     let mut seen: Vec<&str> = Vec::new();
     for (key, value, line) in frontmatter_fields(front)? {
-        if seen.contains(&key) {
-            bail!("frontmatter line {line}: `{key}` appears twice");
-        }
-        seen.push(key);
-        let scalar = |value: Value| match value {
-            Value::Scalar(s) if !s.is_empty() => Ok(s),
-            _ => bail!("frontmatter line {line}: `{key}` takes one value"),
+        let set = if seen.contains(&key) {
+            Err(format!("`{key}` appears twice"))
+        } else {
+            seen.push(key);
+            set(&mut mode, key, value)
         };
-        match key {
-            "labels" => mode.labels = value.into_list(),
-            "deny" => mode.deny = value.into_list(),
-            "runner" => match scalar(value)?.parse() {
-                Ok(runner) => mode.models.runner = Some(runner),
-                Err(problem) => bail!("frontmatter line {line}: {problem}"),
-            },
-            "model" => mode.models.model = Some(scalar(value)?),
-            "fallback_model" => mode.models.fallback_model = Some(scalar(value)?),
-            "effort" => {
-                let effort = scalar(value)?;
-                if let Err(problem) = check_effort(&effort) {
-                    bail!("frontmatter line {line}: {problem}");
-                }
-                mode.models.effort = Some(effort);
-            }
-            "permission_mode" => {
-                let pm = scalar(value)?;
-                if !PERMISSION_MODES.contains(&pm.as_str()) {
-                    bail!(
-                        "frontmatter line {line}: permission_mode `{pm}` is not one of {}",
-                        PERMISSION_MODES.join(", ")
-                    );
-                }
-                mode.permission_mode = Some(pm);
-            }
-            other => bail!(
-                "frontmatter line {line}: unknown key `{other}` (known: labels, runner, \
-                 model, fallback_model, effort, permission_mode, deny)"
-            ),
-        }
+        set.map_err(|problem| anyhow!("frontmatter line {line}: {problem}"))?;
     }
     Ok(mode)
+}
+
+/// Sets the field `key` of `mode` to `value`, or says what is wrong with it.
+fn set(mode: &mut Mode, key: &str, value: Value) -> Result<(), String> {
+    let scalar = |value: Value| match value {
+        Value::Scalar(s) if !s.is_empty() => Ok(s),
+        _ => Err(format!("`{key}` takes one value")),
+    };
+    match key {
+        "labels" => mode.labels = value.into_list(),
+        "deny" => mode.deny = value.into_list(),
+        "runner" => mode.models.runner = Some(scalar(value)?.parse()?),
+        "model" => mode.models.model = Some(scalar(value)?),
+        "fallback_model" => mode.models.fallback_model = Some(scalar(value)?),
+        "effort" => {
+            let effort = scalar(value)?;
+            check_effort(&effort)?;
+            mode.models.effort = Some(effort);
+        }
+        "permission_mode" => {
+            let pm = scalar(value)?;
+            if !PERMISSION_MODES.contains(&pm.as_str()) {
+                return Err(format!(
+                    "permission_mode `{pm}` is not one of {}",
+                    PERMISSION_MODES.join(", ")
+                ));
+            }
+            mode.permission_mode = Some(pm);
+        }
+        other => {
+            return Err(format!(
+                "unknown key `{other}` (known: labels, runner, model, fallback_model, effort, \
+                 permission_mode, deny)"
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// The frontmatter (empty when there is none) and the body after it.
@@ -287,6 +292,42 @@ mod tests {
         assert!(err("---\ndeny:\n  - Edit\n  -\n---\n").contains("line 3: empty list item"));
         assert!(err("---\ndeny:\n  - ''\n---\n").contains("empty list item"));
         assert!(err("---\ndeny:\n  - # nothing\n---\n").contains("empty list item"));
+    }
+
+    #[test]
+    fn names_the_line_of_a_bad_field_once() {
+        let err = |text: &str| format!("{:#}", parse("m", text).unwrap_err());
+        assert_eq!(
+            err("---\nlables: [a]\n---\n"),
+            "frontmatter line 1: unknown key `lables` (known: labels, runner, model, \
+             fallback_model, effort, permission_mode, deny)"
+        );
+        assert_eq!(
+            err("---\nmodel: a\nmodel: b\n---\n"),
+            "frontmatter line 2: `model` appears twice"
+        );
+        assert_eq!(
+            err("---\nmodel: [a, b]\n---\n"),
+            "frontmatter line 1: `model` takes one value"
+        );
+        assert_eq!(
+            err("---\nrunner: gpt\n---\n"),
+            "frontmatter line 1: \"gpt\" is not a runner; use claude or codex"
+        );
+        assert_eq!(
+            err("---\neffort: turbo\n---\n"),
+            format!(
+                "frontmatter line 1: `turbo` is not an effort level; use one of {}",
+                crate::config::EFFORTS.join(", ")
+            )
+        );
+        assert_eq!(
+            err("---\npermission_mode: yolo\n---\n"),
+            format!(
+                "frontmatter line 1: permission_mode `yolo` is not one of {}",
+                PERMISSION_MODES.join(", ")
+            )
+        );
     }
 
     #[test]
