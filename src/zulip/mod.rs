@@ -92,7 +92,7 @@ async fn handle(app: Arc<App>, p: Value) {
                 &messages,
                 message_id,
                 cursor,
-                &zulip_bot(&app),
+                &client.cfg.bot_email,
             )),
             Err(e) => tracing::warn!("[{key}] zulip topic context failed: {e:#}"),
         }
@@ -126,14 +126,6 @@ async fn handle(app: Arc<App>, p: Value) {
         return;
     }
     zulip.submit(&app, &key, prompt, Ticket { message_id, dest });
-}
-
-fn zulip_bot(app: &App) -> String {
-    app.cfg
-        .zulip
-        .as_ref()
-        .map(|z| z.bot_email.clone())
-        .unwrap_or_default()
 }
 
 fn client(app: &App) -> Client<'_> {
