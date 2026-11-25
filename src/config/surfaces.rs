@@ -97,7 +97,6 @@ pub struct GitHubAppConfig {
 }
 
 impl GitHubAppConfig {
-    /// On when `GITHUB_APP_CLIENT_ID` is set.
     pub(super) fn from_vars(vars: &Vars) -> Option<Self> {
         Some(Self {
             client_id: vars.get("GITHUB_APP_CLIENT_ID")?,
@@ -168,7 +167,6 @@ pub fn trusts(trusted: &[String], names: &[Option<&str>]) -> bool {
             .any(|n| trusted.iter().any(|t| t.eq_ignore_ascii_case(n)))
 }
 
-/// `LINEAR_API_URL` without trailing slashes, or Linear's own host when it is unset.
 fn linear_api_url(setting: Option<String>) -> String {
     setting.map_or_else(
         || "https://api.linear.app".into(),

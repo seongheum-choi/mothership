@@ -1,6 +1,6 @@
 //! `runner:<name>`, `model:<name>` and `effort:<level>` labels on a Linear issue, read once
-//! when its session starts. A label that cannot be used is logged and left unset, so a labelling mistake never
-//! stops a session.
+//! when its session starts. A label that cannot be used is logged and left unset, so a
+//! labelling mistake never stops a session.
 
 use crate::{agent::Runner, config::check_effort};
 

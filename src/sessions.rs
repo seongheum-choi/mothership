@@ -9,7 +9,7 @@ use crate::{
 use std::path::{Path, PathBuf};
 
 /// The repository of a session that has a worktree but predates routing: the one whose main
-/// clone the worktree was cut from, or with a single repository, that one as before.
+/// clone the worktree was cut from, or with a single repository, that one.
 pub fn existing_repo<'a>(repos: &'a [Repo], main_clone: Option<&Path>) -> Option<&'a Repo> {
     main_clone
         .and_then(|clone| repos::owning(repos, clone))
@@ -82,8 +82,8 @@ impl Found {
 
 /// The session that owns the pull request `pr`, whose head is `branch`, in one of `names`
 /// (repository names); see [`find`]. A pre-routing session's repository is worked out from its
-/// worktree or branch, and recorded for the session found, as Linear does on its next turn; the
-/// turn the caller starts needs it.
+/// worktree or branch and recorded for the session found, since the turn the caller starts
+/// needs it.
 pub async fn for_pull_request(
     store: &Store,
     repos: &[Repo],

@@ -5,11 +5,8 @@ use super::{Confined, Event, Launch};
 use serde_json::{Value, json};
 use tokio::process::Command;
 
-/// The command line for one turn of `launch`, started by `confined` and with only its
-/// environment (see [`crate::host::codex_runner`]). Claude Code's permission mode, settings,
-/// MCP configs and plugins have no Codex counterpart; the sandbox around Codex is its sandbox,
-/// made from the session's settings, since Codex's own cannot start inside it. `codex exec`
-/// never asks for approval.
+/// Started by `confined` with only its environment (see [`crate::host::codex_runner`]). Codex's
+/// own sandbox cannot start inside mothership's, so it runs with `danger-full-access`.
 pub(super) fn command(confined: Confined, launch: &Launch) -> Command {
     let (program, args) = confined
         .argv
@@ -58,7 +55,6 @@ fn codex_model(model: &str) -> Option<&str> {
     (!claude && !model.is_empty()).then_some(model)
 }
 
-/// The response of a turn that completed without an agent message.
 const NO_REPLY: &str = "Codex finished the turn without a reply.";
 
 /// What one `codex exec --json` process said so far. Its reply is the last agent message,
@@ -72,7 +68,6 @@ pub(super) struct Stream {
 }
 
 impl Stream {
-    /// One JSONL line.
     pub(super) fn parse(&mut self, line: &str) -> Vec<Event> {
         let Ok(v) = serde_json::from_str::<Value>(line) else {
             return Vec::new();

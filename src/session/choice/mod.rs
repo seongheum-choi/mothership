@@ -1,9 +1,7 @@
 //! A turn's runner, model, fallback model and effort, each decided on its own by the narrowest
 //! scope that sets it: `[runner=…]`/`[model=…]`/`[effort=…]` in the session's messages, then
 //! the issue's `runner:`/`model:`/`effort:` labels, then the mode its labels picked, then its
-//! repository, then the instance defaults. A change since the last turn is said in the turn's
-//! first thought. Claude Code's usage limit moves a turn on Claude to Codex unless a message
-//! chose the runner.
+//! repository, then the instance defaults.
 
 mod directives;
 pub mod labels;
@@ -34,7 +32,7 @@ pub struct Scopes<'a> {
 #[derive(Debug)]
 pub struct Chosen {
     pub runner: Runner,
-    /// A message chose the runner, so Claude Code's usage limit does not move the turn.
+    /// A message chose the runner, so a usage limit does not move the turn.
     pub pinned: bool,
     pub models: Models,
     /// The turn's first thought: what changed since the last turn, and a usage limit switch.

@@ -16,7 +16,6 @@ const PERMISSION_MODES: &[&str] = &[
     "plan",
 ];
 
-/// A mode file: optional YAML frontmatter between `---` lines, then the instructions.
 pub(super) fn parse(name: &str, text: &str) -> Result<Mode> {
     let (front, body) = split_frontmatter(text)?;
     let mut mode = Mode {
@@ -37,7 +36,6 @@ pub(super) fn parse(name: &str, text: &str) -> Result<Mode> {
     Ok(mode)
 }
 
-/// Sets the field `key` of `mode` to `value`, or says what is wrong with it.
 fn set(mode: &mut Mode, key: &str, value: Value) -> Result<(), String> {
     let scalar = |value: Value| match value {
         Value::Scalar(s) if !s.is_empty() => Ok(s),

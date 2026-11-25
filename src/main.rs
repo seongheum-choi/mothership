@@ -116,7 +116,6 @@ async fn serve() -> Result<()> {
     axum::serve(listener, app.router())
         .with_graceful_shutdown(shutdown_signal())
         .await?;
-    // The HTTP server stopped accepting requests; stop the agents it left running.
     if control {
         control::remove(&app.cfg.home);
     }
@@ -134,8 +133,8 @@ fn drain_signal_streams() -> Result<Signals> {
     Ok((drain, resume))
 }
 
-/// SIGUSR1 holds new turns for a restart (`contrib/deploy.sh` sends it once the instance is idle);
-/// SIGUSR2 ends that and runs what was held.
+/// SIGUSR1 holds new turns for a restart (`contrib/deploy.sh` sends it once the instance is
+/// idle); SIGUSR2 ends that and runs what was held.
 async fn drain_signals(app: std::sync::Arc<app::App>, (mut drain, mut resume): Signals) {
     loop {
         tokio::select! {

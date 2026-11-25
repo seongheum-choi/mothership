@@ -1,14 +1,11 @@
 //! What the service log says about each turn: what it runs and how it ended, so a session's
-//! history reads from the log without the surface it reported to. An agent kept running for its
-//! background work answers more than once; each answer is logged with which one it is and why it
-//! came, and one that repeats the last unasked is not reported again.
+//! history reads from the log without the surface it reported to.
 
 use super::{Outcome, Surface, turn::Turn};
 use crate::agent::Launch;
 use std::time::Duration;
 
 impl<S: Surface> Turn<'_, S> {
-    /// Logs what the turn runs: on which runner and model, where, and whether it resumes.
     pub(super) fn log_start(&self, launch: &Launch) {
         let label = self.app.store.read(|s| {
             let rec = s.sessions.get(self.key)?;
@@ -158,8 +155,8 @@ mod tests {
         assert_eq!(took(3_959), "1h05m");
     }
 
-    /// The answers of SH-340's agent: its first, one woken by a background task, one to a
-    /// prompt that joined it, and that answer twice more within a second.
+    /// A real agent's answers: its first, one woken by a background task, one to a prompt that
+    /// joined it, and that answer twice more within a second.
     #[test]
     fn an_answer_repeated_unasked_is_not_reported_again() {
         let reply = |text: &str| Outcome::Reply(text.into());

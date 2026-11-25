@@ -94,8 +94,7 @@ fn checked(text: &str, user_home: &Path) -> Result<Vec<Repo>> {
     Ok(repos)
 }
 
-/// Fails when one repository's path, as compared, is or lies inside another's. Each error
-/// names the paths as `repos.json` writes them, and how they resolved when that differs.
+/// Fails when one repository's path, as compared, is or lies inside another's.
 fn no_overlap<'a>(paths: impl IntoIterator<Item = (&'a Repo, PathBuf)>) -> Result<()> {
     let paths: Vec<_> = paths.into_iter().collect();
     let shown = |repo: &Repo, compared: &Path| {
@@ -125,10 +124,8 @@ fn no_overlap<'a>(paths: impl IntoIterator<Item = (&'a Repo, PathBuf)>) -> Resul
     Ok(())
 }
 
-/// Parses and validates `repos.json`: a non-empty array of entries with unique names, paths
-/// that neither repeat nor nest, no `base_branch` on a non-git entry, and no label, team or
-/// project claimed by two repositories. Also returns each entry's resolved
-/// `prompt_file`, which the caller reads.
+/// Parses and validates `repos.json`, also returning each entry's resolved `prompt_file` for
+/// the caller to read.
 pub(super) fn parse(text: &str, user_home: &Path) -> Result<(Vec<Repo>, Vec<Option<PathBuf>>)> {
     let entries: Vec<Entry> = serde_json::from_str(text)?;
     if entries.is_empty() {

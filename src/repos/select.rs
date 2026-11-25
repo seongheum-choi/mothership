@@ -39,9 +39,8 @@ pub struct Choice<'a> {
 }
 
 /// Picks the repository for an issue: a `[repo=<name>]` directive (the request's before the
-/// description's), then labels, then the project, then the team. With a single repository there is
-/// nothing to choose, and the issue is not read at all. The error is a question for the
-/// person who started the session.
+/// description's), then labels, then the project, then the team. The error is a question for
+/// the person who started the session.
 pub fn select<'a>(repos: &'a [Repo], facts: &IssueFacts) -> Result<Choice<'a>, String> {
     if let [repo] = repos {
         return Ok(Choice {
@@ -189,8 +188,8 @@ mod tests {
         assert_eq!(repo.name, "mothership");
         assert_eq!(repo.base_branch, "dev");
         assert!(repo.git);
-        // An issue about routing may well mention another repository; one repository means
-        // there is nothing to route, as before repos.json.
+        // An issue about routing may well mention another repository; with one repository
+        // there is nothing to route.
         let facts = IssueFacts {
             description: Some("Explain [repo=other]".into()),
             labels: labels(&["repo:other"]),

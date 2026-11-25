@@ -136,7 +136,6 @@ impl<S: Surface> Turn<'_, S> {
         Ok(Ended::Done)
     }
 
-    /// Posts the lines tools added to the progress file since the last look.
     async fn relay_progress(&self, progress: &mut ProgressTail) {
         for line in progress.read_new() {
             let update = Update::Progress(line);
@@ -176,8 +175,7 @@ impl<S: Surface> Turn<'_, S> {
     }
 }
 
-/// How an answer is reported. A failure on the usage limit of a session pinned to Claude says
-/// why it did not move to Codex.
+/// A failure on the usage limit of a session pinned to Claude says why it did not move to Codex.
 fn outcome(text: String, is_error: bool, pinned_at_limit: bool) -> Outcome {
     match (is_error, pinned_at_limit) {
         (true, true) => Outcome::Failed(format!("{text}\n\n{}", limit::PINNED)),

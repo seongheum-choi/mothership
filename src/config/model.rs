@@ -30,7 +30,6 @@ pub struct ModelFields {
     pub effort: Option<String>,
 }
 
-/// The problem to report when `effort` is not one of `EFFORTS`.
 pub fn check_effort(effort: &str) -> Result<(), String> {
     if EFFORTS.contains(&effort) {
         return Ok(());

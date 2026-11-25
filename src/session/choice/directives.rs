@@ -1,6 +1,5 @@
 //! `[runner=…]`, `[model=…]` and `[effort=…]` in a session's messages, recorded on the session
-//! so the turns that start after the message run with them. `default` gives the field back to
-//! the wider scopes.
+//! so the turns that start after the message run with them.
 
 use crate::{
     agent::Runner,

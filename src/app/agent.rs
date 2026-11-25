@@ -21,7 +21,6 @@ use std::{
 pub struct Place<'a> {
     /// `MOTHERSHIP_SURFACE`: `linear` or `zulip`.
     pub surface: &'a str,
-    /// Where the agent works.
     pub cwd: PathBuf,
     pub system_prompt: String,
     /// What the agent may read besides its workspace and the plugin directories.
@@ -45,8 +44,7 @@ pub struct Settings {
 }
 
 impl App {
-    /// The turn session `key` (recorded as `rec`) runs next from `place`: its runner and models,
-    /// its sandbox settings, MCP configs, plugins and environment.
+    /// The turn session `key` (recorded as `rec`) runs next from `place`.
     pub fn launch(&self, key: &str, rec: &SessionRec, place: Place<'_>) -> Result<Launch> {
         // First: it records what the turn launched, which `settle` needs even when a later step
         // fails the turn.

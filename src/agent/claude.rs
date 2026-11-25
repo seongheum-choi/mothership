@@ -5,7 +5,6 @@ use super::{Event, Launch};
 use serde_json::{Value, json};
 use tokio::process::Command;
 
-/// The command line for one turn of `launch`.
 pub(super) fn command(bin: &str, launch: &Launch) -> Command {
     let mut cmd = Command::new(bin);
     cmd.args([
@@ -71,7 +70,6 @@ pub(super) struct Stream {
 }
 
 impl Stream {
-    /// One stream-json line.
     pub(super) fn parse(&mut self, line: &str) -> Vec<Event> {
         let Ok(v) = serde_json::from_str::<Value>(line) else {
             return Vec::new();
@@ -119,7 +117,6 @@ impl Stream {
     }
 }
 
-/// One block of an assistant message.
 fn content(block: &Value, nested: bool) -> Option<Event> {
     match block["type"].as_str() {
         Some("text") => Event::text(block["text"].as_str().unwrap_or_default(), nested),

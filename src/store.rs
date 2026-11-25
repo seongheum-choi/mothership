@@ -1,4 +1,5 @@
-//! Durable state: Linear OAuth tokens, the GitHub App user token and per-session bookkeeping, in `<home>/state.json`.
+//! Durable state: Linear OAuth tokens, the GitHub App user token and per-session bookkeeping,
+//! in `<home>/state.json`.
 
 use crate::{agent::Runner, github::UserTokens};
 use serde::{Deserialize, Serialize};
@@ -28,7 +29,7 @@ pub struct SessionRec {
     pub url: String,
     /// Name of the repository a Linear session works in, chosen once at its start.
     pub repo: Option<String>,
-    /// Linear: the `<home>/modes` mode its labels picked at its start; `None` works as before.
+    /// Linear: the `<home>/modes` mode its labels picked at its start; `None` runs without one.
     pub mode: Option<String>,
     /// Linear: the mode is not settled yet (labels conflicted, or a mode file did not parse),
     /// so no turn may run. Sessions from before modes have it false and keep the default.
@@ -90,7 +91,6 @@ impl SessionRec {
         self.agent_sessions.get(&runner).cloned()
     }
 
-    /// Records the session a turn on `runner` started, for the next turn on it to resume.
     pub fn set_resume(&mut self, runner: Runner, id: String) {
         self.agent_sessions.insert(runner, id);
     }

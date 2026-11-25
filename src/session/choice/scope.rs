@@ -29,7 +29,6 @@ impl std::fmt::Display for Source<'_> {
 /// One field's value and where it came from, or `None` when that scope leaves it open.
 pub(super) type Candidate<'a, T = String> = Option<(T, Source<'a>)>;
 
-/// What a session's message set.
 pub(super) fn from_message<'a, T: Clone>(value: Option<&T>) -> Candidate<'a, T> {
     Some((value?.clone(), Source::Message))
 }
@@ -64,7 +63,6 @@ pub(super) fn candidates<'a, T: Clone>(
     ]
 }
 
-/// What a mode or a repository set for one field.
 fn from_scope<'a, T: Clone>(
     scope: Option<(&'a str, &'a ModelFields)>,
     source: fn(&'a str) -> Source<'a>,

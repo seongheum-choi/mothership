@@ -22,8 +22,7 @@ pub enum Event {
         text: String,
         is_error: bool,
     },
-    /// How many background tasks (`Agent` calls, background `Bash`) are still running. Claude
-    /// Code wakes the agent when one finishes only while its input is open.
+    /// How many background tasks (`Agent` calls, background `Bash`) are still running.
     Background {
         live: usize,
     },
@@ -37,14 +36,12 @@ pub enum Event {
 }
 
 impl Event {
-    /// `Started` with the runner's session `id`, when there is one.
     pub(super) fn started(id: &Value) -> Option<Self> {
         id.as_str().map(|id| Self::Started {
             session_id: id.to_string(),
         })
     }
 
-    /// `Text` of `text` without surrounding whitespace, when that leaves any.
     pub(super) fn text(text: &str, nested: bool) -> Option<Self> {
         let text = text.trim();
         (!text.is_empty()).then(|| Self::Text {

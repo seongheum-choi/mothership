@@ -217,7 +217,7 @@ impl App {
     }
 
     /// Stops every running session and waits for their agent process trees to be killed,
-    /// giving up after `grace`. Returns at once when nothing is running.
+    /// giving up after `grace`.
     pub async fn shutdown(&self, grace: Duration) {
         let stopped = self.linear.stop_all() + self.zulip.as_ref().map_or(0, |z| z.stop_all());
         if stopped == 0 {

@@ -4,7 +4,7 @@
 //! Claude Code wakes the agent when a background task (an `Agent` call, a background `Bash`)
 //! finishes and answers again. With input closed, Claude Code 2.1.304 stops a background agent
 //! still running ten minutes in and exits, so input stays open past an answer while any task
-//! runs, up to a limit. The surface is told when such a wait starts and how it ends.
+//! runs, up to a limit.
 
 use super::{Surface, Update, turn::Turn};
 use crate::agent::Agent;
@@ -64,7 +64,6 @@ impl Background {
         }
     }
 
-    /// How many tasks run now, as the agent last reported.
     pub(super) fn set_live(&mut self, live: usize) {
         self.live = live;
     }
@@ -137,7 +136,6 @@ impl<S: Surface> Turn<'_, S> {
         }
     }
 
-    /// Logs where a wait for background tasks stands and tells the surface.
     pub(super) async fn tell_wait(&self, wait: Wait) {
         let note = wait.note();
         if let Wait::Abandoned(_) = wait {
