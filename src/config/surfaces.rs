@@ -1,7 +1,7 @@
 //! Per-surface settings: Linear (always on), Zulip, GitHub and Gerrit (each on when its key is
 //! set).
 
-use super::vars::{Vars, parse_list};
+use super::vars::Vars;
 use crate::store::Tokens;
 use anyhow::{Result, bail};
 
@@ -29,7 +29,7 @@ impl LinearConfig {
             workspace: vars.get("LINEAR_WORKSPACE"),
             seed_tokens,
             api_url: linear_api_url(vars.get("LINEAR_API_URL")),
-            trusted_users: list(vars, "LINEAR_TRUSTED_USERS"),
+            trusted_users: vars.list("LINEAR_TRUSTED_USERS"),
         })
     }
 }
@@ -54,7 +54,7 @@ impl ZulipConfig {
             bot_email: vars.require("ZULIP_BOT_EMAIL")?,
             api_key: vars.require("ZULIP_API_KEY")?,
             webhook_token: vars.require("ZULIP_WEBHOOK_TOKEN")?,
-            trusted_emails: list(vars, "ZULIP_TRUSTED_EMAILS"),
+            trusted_emails: vars.list("ZULIP_TRUSTED_EMAILS"),
         }))
     }
 }
@@ -81,7 +81,7 @@ impl GitHubConfig {
         }
         Ok(Some(Self {
             webhook_secret,
-            trusted_logins: list(vars, "GITHUB_TRUSTED_LOGINS"),
+            trusted_logins: vars.list("GITHUB_TRUSTED_LOGINS"),
             mention_login,
         }))
     }
@@ -132,7 +132,7 @@ impl GerritConfig {
         };
         let username = vars.require("GERRIT_USERNAME")?;
         let webhook_token = vars.get("GERRIT_WEBHOOK_TOKEN");
-        let trusted_emails = list(vars, "GERRIT_TRUSTED_EMAILS");
+        let trusted_emails = vars.list("GERRIT_TRUSTED_EMAILS");
         if webhook_token.is_some() && trusted_emails.is_empty() {
             bail!("GERRIT_WEBHOOK_TOKEN is set but GERRIT_TRUSTED_EMAILS lists nobody");
         }
@@ -150,11 +150,6 @@ impl GerritConfig {
             mention,
         }))
     }
-}
-
-/// The comma-separated list in `key`, empty when unset.
-fn list(vars: &Vars, key: &str) -> Vec<String> {
-    vars.get(key).map(|l| parse_list(&l)).unwrap_or_default()
 }
 
 /// Whether someone named by any of `names` (an id, an email) may call the agent: anyone when

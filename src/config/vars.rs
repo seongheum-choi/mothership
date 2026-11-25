@@ -39,6 +39,11 @@ impl Vars {
         })
     }
 
+    /// The comma-separated list in `key` (see [`parse_list`]), empty when unset.
+    pub(super) fn list(&self, key: &str) -> Vec<String> {
+        self.get(key).map(|l| parse_list(&l)).unwrap_or_default()
+    }
+
     /// Pair each key with its value, warning about any key that has none so a missing secret
     /// is visible at startup rather than as a silent agent failure.
     pub(super) fn resolve_keys(&self, keys: &[String]) -> Vec<(String, String)> {
