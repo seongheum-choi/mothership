@@ -1,9 +1,7 @@
 //! Which of this instance's git repositories a Gerrit project is: those whose `origin` is that
 //! project on the host in `GERRIT_URL`.
 
-use crate::repos::Repo;
-use anyhow::{Context, Result, bail};
-use std::path::Path;
+use crate::repos::{Repo, origin_url};
 
 /// Repository names (as in `repos.json`) and their Gerrit projects, replaced whole when the
 /// repository list is reloaded.
@@ -44,23 +42,6 @@ impl Projects {
             .map(|(name, _)| name.as_str())
             .collect()
     }
-}
-
-fn origin_url(path: &Path) -> Result<String> {
-    let out = std::process::Command::new("git")
-        .arg("-C")
-        .arg(path)
-        .args(["remote", "get-url", "origin"])
-        .output()
-        .context("running git remote get-url origin")?;
-    if !out.status.success() {
-        bail!(
-            "git remote get-url origin in {}: {}",
-            path.display(),
-            String::from_utf8_lossy(&out.stderr).trim()
-        );
-    }
-    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
 /// The project `origin` names when it is on the host of `gerrit_url`: `https://host/a/team/app`,

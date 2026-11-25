@@ -1,7 +1,7 @@
 //! The `gh-reply` wrapper agents answer on GitHub with, and the GitHub repository each clone's
 //! `origin` points at.
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 
 /// Hidden marker `gh-reply` appends to every reply. The agent posts as the owner's own
@@ -17,22 +17,8 @@ pub(super) fn install(home: &Path) -> Result<PathBuf> {
 
 /// `owner/name` of the `origin` remote of the clone at `path`.
 pub(super) fn origin_of(path: &Path) -> Result<String> {
-    let out = std::process::Command::new("git")
-        .arg("-C")
-        .arg(path)
-        .args(["remote", "get-url", "origin"])
-        .output()
-        .context("running git remote get-url origin")?;
-    if !out.status.success() {
-        bail!(
-            "git remote get-url origin in {}: {}",
-            path.display(),
-            String::from_utf8_lossy(&out.stderr).trim()
-        );
-    }
-    let url = String::from_utf8_lossy(&out.stdout);
-    repo_from_remote(url.trim())
-        .with_context(|| format!("origin {:?} is not an owner/name remote", url.trim()))
+    let url = crate::repos::origin_url(path)?;
+    repo_from_remote(&url).with_context(|| format!("origin {url:?} is not an owner/name remote"))
 }
 
 /// `gh-reply <owner/repo> <pr> [<review-comment-id>]`, body on stdin: a threaded reply to a
