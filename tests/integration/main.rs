@@ -77,7 +77,6 @@ impl Args {
     }
 }
 
-/// The scenarios whose name contains `filter`, in order.
 fn selected(filter: Option<&str>) -> impl Iterator<Item = &'static (&'static str, Scenario)> {
     scenarios::ALL
         .iter()

@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # Rebuilds mothership on Linux and restarts its systemd user service without killing running
-# turns: pull, build, wait until idle and drain, swap the binary, restart, check the commit, and
-# roll back if it is not reported.
+# turns, rolling back if the new binary does not answer.
 # The macOS counterpart is contrib/deploy.sh; Linux has no TCC, so nothing is signed here.
 #
 # Every path and name is a variable; override any of them in the environment:
@@ -30,9 +29,8 @@ keep_previous
 # Reported by `/status` as `commit`, to check below that the new binary is the one answering.
 MOTHERSHIP_COMMIT=$commit cargo build --release --locked
 
-# A restart kills running agents, so wait until no turn is running, draining only once idle
-# and for at most HOLD_LIMIT seconds (see contrib/wait-idle.sh). If this script stops while the
-# drain holds turns, SIGUSR2 lets them start.
+# A restart kills running agents, so wait for idle first (see contrib/wait-idle.sh); the EXIT
+# trap ends a drain this script leaves behind.
 # Only the main process: the agents in the unit's cgroup must not get the signal.
 drain() { systemctl --user kill -s USR1 --kill-whom=main "$unit"; }
 undrain() { systemctl --user kill -s USR2 --kill-whom=main "$unit"; }

@@ -66,7 +66,6 @@ impl Ctx {
     }
 }
 
-/// What the instance is configured with.
 pub struct Setup {
     /// Repositories by name, with the GitHub `owner/name` their `origin` points at. A single
     /// one is `REPO_PATH`, several go into `repos.json`.
@@ -303,7 +302,6 @@ impl Harness {
         .with_context(|| format!("activities so far: {:#?}", self.activities(sid)))
     }
 
-    /// What `GET /status` says.
     pub async fn status(&self) -> Result<Value> {
         let res = self.http.get(format!("{}/status", self.url)).send().await?;
         Ok(res.json().await?)
@@ -470,7 +468,6 @@ pub async fn eventually_within<T>(
     }
 }
 
-/// Waits for process `pid` to be gone.
 pub async fn exited(pid: u64) -> Result<()> {
     let pid = u32::try_from(pid).context("pid out of range")?;
     eventually(&format!("process {pid} to exit"), || {
