@@ -7,9 +7,9 @@ use super::{
     reply::MARKER,
 };
 use crate::{app::App, linear::Opening};
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use serde_json::Value;
-use std::{path::Path, sync::Arc};
+use std::sync::Arc;
 
 /// How the reply that no Linear issue was found begins, and how mothership knows it again.
 const NO_ISSUE: &str = "I couldn't find the Linear issue for this pull request";
@@ -210,24 +210,7 @@ async fn reply(app: &App, feedback: &Feedback, text: &str) -> Result<()> {
 /// Runs `gh <args>` in the clone of the pull request's repository and returns its output.
 async fn gh(app: &App, feedback: &Feedback, args: &[&str]) -> Result<Vec<u8>> {
     let github = app.github.as_ref().context("github feedback is off")?;
-    let origins = github.origins();
-    let clone: &Path = origins
-        .clone_of(&feedback.repo)
-        .with_context(|| format!("no repository has origin {}", feedback.repo))?;
-    let out = tokio::process::Command::new("gh")
-        .args(args)
-        .current_dir(clone)
-        .output()
-        .await
-        .context("running gh")?;
-    if !out.status.success() {
-        bail!(
-            "gh {}: {}",
-            args.iter().take(2).copied().collect::<Vec<_>>().join(" "),
-            String::from_utf8_lossy(&out.stderr).trim()
-        );
-    }
-    Ok(out.stdout)
+    github.gh(&feedback.repo, args).await
 }
 
 #[cfg(test)]

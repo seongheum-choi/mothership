@@ -11,7 +11,7 @@ use crate::{
     review::intake,
     sessions::{self, Found},
 };
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -78,20 +78,9 @@ pub(super) async fn handle(app: Arc<App>, feedback: Feedback) {
 
 /// `issue_comment` payloads describe the PR as an issue, without its head.
 async fn fetch_head(github: &GitHub, repo: &str, number: u64) -> Result<Head> {
-    let origins = github.origins();
-    let clone = origins
-        .clone_of(repo)
-        .with_context(|| format!("no repository has origin {repo}"))?;
-    let out = tokio::process::Command::new("gh")
-        .args(["api", &format!("repos/{repo}/pulls/{number}")])
-        .current_dir(clone)
-        .output()
-        .await
-        .context("running gh")?;
-    if !out.status.success() {
-        bail!("gh api: {}", String::from_utf8_lossy(&out.stderr).trim());
-    }
-    let pr: Value = serde_json::from_slice(&out.stdout).context("gh api output is not JSON")?;
+    let path = format!("repos/{repo}/pulls/{number}");
+    let out = github.gh(repo, &["api", &path]).await?;
+    let pr: Value = serde_json::from_slice(&out).context("gh api output is not JSON")?;
     Head::of(&pr).context("pull request has no head branch")
 }
 
