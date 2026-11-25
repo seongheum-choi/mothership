@@ -17,14 +17,9 @@ pub fn applies(configured: Runner, resets_at: u64, now: u64) -> bool {
 pub const PINNED: &str = "This session is pinned to Claude Code with `[runner=claude]`, so it \
      does not move to Codex. Reply with `[runner=default]` or `[runner=codex]` to let it.";
 
-/// Whether the Codex CLI at `bin` is there to switch to: a path to a file, or a name found on
-/// `path`, the `PATH` the agent process gets, so the check sees what the launch will. `None`
-/// falls back to this process's `PATH`, which the agent inherits when `AGENT_ENV` sets none.
-pub fn installed(bin: &str, path: Option<&str>) -> bool {
-    locate(bin, path).is_some()
-}
-
-/// Where the CLI `bin` is, looked for as [`installed`] does.
+/// Where the CLI `bin` is: a path to a file, or a name found on `path`, the `PATH` the agent
+/// process gets, so the check sees what the launch will. `None` falls back to this process's
+/// `PATH`, which the agent inherits when `AGENT_ENV` sets none.
 pub fn locate(bin: &str, path: Option<&str>) -> Option<PathBuf> {
     if bin.contains('/') {
         return Path::new(bin).is_file().then(|| PathBuf::from(bin));
@@ -105,18 +100,18 @@ mod tests {
 
     #[test]
     fn finds_binaries_by_path_or_name() {
-        assert!(installed("/bin/sh", None));
-        assert!(installed("sh", None));
-        assert!(!installed("/nonexistent/codex", None));
-        assert!(!installed("mothership-no-such-binary", None));
+        assert!(locate("/bin/sh", None).is_some());
+        assert!(locate("sh", None).is_some());
+        assert!(locate("/nonexistent/codex", None).is_none());
+        assert!(locate("mothership-no-such-binary", None).is_none());
     }
 
     #[test]
     fn looks_for_a_bare_name_on_the_agents_path() {
-        assert!(installed("sh", Some("/nowhere:/bin")));
-        assert!(!installed("sh", Some("/nowhere")));
+        assert!(locate("sh", Some("/nowhere:/bin")).is_some());
+        assert!(locate("sh", Some("/nowhere")).is_none());
         // A path to a file is not looked for on any `PATH`.
-        assert!(installed("/bin/sh", Some("/nowhere")));
+        assert!(locate("/bin/sh", Some("/nowhere")).is_some());
     }
 
     #[test]
