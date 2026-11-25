@@ -4,7 +4,7 @@
 
 use super::Linear;
 use crate::{app::App, session::Outcome};
-use anyhow::{Result, bail};
+use anyhow::Result;
 use serde_json::json;
 
 /// A pull request or change URL without fragment or query, and its `owner/repo#n` or
@@ -130,17 +130,13 @@ impl Linear {
             Outcome::Reply(text) => text.as_str(),
             Outcome::Failed(_) | Outcome::Stopped(_) => "",
         };
+        self.note_pull_requests(app, key, reply);
         let mut prs = self
             .turn_prs
             .lock()
             .expect("turn_prs lock poisoned")
             .remove(key)
             .unwrap_or_default();
-        for pr in pull_requests(reply, gerrit_url(app)) {
-            if !prs.contains(&pr) {
-                prs.push(pr);
-            }
-        }
         let known = app.store.read(|s| {
             s.sessions
                 .get(key)
@@ -172,18 +168,8 @@ impl Linear {
             .iter()
             .map(|pr| json!({ "label": pr.label, "url": pr.url }))
             .collect();
-        let data = self
-            .graphql(
-                app,
-                "mutation($id: String!, $input: AgentSessionUpdateInput!) { \
-                 agentSessionUpdate(id: $id, input: $input) { success } }",
-                json!({ "id": session_id, "input": { "addedExternalUrls": urls } }),
-            )
-            .await?;
-        if data["agentSessionUpdate"]["success"] != true {
-            bail!("agentSessionUpdate did not succeed");
-        }
-        Ok(())
+        self.update_session(app, session_id, json!({ "addedExternalUrls": urls }))
+            .await
     }
 }
 

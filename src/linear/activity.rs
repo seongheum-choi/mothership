@@ -6,7 +6,7 @@ use crate::{
     app::App,
     session::{Outcome, Wait},
 };
-use anyhow::{Result, bail};
+use anyhow::Result;
 use serde_json::{Value, json};
 
 pub(super) fn thought(body: &str) -> Value {
@@ -95,18 +95,7 @@ impl Linear {
     }
 
     async fn set_plan(&self, app: &App, key: &str, plan: Value) -> Result<()> {
-        let data = self
-            .graphql(
-                app,
-                "mutation($id: String!, $input: AgentSessionUpdateInput!) { \
-                 agentSessionUpdate(id: $id, input: $input) { success } }",
-                json!({ "id": key, "input": { "plan": plan } }),
-            )
-            .await?;
-        if data["agentSessionUpdate"]["success"] != true {
-            bail!("agentSessionUpdate did not succeed");
-        }
-        Ok(())
+        self.update_session(app, key, json!({ "plan": plan })).await
     }
 }
 
