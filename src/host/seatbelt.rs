@@ -1,6 +1,7 @@
 //! A macOS Seatbelt profile (for `sandbox-exec -p`) carrying the same file rules as a
 //! session's Claude Code settings, for what mothership runs outside Claude Code's sandbox.
 
+use crate::sandbox::{EDIT, READ};
 use serde_json::Value;
 use std::{
     fmt::Write,
@@ -23,7 +24,12 @@ use std::{
 ///
 /// Paths are matched as written and as resolved, since Seatbelt sees resolved paths. The
 /// network stays open, as under Claude Code's sandbox with `bypassPermissions`.
-pub fn profile(settings: &Value, workspace: &[PathBuf], always: &[String], own: &Path) -> String {
+pub(super) fn profile(
+    settings: &Value,
+    workspace: &[PathBuf],
+    always: &[String],
+    own: &Path,
+) -> String {
     let deny = denied(settings);
     let roots = writable_roots(settings, workspace);
     let mut writable: Vec<String> = roots.iter().flat_map(|p| subpath(p)).collect();
@@ -39,14 +45,14 @@ pub fn profile(settings: &Value, workspace: &[PathBuf], always: &[String], own: 
             .flat_map(move |r| filters(r, tool))
             .collect::<Vec<_>>()
     };
-    rule(&mut sb, "deny file-read*", &rules("Read"));
+    rule(&mut sb, "deny file-read*", &rules(READ));
     // Node's `realpath`, which pnpm runs on its `TMPDIR`, lstats every directory above it,
     // and the run's directory sits in one every session's rules deny.
     let above: Vec<String> = own.ancestors().skip(1).flat_map(literal).collect();
     rule(&mut sb, "allow file-read-metadata", &above);
     sb.push_str("(deny file-write*)\n");
     rule(&mut sb, "allow file-write*", &writable);
-    let mut protected = rules("Edit");
+    let mut protected = rules(EDIT);
     protected.extend(protected_filters());
     rule(&mut sb, "deny file-write*", &protected);
     rule(&mut sb, "allow file-read* file-write*", &subpath(own));
@@ -72,24 +78,19 @@ const ESCAPES: &str = "(deny job-creation lsopen)\n\
 
 /// The `permissions.deny` rules of `settings`.
 pub(super) fn denied(settings: &Value) -> Vec<&str> {
-    settings["permissions"]["deny"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_str)
-        .collect()
+    strings(&settings["permissions"]["deny"]).collect()
+}
+
+/// The strings in the array `v`; nothing when it is not one.
+fn strings(v: &Value) -> impl Iterator<Item = &str> {
+    v.as_array().into_iter().flatten().filter_map(Value::as_str)
 }
 
 /// Where `settings` let a run write: `workspace`, unless the bare `Edit` rule makes the
 /// session read-only, and the `allowWrite` paths.
 pub(super) fn writable_roots(settings: &Value, workspace: &[PathBuf]) -> Vec<PathBuf> {
-    let read_only = denied(settings).contains(&"Edit");
-    let allow_write = settings["sandbox"]["filesystem"]["allowWrite"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_str)
-        .map(PathBuf::from);
+    let read_only = denied(settings).contains(&EDIT);
+    let allow_write = strings(&settings["sandbox"]["filesystem"]["allowWrite"]).map(PathBuf::from);
     (if read_only { &[][..] } else { workspace })
         .iter()
         .cloned()
@@ -101,7 +102,7 @@ pub(super) fn writable_roots(settings: &Value, workspace: &[PathBuf]) -> Vec<Pat
 /// hooks and config, editor and agent config directories), as the path's last components.
 /// `.idea`, which it also refuses, is left out: dependencies ship it, and refusing it is what
 /// fails `pnpm install`.
-pub const PROTECTED_FILES: [&str; 38] = [
+pub(super) const PROTECTED_FILES: [&str; 38] = [
     ".gitconfig",
     ".gitmodules",
     ".bashrc",
@@ -143,7 +144,7 @@ pub const PROTECTED_FILES: [&str; 38] = [
 ];
 
 /// The same for directories, everything in them included.
-pub const PROTECTED_DIRS: [&str; 4] = [".git/hooks", ".claude", ".vscode", ".devcontainer"];
+pub(super) const PROTECTED_DIRS: [&str; 4] = [".git/hooks", ".claude", ".vscode", ".devcontainer"];
 
 /// [`PROTECTED_FILES`] and [`PROTECTED_DIRS`] as `(regex …)` filters.
 fn protected_filters() -> [String; 2] {
@@ -190,24 +191,26 @@ pub(super) fn rule_path<'a>(rule: &'a str, tool: &str) -> Option<&'a str> {
 }
 
 /// `(subpath …)` for `path` and, when it differs, for what it resolves to.
-pub fn subpath(path: &Path) -> Vec<String> {
-    resolved(path)
-        .iter()
-        .map(|p| format!("(subpath {})", quote(&p.to_string_lossy())))
-        .collect()
+pub(super) fn subpath(path: &Path) -> Vec<String> {
+    path_filters("subpath", path)
 }
 
 /// `(literal …)` for `path` and, when it differs, for what it resolves to.
-pub fn literal(path: &Path) -> Vec<String> {
+pub(super) fn literal(path: &Path) -> Vec<String> {
+    path_filters("literal", path)
+}
+
+/// `(<kind> …)` for `path` and, when it differs, for what it resolves to.
+fn path_filters(kind: &str, path: &Path) -> Vec<String> {
     resolved(path)
         .iter()
-        .map(|p| format!("(literal {})", quote(&p.to_string_lossy())))
+        .map(|p| format!("({kind} {})", quote(&p.to_string_lossy())))
         .collect()
 }
 
 /// `(regex #"…")`: Seatbelt reads the pattern as written, so it is not quoted again; a `"`
 /// in it is already escaped by [`glob`].
-pub fn regex(pattern: &str) -> String {
+pub(super) fn regex(pattern: &str) -> String {
     format!("(regex #\"{pattern}\")")
 }
 
@@ -247,7 +250,7 @@ fn glob(pattern: &str) -> String {
 /// `s` with every character a regex could read as syntax escaped.
 /// A `"` cannot appear in a `#"…"` pattern even escaped, so it matches any character there:
 /// a rule a little wider, never narrower.
-pub fn escape(s: &str) -> String {
+pub(super) fn escape(s: &str) -> String {
     s.chars()
         .flat_map(|c| match c {
             '"' => vec!['.'],

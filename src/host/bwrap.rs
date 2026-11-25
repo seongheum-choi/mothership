@@ -3,6 +3,7 @@
 //! profile's counterpart (`seatbelt.rs`), made of mounts instead of rules.
 
 use super::seatbelt::{self, PROTECTED_DIRS, PROTECTED_FILES};
+use crate::sandbox::{EDIT, READ};
 use serde_json::Value;
 use std::{
     collections::BTreeSet,
@@ -66,13 +67,13 @@ pub fn args(
         .filter_map(resolve)
         .collect();
     let own = resolve(own).unwrap_or_else(|| own.to_path_buf());
-    let mut fixed = paths("Edit");
+    let mut fixed = paths(EDIT);
     let mut pinned: BTreeSet<PathBuf> = roots.iter().cloned().collect();
     pinned.insert(own.clone());
     for root in &roots {
         guards(root, DEPTH, &mut fixed, &mut pinned);
     }
-    let mut hidden = paths("Read");
+    let mut hidden = paths(READ);
     hidden.extend(SERVICES.iter().filter_map(resolve));
     let rules = Rules {
         hidden,
