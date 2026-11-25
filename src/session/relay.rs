@@ -48,11 +48,10 @@ impl Relay {
 
     /// Releases held text unless it is the result about to be posted.
     pub(super) fn flush_except(&mut self, result: &str) -> Vec<Update> {
-        match self.pending.take() {
-            Some((text, _)) if text == result => Vec::new(),
-            Some((text, nested)) => vec![Update::Thought { text, nested }],
-            None => Vec::new(),
-        }
+        self.take()
+            .into_iter()
+            .filter(|update| !matches!(update, Update::Thought { text, .. } if text == result))
+            .collect()
     }
 
     fn take(&mut self) -> Option<Update> {

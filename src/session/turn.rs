@@ -44,22 +44,22 @@ pub(super) async fn worker<S: Surface>(
             }
         }
         let texts: Vec<&str> = queued.iter().map(|(text, _)| text.as_str()).collect();
-        if reg.held(&app, &key, &texts.join("\n\n")) {
+        let text = texts.join("\n\n");
+        if reg.held(&app, &key, &text) {
             queued.clear();
             continue;
         }
-        let (texts, mut tickets): (Vec<String>, Vec<S::Ticket>) =
-            std::mem::take(&mut queued).into_iter().unzip();
+        let mut tickets: Vec<S::Ticket> = std::mem::take(&mut queued)
+            .into_iter()
+            .map(|(_, ticket)| ticket)
+            .collect();
         let turn = Turn {
             app: &app,
             reg: &reg,
             key: &key,
             started: Instant::now(),
         };
-        if let Err(e) = turn
-            .run(&texts.join("\n\n"), &mut tickets, &mut rx, &mut queued)
-            .await
-        {
+        if let Err(e) = turn.run(&text, &mut tickets, &mut rx, &mut queued).await {
             turn.finish(tickets, Outcome::Failed(format!("{e:#}")))
                 .await;
         }
