@@ -202,6 +202,14 @@ pub fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     std::fs::rename(&tmp, path)
 }
 
+/// Removes the file `path` (a link itself, not its target) if it is there.
+pub fn remove_if_present(path: &Path) -> std::io::Result<()> {
+    match std::fs::remove_file(path) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
+        _ => Ok(()),
+    }
+}
+
 pub fn random_hex(bytes: usize) -> String {
     let mut buf = vec![0u8; bytes];
     std::fs::File::open("/dev/urandom")

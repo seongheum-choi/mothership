@@ -156,20 +156,12 @@ pub fn read_plain(path: &Path) -> io::Result<String> {
 /// Creates `path` anew with `bytes`, removing what was there first; creation fails rather than
 /// follow a link put back in between.
 pub fn write_new(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    remove(path)?;
+    crate::store::remove_if_present(path)?;
     std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(path)?
         .write_all(bytes)
-}
-
-/// Removes `path` (a link itself, not its target) if it is there.
-pub fn remove(path: &Path) -> io::Result<()> {
-    match std::fs::remove_file(path) {
-        Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e),
-        _ => Ok(()),
-    }
 }
 
 /// Letters, digits and `._:-` only, at most 64: safe as a file name part and an argument.

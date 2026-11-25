@@ -50,12 +50,8 @@ pub fn listen(app: &Arc<App>) -> Result<()> {
     if std::os::unix::net::UnixStream::connect(&path).is_ok() {
         bail!("another mothership answers on {}", path.display());
     }
-    match std::fs::remove_file(&path) {
-        Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
-            return Err(e).with_context(|| format!("removing {}", path.display()));
-        }
-        _ => {}
-    }
+    crate::store::remove_if_present(&path)
+        .with_context(|| format!("removing {}", path.display()))?;
     let listener =
         UnixListener::bind(&path).with_context(|| format!("binding {}", path.display()))?;
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
