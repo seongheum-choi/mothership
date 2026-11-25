@@ -5,8 +5,18 @@
 use super::vars::Vars;
 use crate::agent::Runner;
 
-/// The levels Claude Code's `--effort` takes.
-pub const EFFORTS: &[&str] = &["low", "medium", "high", "xhigh", "max"];
+/// The effort levels `runner` takes: Claude Code's `--effort` (2.1.331) and Codex's
+/// `model_reasoning_effort` (`supported_reasoning_levels` of Codex 0.172's models).
+pub const fn efforts(runner: Runner) -> &'static [&'static str] {
+    match runner {
+        Runner::Claude => &["low", "medium", "high", "xhigh", "max"],
+        Runner::Codex => &["low", "medium", "high", "xhigh", "max", "ultra"],
+    }
+}
+
+/// The effort levels a scope may set: every level some runner takes, which is Codex's list.
+/// One the turn's runner does not take is left off that turn (see `session::choice`).
+pub const EFFORTS: &[&str] = efforts(Runner::Codex);
 
 /// What one scope sets: a mode file, a repository in `repos.json`, or an issue's labels. A
 /// `None` field leaves that field to a wider scope, down to the instance defaults.
@@ -15,7 +25,8 @@ pub struct ModelFields {
     pub runner: Option<Runner>,
     pub model: Option<String>,
     pub fallback_model: Option<String>,
-    /// One of `EFFORTS`, checked where the scope is read so a bad value is named there.
+    /// One of `EFFORTS`, checked where the scope is read so a bad value is named there, and
+    /// against the turn's runner when the turn starts.
     pub effort: Option<String>,
 }
 
@@ -35,7 +46,7 @@ pub struct ModelDefaults {
     pub runner: Runner,
     pub model: String,
     pub fallback_model: String,
-    /// `None` leaves `--effort` off, so Claude Code picks.
+    /// `None` leaves the effort off, so the runner picks.
     pub effort: Option<String>,
 }
 
@@ -46,7 +57,7 @@ impl ModelDefaults {
                 return Some(effort);
             }
             tracing::warn!(
-                "settings: CLAUDE_EFFORT={effort} is not one of {}; leaving the effort to Claude Code",
+                "settings: CLAUDE_EFFORT={effort} is not one of {}; leaving the effort to the runner",
                 EFFORTS.join(", ")
             );
             None
@@ -71,4 +82,21 @@ fn runner(vars: &Vars) -> Runner {
         tracing::warn!("settings: AGENT_RUNNER: {e}; running claude");
         Runner::default()
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn codex_takes_every_effort_claude_code_does() {
+        let (claude, codex) = (efforts(Runner::Claude), efforts(Runner::Codex));
+        assert!(
+            claude.iter().all(|e| codex.contains(e)),
+            "so EFFORTS is Codex's"
+        );
+        assert!(codex.contains(&"ultra") && !claude.contains(&"ultra"));
+        assert_eq!(check_effort("ultra"), Ok(()));
+        assert!(check_effort("minimal").is_err());
+    }
 }

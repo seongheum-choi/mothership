@@ -275,13 +275,13 @@ mod tests {
         let err = format!(
             "{:#}",
             parse(
-                r#"[{"name": "app", "path": "/src/app", "effort": "ultra"}]"#,
+                r#"[{"name": "app", "path": "/src/app", "effort": "turbo"}]"#,
                 &home()
             )
             .unwrap_err()
         );
         assert!(
-            err.contains(r#"repo "app" effort: `ultra` is not an effort level"#),
+            err.contains(r#"repo "app" effort: `turbo` is not an effort level"#),
             "{err}"
         );
         let err = parse(

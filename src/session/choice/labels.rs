@@ -97,7 +97,7 @@ mod tests {
 
     #[test]
     fn a_bad_or_doubled_label_is_left_unset() {
-        assert_eq!(select("s1", &labels(&["effort:ultra"])), Picked::default());
+        assert_eq!(select("s1", &labels(&["effort:turbo"])), Picked::default());
         assert_eq!(select("s1", &labels(&["effort:HIGH"])), Picked::default());
         assert_eq!(select("s1", &labels(&["runner:gpt"])), Picked::default());
         assert_eq!(select("s1", &labels(&["runner:Codex"])), Picked::default());
@@ -107,7 +107,7 @@ mod tests {
             Picked::default()
         );
         assert_eq!(
-            select("s1", &labels(&["model:opus", "effort:ultra"])),
+            select("s1", &labels(&["model:opus", "effort:turbo"])),
             Picked {
                 model: Some("model:opus".into()),
                 ..Picked::default()

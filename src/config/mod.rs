@@ -6,7 +6,7 @@ mod reload;
 mod surfaces;
 mod vars;
 
-pub use model::{EFFORTS, ModelDefaults, ModelFields, check_effort};
+pub use model::{EFFORTS, ModelDefaults, ModelFields, check_effort, efforts};
 pub use reload::Live;
 pub use surfaces::{
     GerritConfig, GitHubAppConfig, GitHubConfig, LinearConfig, ZulipConfig, trusts,
