@@ -5,6 +5,7 @@ mod disk;
 mod load;
 mod select;
 
+pub use disk::origin_url;
 pub use load::load;
 pub use select::{IssueFacts, Ref, select};
 

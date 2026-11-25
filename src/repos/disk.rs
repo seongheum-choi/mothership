@@ -1,8 +1,9 @@
-//! What `repos.json` cannot say about itself: each entry's directory, clone and files on disk.
+//! What `repos.json` cannot say about itself: each entry's directory, clone and files on disk,
+//! and where a clone's `origin` points.
 
 use super::Repo;
 use anyhow::{Context, Result, bail};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// What `parse` cannot see: the directory exists, is the top of a git repository when it says
 /// so, and every MCP config file is there. Returns the directory with symlinks resolved.
@@ -64,10 +65,27 @@ pub(super) fn check_on_disk(repo: &Repo) -> Result<PathBuf> {
     Ok(resolved)
 }
 
+/// The URL of the `origin` remote of the clone at `path`.
+pub fn origin_url(path: &Path) -> Result<String> {
+    let out = std::process::Command::new("git")
+        .arg("-C")
+        .arg(path)
+        .args(["remote", "get-url", "origin"])
+        .output()
+        .context("running git remote get-url origin")?;
+    if !out.status.success() {
+        bail!(
+            "git remote get-url origin in {}: {}",
+            path.display(),
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::Path;
 
     fn git_init(dir: &Path) {
         let ok = std::process::Command::new("git")
