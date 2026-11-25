@@ -111,11 +111,7 @@ async fn serve() -> Result<()> {
         if app.zulip.is_some() { "on" } else { "off" },
         if app.github.is_some() { "on" } else { "off" },
         if app.gerrit.is_some() { "on" } else { "off" },
-        app.repos()
-            .iter()
-            .map(|r| r.name.as_str())
-            .collect::<Vec<_>>()
-            .join(", ")
+        repos::names(&app.repos())
     );
     axum::serve(listener, app.router())
         .with_graceful_shutdown(shutdown_signal())

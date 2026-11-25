@@ -11,7 +11,7 @@ use std::{
     time::Duration,
 };
 
-pub const USAGE: &str = "\
+const USAGE: &str = "\
 Usage:
   mothership                                     run the service
   mothership session status <issue>              each agent session of the issue: its Linear

@@ -15,7 +15,7 @@ use serde_json::Value;
 use std::{
     collections::HashMap,
     future::Future,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, MutexGuard},
 };
 use tokio::sync::mpsc;
 use turn::worker;
@@ -127,11 +127,21 @@ impl<S: Surface> Registry<S> {
         }
     }
 
+    /// The conversations with a worker, and the sender to each.
+    fn live(&self) -> MutexGuard<'_, HashMap<String, mpsc::UnboundedSender<Msg<S::Ticket>>>> {
+        self.live.lock().expect("live lock poisoned")
+    }
+
+    /// What `/status` shows of each running turn.
+    fn activity_map(&self) -> MutexGuard<'_, HashMap<String, Activity>> {
+        self.activity.lock().expect("activity lock poisoned")
+    }
+
     /// Hands `text` to the conversation's worker, starting one if it is idle.
     pub fn submit(self: &Arc<Self>, app: &Arc<App>, key: &str, text: String, ticket: S::Ticket) {
         // Senders only send while holding `live`, and a worker only exits after finding its
         // queue empty under the same lock, so no prompt lands in a channel nobody reads.
-        let mut live = self.live.lock().expect("live lock poisoned");
+        let mut live = self.live();
         let msg = Msg::Prompt { text, ticket };
         let msg = match live.get(key) {
             Some(tx) => match tx.send(msg) {
@@ -154,7 +164,7 @@ impl<S: Surface> Registry<S> {
     /// Stops the running turn, reporting `Outcome::Stopped(note)`. Returns false when nothing
     /// was running.
     pub fn stop(&self, key: &str, note: Option<String>) -> bool {
-        let live = self.live.lock().expect("live lock poisoned");
+        let live = self.live();
         live.get(key)
             .is_some_and(|tx| tx.send(Msg::Stop(note)).is_ok())
     }
@@ -162,14 +172,14 @@ impl<S: Surface> Registry<S> {
     /// Stops every running conversation. Returns how many were told to stop; each reports
     /// `Outcome::Stopped` and its worker leaves `live` once its agent has been killed.
     pub fn stop_all(&self) -> usize {
-        let live = self.live.lock().expect("live lock poisoned");
+        let live = self.live();
         live.values()
             .filter(|tx| tx.send(Msg::Stop(None)).is_ok())
             .count()
     }
 
     pub fn busy(&self) -> bool {
-        !self.live.lock().expect("live lock poisoned").is_empty()
+        !self.live().is_empty()
     }
 
     /// While the instance drains, keeps `text` for after the restart instead of starting a turn,
@@ -197,13 +207,13 @@ impl<S: Surface> Registry<S> {
             background: 0,
             waiting: false,
         };
-        let mut map = self.activity.lock().expect("activity lock poisoned");
+        let mut map = self.activity_map();
         map.insert(key.to_string(), activity);
     }
 
     /// Changes what `/status` shows about `key`'s running turn.
     fn note(&self, key: &str, change: impl FnOnce(&mut Activity)) {
-        let mut map = self.activity.lock().expect("activity lock poisoned");
+        let mut map = self.activity_map();
         if let Some(activity) = map.get_mut(key) {
             change(activity);
         }
@@ -211,21 +221,18 @@ impl<S: Surface> Registry<S> {
 
     /// Whether a worker runs for `key`: a turn, or prompts about to start one.
     pub fn running(&self, key: &str) -> bool {
-        self.live
-            .lock()
-            .expect("live lock poisoned")
-            .contains_key(key)
+        self.live().contains_key(key)
     }
 
     /// `key`'s running turn, as `/status` would show it.
     pub fn activity(&self, key: &str) -> Option<Activity> {
-        let map = self.activity.lock().expect("activity lock poisoned");
+        let map = self.activity_map();
         map.get(key).cloned()
     }
 
     /// The running turns, for `/status`.
     pub fn activities(&self) -> Vec<Activity> {
-        let map = self.activity.lock().expect("activity lock poisoned");
+        let map = self.activity_map();
         map.values().cloned().collect()
     }
 }
