@@ -112,6 +112,11 @@ mod tests {
         let both = parse("[model=sonnet] please [effort= high ]").unwrap();
         assert_eq!(both.model, Set::To("sonnet".into()));
         assert_eq!(both.effort, Set::To("high".into()));
+        assert_eq!(
+            parse("[effort=ultra]").unwrap().effort,
+            Set::To("ultra".into()),
+            "a Codex level; the turn checks it against its runner"
+        );
         let reset = parse("[model=default][effort=default]").unwrap();
         assert_eq!((reset.model, reset.effort), (Set::Clear, Set::Clear));
         assert_eq!(
@@ -119,7 +124,7 @@ mod tests {
             Directives::default()
         );
         assert!(
-            parse("[effort=ultra]")
+            parse("[effort=turbo]")
                 .unwrap_err()
                 .contains("not an effort level")
         );

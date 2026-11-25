@@ -1,15 +1,13 @@
 //! What a session asks mothership to run: the request files in its `runs/` directory and
 //! their answers next to them.
 
+use crate::{agent::Runner, config::efforts};
 use serde_json::{Value, json};
 use std::{
     io::{self, Read, Write},
     os::unix::fs::MetadataExt,
     path::{Path, PathBuf},
 };
-
-/// Codex's `model_reasoning_effort` levels.
-const EFFORTS: [&str; 5] = ["minimal", "low", "medium", "high", "xhigh"];
 
 /// What a request asks for.
 #[derive(Debug, PartialEq)]
@@ -60,8 +58,9 @@ fn codex(value: &Value) -> Result<CodexRun, String> {
         _ => Err(format!("`{name}` must be a string")),
     };
     let effort = text_field("effort")?;
-    if let Some(effort) = effort.as_deref().filter(|e| !EFFORTS.contains(e)) {
-        return Err(format!("`effort` {effort:?} is not one of {EFFORTS:?}"));
+    let efforts = efforts(Runner::Codex);
+    if let Some(effort) = effort.as_deref().filter(|e| !efforts.contains(e)) {
+        return Err(format!("`effort` {effort:?} is not one of {efforts:?}"));
     }
     let model = text_field("model")?;
     if let Some(model) = model.as_deref().filter(|m| !plain(m) || m.starts_with('-')) {
@@ -202,6 +201,13 @@ mod tests {
             panic!("a codex request");
         };
         assert_eq!((bare.schema, bare.effort, bare.model), (None, None, None));
+        for effort in ["max", "ultra"] {
+            let text = format!(r#"{{"kind":"codex","prompt":"p","effort":"{effort}"}}"#);
+            let Ok(Request::Codex(r)) = parse(&text) else {
+                panic!("effort {effort}");
+            };
+            assert_eq!(r.effort.as_deref(), Some(effort));
+        }
         assert_eq!(
             parse(r#"{"kind":"command","name":"pnpm-install"}"#),
             Ok(Request::Command("pnpm-install".into()))
@@ -215,7 +221,7 @@ mod tests {
             r#"{"kind":"shell","prompt":"ls"}"#,
             r#"{"kind":"codex","prompt":" "}"#,
             r#"{"kind":"codex","prompt":"p","schema":"x"}"#,
-            r#"{"kind":"codex","prompt":"p","effort":"max"}"#,
+            r#"{"kind":"codex","prompt":"p","effort":"minimal"}"#,
             r#"{"kind":"codex","prompt":"p","model":"gpt -c x=1"}"#,
             r#"{"kind":"codex","prompt":"p","model":7}"#,
             r#"{"kind":"codex","prompt":"p","model":"--config"}"#,

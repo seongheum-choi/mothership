@@ -1,5 +1,5 @@
 //! The Codex CLI: `codex exec --json`, one process per turn with the prompt on stdin, resumed
-//! by thread id. Flags and event names are those of Codex 0.146 and 0.160.
+//! by thread id. Flags and event names are those of Codex 0.160, 0.162 and 0.172.
 
 use super::{Confined, Event, Launch};
 use serde_json::{Value, json};
@@ -50,7 +50,9 @@ fn toml_string(text: &str) -> String {
 /// `model` unless it names a Claude model (the instance default is `CLAUDE_MODEL`), which
 /// Codex does not know; then Codex runs the model its own config picks.
 fn codex_model(model: &str) -> Option<&str> {
-    const CLAUDE_ALIASES: &[&str] = &["default", "best", "opus", "sonnet", "haiku", "opusplan"];
+    const CLAUDE_ALIASES: &[&str] = &[
+        "default", "best", "fable", "opus", "sonnet", "haiku", "opusplan",
+    ];
     let base = model.strip_suffix("[1m]").unwrap_or(model);
     let claude = CLAUDE_ALIASES.contains(&base) || base.starts_with("claude-");
     (!claude && !model.is_empty()).then_some(model)
@@ -270,7 +272,15 @@ mod tests {
     #[test]
     fn passes_only_codex_models() {
         assert_eq!(codex_model("gpt-5.5"), Some("gpt-5.5"));
-        for claude in ["opus", "sonnet[1m]", "claude-opus-5-5", "default", ""] {
+        for claude in [
+            "fable",
+            "fable[1m]",
+            "opus",
+            "sonnet[1m]",
+            "claude-opus-5-5",
+            "default",
+            "",
+        ] {
             assert_eq!(codex_model(claude), None, "{claude}");
         }
     }

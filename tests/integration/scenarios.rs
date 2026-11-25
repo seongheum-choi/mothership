@@ -892,11 +892,11 @@ async fn linear_refused_reply_is_not_kept(ctx: Ctx) -> Result<()> {
     ensure!(h.linear(created("s33", &issue, "context of SH-33")).await? == 200);
     h.activity("s33", "elicitation", 1).await?;
 
-    let refused = "[effort=ultra] [repo=app] it is the login page";
+    let refused = "[effort=turbo] [repo=app] it is the login page";
     ensure!(h.linear(prompted("s33", &issue, refused)).await? == 200);
     let error = h.activity("s33", "error", 1).await?;
     ensure!(
-        body(&error).starts_with("`[effort=ultra]` is not an effort level"),
+        body(&error).starts_with("`[effort=turbo]` is not an effort level"),
         "{error}"
     );
 
@@ -1769,7 +1769,7 @@ async fn unknown_effort_is_refused(ctx: Ctx) -> Result<()> {
     let h = Harness::start(&ctx, Setup::default()).await?;
     let issue = issue(32, "Fix it.");
     h.mock.add_issue(&issue);
-    let comment = "@mothership [effort=ultra] fix it";
+    let comment = "@mothership [effort=turbo] fix it";
     ensure!(
         h.linear(mentioned("s32", &issue, comment, "context of SH-32"))
             .await?
@@ -1777,7 +1777,7 @@ async fn unknown_effort_is_refused(ctx: Ctx) -> Result<()> {
     );
     let error = h.activity("s32", "error", 1).await?;
     ensure!(
-        body(&error).starts_with("`[effort=ultra]` is not an effort level"),
+        body(&error).starts_with("`[effort=turbo]` is not an effort level"),
         "{error}"
     );
     tokio::time::sleep(std::time::Duration::from_millis(300)).await;
@@ -2243,7 +2243,7 @@ async fn model_labels_beat_the_mode_and_bad_ones_are_ignored(ctx: Ctx) -> Result
         "{said:?}"
     );
 
-    let issue = labelled(52, "Why else?", &["research", "effort:ultra"]);
+    let issue = labelled(52, "Why else?", &["research", "effort:turbo"]);
     h.mock.add_issue(&issue);
     ensure!(h.linear(created("s52", &issue, "context of SH-52")).await? == 200);
     h.activity("s52", "response", 1).await?;
@@ -2252,7 +2252,7 @@ async fn model_labels_beat_the_mode_and_bad_ones_are_ignored(ctx: Ctx) -> Result
     ensure!(flag(&args, "--effort")? == "low", "{args:#?}");
     let log = std::fs::read_to_string(h.dir.join("mothership.log"))?;
     ensure!(
-        log.contains("label `effort:ultra` ignored: `ultra` is not an effort level"),
+        log.contains("label `effort:turbo` ignored: `turbo` is not an effort level"),
         "{log}"
     );
     Ok(())

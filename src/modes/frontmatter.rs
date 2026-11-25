@@ -245,9 +245,9 @@ mod tests {
                 instructions: "Look, do not touch.".into(),
             }
         );
-        let err = parse("research", "---\neffort: ultra\n---\n").unwrap_err();
+        let err = parse("research", "---\neffort: turbo\n---\n").unwrap_err();
         assert!(
-            format!("{err:#}").contains("`ultra` is not an effort level"),
+            format!("{err:#}").contains("`turbo` is not an effort level"),
             "{err:#}"
         );
         let err = parse("research", "---\nrunner: gpt\n---\n").unwrap_err();
