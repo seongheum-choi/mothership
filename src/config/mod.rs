@@ -19,7 +19,7 @@ use std::{
     path::{Path, PathBuf},
     time::Duration,
 };
-use vars::{Vars, parse_home_entries, parse_list, parse_paths};
+use vars::{Vars, parse_home_entries, parse_paths};
 
 /// `HOST_SANDBOX` when unset: the platform's own.
 const DEFAULT_HOST_SANDBOX: &str = if cfg!(target_os = "macos") {
@@ -117,12 +117,7 @@ impl Config {
             agent_name: vars
                 .get("AGENT_NAME")
                 .unwrap_or_else(|| "mothership".into()),
-            agent_env: vars.resolve_keys(
-                &vars
-                    .get("AGENT_ENV")
-                    .map(|list| parse_list(&list))
-                    .unwrap_or_default(),
-            ),
+            agent_env: vars.resolve_keys(&vars.list("AGENT_ENV")),
             sandbox: sandbox_paths(&vars, &user_home)?,
             linear: LinearConfig::from_vars(&vars, seed_tokens)?,
             zulip,
@@ -207,25 +202,12 @@ fn home_of(user_home: &Path) -> PathBuf {
 /// `SANDBOX_READ`, `SANDBOX_WRITE` and `SANDBOX_SKIP_DENY`; each session adds its own directory
 /// under the progress directory (see [`crate::app::App::session_dir`]).
 fn sandbox_paths(vars: &Vars, user_home: &Path) -> Result<sandbox::Paths> {
-    let read = parse_paths(
-        "SANDBOX_READ",
-        vars.get("SANDBOX_READ").as_deref(),
-        user_home,
-    )?;
-    let write = parse_paths(
-        "SANDBOX_WRITE",
-        vars.get("SANDBOX_WRITE").as_deref(),
-        user_home,
-    )?;
-    let skip_deny = parse_home_entries(
-        "SANDBOX_SKIP_DENY",
-        vars.get("SANDBOX_SKIP_DENY").as_deref(),
-        user_home,
-    )?;
+    type Parse = fn(&str, Option<&str>, &Path) -> Result<Vec<PathBuf>>;
+    let setting = |key: &str, parse: Parse| parse(key, vars.get(key).as_deref(), user_home);
     Ok(sandbox::Paths {
-        read,
-        write,
-        skip_deny,
+        read: setting("SANDBOX_READ", parse_paths)?,
+        write: setting("SANDBOX_WRITE", parse_paths)?,
+        skip_deny: setting("SANDBOX_SKIP_DENY", parse_home_entries)?,
     })
 }
 
