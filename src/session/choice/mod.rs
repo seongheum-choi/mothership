@@ -18,7 +18,7 @@ use crate::{
     config::{ModelDefaults, ModelFields, efforts},
     store::{Launched, SessionRec},
 };
-use scope::{Source, from_label, from_message, from_scope, label_value, pick, pick_optional, say};
+use scope::{Source, candidates, from_label, from_message, label_value, pick, pick_optional, say};
 
 /// The scopes between the session's own fields and the instance defaults, which `choose` reads
 /// from the store and `.env` itself. A chat session has neither.
@@ -73,43 +73,36 @@ pub fn for_turn(app: &App, key: &str, rec: &SessionRec, scopes: &Scopes<'_>) -> 
 }
 
 fn choose(rec: &SessionRec, scopes: &Scopes<'_>, defaults: &ModelDefaults) -> Chosen {
-    let mode = scopes.mode;
-    let repo = scopes.repo;
     let (runner, runner_from) = pick(
-        [
+        candidates(
             from_message(rec.runner.as_ref()),
             from_label(rec.label_runner.as_ref(), labels::runner),
-            from_scope(mode, Source::Mode, |f| f.runner.as_ref()),
-            from_scope(repo, Source::Repo, |f| f.runner.as_ref()),
-        ],
+            scopes,
+            |f| f.runner.as_ref(),
+        ),
         defaults.runner,
     );
     let (model, model_from) = pick(
-        [
+        candidates(
             from_message(rec.model.as_ref()),
             from_label(rec.label_model.as_ref(), label_value),
-            from_scope(mode, Source::Mode, |f| f.model.as_ref()),
-            from_scope(repo, Source::Repo, |f| f.model.as_ref()),
-        ],
+            scopes,
+            |f| f.model.as_ref(),
+        ),
         defaults.model.clone(),
     );
     // No message or label sets the fallback model; a mode or a repository does.
     let (fallback, fallback_from) = pick(
-        [
-            None,
-            None,
-            from_scope(mode, Source::Mode, |f| f.fallback_model.as_ref()),
-            from_scope(repo, Source::Repo, |f| f.fallback_model.as_ref()),
-        ],
+        candidates(None, None, scopes, |f| f.fallback_model.as_ref()),
         defaults.fallback_model.clone(),
     );
     let (effort, effort_from) = pick_optional(
-        [
+        candidates(
             from_message(rec.effort.as_ref()),
             from_label(rec.label_effort.as_ref(), label_value),
-            from_scope(mode, Source::Mode, |f| f.effort.as_ref()),
-            from_scope(repo, Source::Repo, |f| f.effort.as_ref()),
-        ],
+            scopes,
+            |f| f.effort.as_ref(),
+        ),
         defaults.effort.as_ref(),
     );
     // A level the runner does not take (Codex's `ultra` on Claude Code) gives way to the
