@@ -75,7 +75,7 @@ pub fn select<'a>(
     modes: &'a [Mode],
     issue_labels: &[String],
 ) -> Result<Option<Choice<'a>>, String> {
-    let matches: Vec<Choice> = modes
+    let mut matches: Vec<Choice> = modes
         .iter()
         .filter_map(|mode| {
             issue_labels
@@ -87,13 +87,12 @@ pub fn select<'a>(
                 })
         })
         .collect();
-    let mut matches = matches.into_iter();
-    match (matches.next(), matches.len()) {
-        (None, _) => Ok(None),
-        (Some(only), 0) => Ok(Some(only)),
-        (Some(first), _) => {
-            let list = std::iter::once(first)
-                .chain(matches)
+    match matches.len() {
+        0 => Ok(None),
+        1 => Ok(matches.pop()),
+        _ => {
+            let list = matches
+                .iter()
                 .map(|c| format!("`{}` (label `{}`)", c.mode.name, c.label))
                 .collect::<Vec<_>>()
                 .join(", ");
