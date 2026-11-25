@@ -1,10 +1,8 @@
 //! Runs mothership starts on a session's behalf, for what the agent's own sandbox cannot:
 //! Codex, whose login and binary are out of Bash's reach and whose sandbox cannot nest inside
-//! Claude Code's (`codex.rs`), and the repository's named commands (`command.rs`). The agent
-//! writes a request into its session directory; mothership runs it confined by the session's
-//! own rules, as a Seatbelt profile on macOS (`seatbelt.rs`) or bubblewrap mounts on Linux
-//! (`bwrap.rs`), and writes the answer next to it (`request.rs`); `process.rs` runs the
-//! confined process. The Codex runner's own turns run under the same rules (`codex.rs`).
+//! Claude Code's, and the repository's named commands. The agent writes a request into its
+//! session directory; mothership runs it confined by the session's own rules and writes the
+//! answer next to it.
 
 mod bwrap;
 mod codex;
@@ -28,7 +26,7 @@ use std::{
     time::Duration,
 };
 
-/// How long one run may take before it is killed and answered with an error.
+/// How long one run may take before it is killed.
 const TIMEOUT: Duration = Duration::from_hours(1);
 /// Of a process's own environment, what a run gets besides the agent's.
 const INHERITED: [&str; 7] = ["HOME", "USER", "LOGNAME", "SHELL", "LANG", "LC_ALL", "PATH"];
@@ -45,14 +43,14 @@ pub struct Host {
     /// Where each run gets a directory of its own (see [`process::RunDir`]): one no session
     /// and no other run may read or write.
     pub run_root: PathBuf,
-    /// The session's progress file, as the turn opened it, for a run's start and end.
+    /// The session's progress file, for a run's start and end.
     pub progress: File,
     pub cwd: PathBuf,
     /// The turn's settings, for commands.
     pub settings: Value,
     /// The same with Codex's home and binary readable, for Codex.
     pub codex_settings: Value,
-    /// See [`env`].
+    /// See [`env()`].
     pub env: Vec<(String, String)>,
     /// The repository's `commands`, by name.
     pub commands: BTreeMap<String, String>,
@@ -80,9 +78,9 @@ pub fn run_root(state: &Path) -> PathBuf {
     state.join("host-runs")
 }
 
-/// Empties [`run_root`] of what earlier runs left, makes it private and writes bubblewrap's
-/// seccomp filter (see [`seccomp::filter`]) into it, at startup, and makes sure sessions' parts of Codex's home ([`codex::state_root`]) have their directory: both
-/// must exist for sessions' deny rules to name them.
+/// At startup, empties [`run_root`], makes it private and writes bubblewrap's seccomp filter
+/// into it, and makes [`codex::state_root`]: both must exist for sessions' deny rules to name
+/// them.
 pub fn reset_run_root(state: &Path) -> std::io::Result<()> {
     let root = run_root(state);
     if std::fs::symlink_metadata(&root).is_ok() {
@@ -131,12 +129,10 @@ pub fn env(settings: &Value, agent: &[(String, String)]) -> Vec<(String, String)
         .collect()
 }
 
-/// The command line before the program for a process working in `cwd` under `settings`:
-/// `sandbox` and its arguments (see [`seatbelt::profile`] and [`bwrap::args`]), writing also
-/// `/dev`, `own` (a run's directory and `TMPDIR`, or a Codex turn's session directory) and, for
-/// Codex, Codex's state in its home. Not the shared temporary directories, where one run could
-/// reach another's files or plant some for unconfined tools. bubblewrap starts with `filter`
-/// (see [`reset_run_root`]) as its seccomp filter, and not at all where there is none.
+/// The command line before the program for a process working in `cwd` under `settings`; it may
+/// also write `/dev`, `own` and, for Codex, Codex's state in its home. Not the shared temporary
+/// directories, where one run could reach another's files or plant some for unconfined tools.
+/// bubblewrap does not start at all where there is no seccomp filter.
 pub fn confinement(
     sandbox: &str,
     filter: &Path,

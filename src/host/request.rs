@@ -9,7 +9,6 @@ use std::{
     path::{Path, PathBuf},
 };
 
-/// What a request asks for.
 #[derive(Debug, PartialEq)]
 pub enum Request {
     Codex(CodexRun),
