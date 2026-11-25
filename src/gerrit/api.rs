@@ -33,7 +33,7 @@ async fn get(app: &App, cfg: &GerritConfig, path: &str) -> Result<Value> {
     if !status.is_success() {
         bail!("GET {path}: {status}: {}", text.trim());
     }
-    let json = text.strip_prefix(")]}'").unwrap_or(&text);
+    let json = text.trim_prefix(")]}'");
     serde_json::from_str(json).with_context(|| format!("GET {path}: not JSON"))
 }
 

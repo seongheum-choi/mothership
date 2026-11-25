@@ -13,7 +13,7 @@ pub(super) fn conversation(message: &Value) -> (String, Destination, String) {
         && let Some(stream_id) = message["stream_id"].as_u64()
     {
         let subject = message["subject"].as_str().unwrap_or_default();
-        let topic = subject.strip_prefix(RESOLVED).unwrap_or(subject);
+        let topic = subject.trim_prefix(RESOLVED);
         let channel = message["display_recipient"].as_str().unwrap_or("?");
         return (
             format!("zulip:{stream_id}:{topic}"),

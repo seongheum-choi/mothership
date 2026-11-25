@@ -23,14 +23,10 @@ impl<S: Surface> Turn<'_, S> {
         tracing::info!(
             "[{}] turn{}: {} {}{} in {}, {}",
             self.key,
-            label.map(|l| format!(" on {l}")).unwrap_or_default(),
+            label.map_or_default(|l| format!(" on {l}")),
             launch.runner,
             models.model,
-            models
-                .effort
-                .as_ref()
-                .map(|e| format!(" ({e})"))
-                .unwrap_or_default(),
+            models.effort.as_ref().map_or_default(|e| format!(" ({e})")),
             launch.cwd.display(),
             launch
                 .resume
@@ -74,7 +70,7 @@ impl<S: Surface> Turn<'_, S> {
             }
             Outcome::Stopped(note) => tracing::info!(
                 "[{key}] turn stopped after {took}{context}{}",
-                note.as_ref().map(|n| format!(": {n}")).unwrap_or_default()
+                note.as_ref().map_or_default(|n| format!(": {n}"))
             ),
         }
         self.reg

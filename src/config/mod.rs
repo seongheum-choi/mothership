@@ -141,16 +141,13 @@ impl Config {
                 )
                 .filter(|path| std::path::Path::new(path).is_file()),
             },
-            mcp_configs: vars
-                .get("MCP_CONFIGS")
-                .map(|list| {
-                    list.split(',')
-                        .map(str::trim)
-                        .filter(|p| !p.is_empty())
-                        .map(PathBuf::from)
-                        .collect()
-                })
-                .unwrap_or_default(),
+            mcp_configs: vars.get("MCP_CONFIGS").map_or_default(|list| {
+                list.split(',')
+                    .map(str::trim)
+                    .filter(|p| !p.is_empty())
+                    .map(PathBuf::from)
+                    .collect()
+            }),
             extra_prompt,
             review: vars
                 .get("REVIEW_BACKEND")

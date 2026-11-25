@@ -419,7 +419,7 @@ The Bash sandbox blocks some things a development host relies on. What has been 
 See [AGENTS.md](AGENTS.md) for the code standards.
 
 ```sh
-mise install          # Rust 1.99 (mise.toml)
+mise install          # Rust 1.100 (mise.toml)
 scripts/check.sh      # fmt, clippy (pedantic, warnings are errors), tests
 git config core.hooksPath .githooks   # run the check before every commit
 cargo run

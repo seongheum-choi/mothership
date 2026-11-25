@@ -101,7 +101,7 @@ async fn origin_url(repo: &Path) -> Option<String> {
 fn same_origin(a: &str, b: &str) -> bool {
     let bare = |u: &str| {
         let u = u.trim_end_matches('/');
-        u.strip_suffix(".git").unwrap_or(u).to_string()
+        u.trim_suffix(".git").to_string()
     };
     bare(a) == bare(b)
 }

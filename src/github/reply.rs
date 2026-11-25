@@ -57,7 +57,7 @@ fn repo_from_remote(url: &str) -> Option<String> {
         None => url.split_once(':')?.1,
     };
     let path = path.trim_end_matches('/');
-    let path = path.strip_suffix(".git").unwrap_or(path);
+    let path = path.trim_suffix(".git");
     match path.split('/').collect::<Vec<_>>()[..] {
         [owner, name] if !owner.is_empty() && !name.is_empty() => Some(format!("{owner}/{name}")),
         _ => None,

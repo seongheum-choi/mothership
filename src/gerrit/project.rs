@@ -62,8 +62,8 @@ fn project_of(origin: &str, gerrit_url: &str) -> Option<String> {
             .unwrap_or(path),
     };
     // `/a/` is the authenticated HTTP path; the project name never starts with it.
-    let path = path.strip_prefix("a/").unwrap_or(path);
-    let project = path.strip_suffix(".git").unwrap_or(path);
+    let path = path.trim_prefix("a/");
+    let project = path.trim_suffix(".git");
     (!project.is_empty()).then(|| project.to_string())
 }
 

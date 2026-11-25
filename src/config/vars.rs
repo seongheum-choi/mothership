@@ -41,7 +41,7 @@ impl Vars {
 
     /// The comma-separated list in `key` (see [`parse_list`]), empty when unset.
     pub(super) fn list(&self, key: &str) -> Vec<String> {
-        self.get(key).map(|l| parse_list(&l)).unwrap_or_default()
+        self.get(key).map_or_default(|l| parse_list(&l))
     }
 
     /// Pair each key with its value, warning about any key that has none so a missing secret
