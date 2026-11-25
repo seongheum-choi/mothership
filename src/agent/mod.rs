@@ -1,10 +1,14 @@
 //! The agent runtime behind a turn: which [`Runner`] it is, its process, the input it takes
-//! and its output as runner-neutral [`Event`]s. `claude.rs` speaks Claude Code's protocol,
-//! `codex.rs` the Codex CLI's, and `limit.rs` when Claude Code's usage limit moves turns to Codex.
+//! and its output as runner-neutral [`Event`]s (`event.rs`). `claude.rs` speaks Claude Code's
+//! protocol, `codex.rs` the Codex CLI's, and `limit.rs` when Claude Code's usage limit moves turns
+//! to Codex.
 
 mod claude;
 mod codex;
+mod event;
 pub mod limit;
+
+pub use event::Event;
 
 use crate::config::AgentConfig;
 use anyhow::{Context, Result};
@@ -52,11 +56,10 @@ impl FromStr for Runner {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, String> {
-        match s {
-            "claude" => Ok(Self::Claude),
-            "codex" => Ok(Self::Codex),
-            _ => Err(format!("{s:?} is not a runner; use claude or codex")),
-        }
+        [Self::Claude, Self::Codex]
+            .into_iter()
+            .find(|runner| runner.name() == s)
+            .ok_or_else(|| format!("{s:?} is not a runner; use claude or codex"))
     }
 }
 
@@ -102,39 +105,6 @@ pub struct Models {
     pub fallback: String,
     /// `None` leaves the flag off, so Claude Code picks.
     pub effort: Option<String>,
-}
-
-#[derive(Debug, PartialEq)]
-pub enum Event {
-    Started {
-        session_id: String,
-    },
-    /// `nested` marks output of a subagent rather than the main agent.
-    Text {
-        text: String,
-        nested: bool,
-    },
-    Tool {
-        name: String,
-        input: Value,
-        nested: bool,
-    },
-    Result {
-        text: String,
-        is_error: bool,
-    },
-    /// How many background tasks (`Agent` calls, background `Bash`) are still running. Claude
-    /// Code wakes the agent when one finishes only while its input is open.
-    Background {
-        live: usize,
-    },
-    /// Token counts of a finished turn, as the runner reports them.
-    Usage(Value),
-    /// Comes right before the failed `Result` of a Claude turn that ended on the account's
-    /// usage limit, with when the limit resets (Unix seconds) if Claude Code said.
-    Limited {
-        resets_at: Option<u64>,
-    },
 }
 
 /// How a runner's output is read: Codex keeps state across lines.
