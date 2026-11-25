@@ -132,7 +132,7 @@ impl App {
         deny.extend(self.tmp.deny_rules(key));
         let settings = |readable: &[PathBuf]| {
             let mut settings = sandbox::settings(
-                &self.home_dir,
+                &self.cfg.user_home,
                 &self.cfg.home,
                 workspace,
                 readable,

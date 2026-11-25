@@ -31,6 +31,8 @@ const DEFAULT_HOST_SANDBOX: &str = if cfg!(target_os = "macos") {
 pub struct Config {
     /// State, worktrees, plugins and per-session files live here.
     pub home: PathBuf,
+    /// The user's `HOME`, which agents may only read where their work is.
+    pub user_home: PathBuf,
     pub bind: String,
     /// Public URL; the Linear OAuth redirect is `<base_url>/callback`.
     pub base_url: String,
@@ -82,7 +84,7 @@ pub struct AgentConfig {
 
 impl Config {
     pub fn load() -> Result<Self> {
-        let user_home = PathBuf::from(std::env::var("HOME").context("HOME is not set")?);
+        let user_home = user_home()?;
         let home = home_of(&user_home);
         let vars = Vars::load(&home);
 
@@ -162,6 +164,7 @@ impl Config {
                 .parse()?,
             tunnel,
             home,
+            user_home,
         })
     }
 
@@ -188,8 +191,13 @@ impl Config {
 /// `MOTHERSHIP_HOME`, or `.mothership` in the user's home: where a running instance keeps its
 /// state, so the CLI finds the instance there too.
 pub fn home() -> Result<PathBuf> {
-    let user_home = PathBuf::from(std::env::var("HOME").context("HOME is not set")?);
-    Ok(home_of(&user_home))
+    Ok(home_of(&user_home()?))
+}
+
+fn user_home() -> Result<PathBuf> {
+    Ok(PathBuf::from(
+        std::env::var("HOME").context("HOME is not set")?,
+    ))
 }
 
 fn home_of(user_home: &Path) -> PathBuf {
