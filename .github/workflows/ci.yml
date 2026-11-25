@@ -23,7 +23,9 @@ jobs:
     env:
       # The image the sandbox run tests in src/host/container.rs start; pinned so a new busybox
       # cannot change what they test.
-      MOTHERSHIP_TEST_SANDBOX_IMAGE: busybox:1.37@sha256:a7dbc319b1438115a207e11930dc4bb3e643dcb3ec0bdd694bb36cd8fad289ec
+      MOTHERSHIP_TEST_SANDBOX_IMAGE: busybox@sha256:a46257e06c82ad85242d0d38077d0a52d9896389ca60a1a59d3463db586e5fa4
+      # GitHub's runner has Docker, not rootless nerdctl; the container flags are the same.
+      MOTHERSHIP_TEST_CONTAINER_RUNTIME: docker
     steps:
       - uses: actions/checkout@v7
       # Installs the Rust toolchain pinned in mise.toml, so CI and local builds use the same compiler.
