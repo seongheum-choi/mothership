@@ -188,12 +188,7 @@ impl App {
     /// The `PATH` agent processes get, when `AGENT_ENV` carries one. Without it they inherit this
     /// process's, which [`limit::locate`] falls back to.
     pub fn agent_path(&self) -> Option<String> {
-        self.cfg
-            .agent_env
-            .iter()
-            .rev()
-            .find(|(key, _)| key == "PATH")
-            .map(|(_, path)| path.clone())
+        crate::config::last_value(&self.cfg.agent_env, "PATH").map(str::to_owned)
     }
 
     /// The instance's model defaults as of the last [`Self::refresh`]; every entry point that

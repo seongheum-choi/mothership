@@ -11,6 +11,7 @@ pub use reload::Live;
 pub use surfaces::{
     GerritConfig, GitHubAppConfig, GitHubConfig, LinearConfig, ZulipConfig, trusts,
 };
+pub use vars::last_value;
 
 use crate::{review::ReviewBackend, sandbox, store::Tokens, tunnel::Tunnel};
 use anyhow::{Context, Result};

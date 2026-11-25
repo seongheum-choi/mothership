@@ -57,6 +57,15 @@ impl Vars {
     }
 }
 
+/// The value of `key` in an environment list: the last one, as a process given the list in
+/// order would see it.
+pub fn last_value<'a>(env: &'a [(String, String)], key: &str) -> Option<&'a str> {
+    env.iter()
+        .rev()
+        .find(|(k, _)| k == key)
+        .map(|(_, v)| v.as_str())
+}
+
 /// Split a comma-separated list (`AGENT_ENV`, `GITHUB_TRUSTED_LOGINS`): trimmed, empties
 /// dropped, first occurrence of each kept.
 pub(super) fn parse_list(list: &str) -> Vec<String> {
@@ -143,8 +152,16 @@ fn parse_env(text: &str) -> HashMap<String, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_env, parse_home_entries, parse_list, parse_paths};
+    use super::{last_value, parse_env, parse_home_entries, parse_list, parse_paths};
     use std::path::{Path, PathBuf};
+
+    #[test]
+    fn the_last_value_of_a_key_wins() {
+        let env = [("A", "1"), ("B", "2"), ("A", "3")].map(|(k, v)| (k.into(), v.into()));
+        assert_eq!(last_value(&env, "A"), Some("3"));
+        assert_eq!(last_value(&env, "B"), Some("2"));
+        assert_eq!(last_value(&env, "C"), None);
+    }
 
     #[test]
     fn reads_env_lines() {

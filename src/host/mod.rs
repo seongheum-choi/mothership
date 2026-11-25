@@ -102,15 +102,8 @@ pub fn reset_run_root(state: &Path) -> std::io::Result<()> {
 
 /// `CODEX_HOME` as agents get it, or `~/.codex`.
 pub fn codex_home(app: &App) -> PathBuf {
-    app.cfg
-        .agent_env
-        .iter()
-        .rev()
-        .find(|(key, _)| key == "CODEX_HOME")
-        .map_or_else(
-            || app.home_dir.join(".codex"),
-            |(_, home)| PathBuf::from(home),
-        )
+    crate::config::last_value(&app.cfg.agent_env, "CODEX_HOME")
+        .map_or_else(|| app.home_dir.join(".codex"), PathBuf::from)
 }
 
 /// A run's environment: the agent's, less what `settings` hide from Bash (the Claude Code
