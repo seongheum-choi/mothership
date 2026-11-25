@@ -116,10 +116,11 @@ fn git_dir_rules(clone_git: &Path, git_dir: &Path) -> Vec<String> {
     rules
 }
 
-const READ: &str = "Read";
-/// Claude Code checks file edits against `Edit` rules only; a `Write` or `NotebookEdit` rule is
-/// never consulted and warns at startup.
-const EDIT: &str = "Edit";
+/// The tool of rules that deny reading, here and in [`crate::host`]'s sandboxes.
+pub(crate) const READ: &str = "Read";
+/// The tool of rules that deny writing. Claude Code checks file edits against `Edit` rules
+/// only; a `Write` or `NotebookEdit` rule is never consulted and warns at startup.
+pub(crate) const EDIT: &str = "Edit";
 
 /// `Read` and `Edit` rules for every entry under `root` but `own`: other sessions' directories
 /// beside a session's own outside `MOTHERSHIP_HOME`.
