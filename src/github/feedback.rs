@@ -1,7 +1,7 @@
 //! What a GitHub event says: the review or comment, and whether it may reach an agent.
 
 use super::reply::MARKER;
-use crate::{config::GitHubConfig, store::PullRequestRef};
+use crate::{config::GitHubConfig, review::text, store::PullRequestRef};
 use serde_json::Value;
 
 #[derive(Debug, PartialEq)]
@@ -173,14 +173,7 @@ fn trusts(cfg: &GitHubConfig, login: &str) -> bool {
 /// logins are letters, digits and hyphens, so `@login-2` is another account and `x@login` an
 /// address, not a mention.
 fn mentions(text: &str, login: &str) -> bool {
-    let lower = text.to_ascii_lowercase();
-    let needle = format!("@{}", login.to_ascii_lowercase());
-    let login_char = |c: char| c.is_ascii_alphanumeric() || c == '-';
-    lower.match_indices(&needle).any(|(i, _)| {
-        let before = lower[..i].chars().next_back();
-        let after = lower[i + needle.len()..].chars().next();
-        !before.is_some_and(login_char) && !after.is_some_and(login_char)
-    })
+    text::mentions(text, login, |c| c.is_ascii_alphanumeric() || c == '-')
 }
 
 #[cfg(test)]

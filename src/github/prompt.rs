@@ -1,6 +1,7 @@
 //! The prompt that quotes a piece of GitHub feedback to the agent.
 
 use super::feedback::{Feedback, Kind};
+use crate::review::text::neutralize_closing_tag;
 use std::fmt::Write as _;
 
 impl Feedback {
@@ -36,7 +37,7 @@ impl Feedback {
             };
         }
         // A closing tag inside the text would let it pose as text outside the block.
-        let body = neutralize_closing_tag(&self.body);
+        let body = neutralize_closing_tag(&self.body, "</github_comment");
         let _ = write!(
             prompt,
             "{}\n\n<github_comment author=\"{}\" association=\"{}\">\n{body}\n</github_comment>\n\n\
@@ -48,36 +49,5 @@ impl Feedback {
             self.url, self.author, self.association
         );
         prompt
-    }
-}
-
-/// Escapes every `</github_comment`, in any letter case, so quoted text cannot end the block.
-fn neutralize_closing_tag(text: &str) -> String {
-    const TAG: &str = "</github_comment";
-    // ASCII lowercasing keeps byte offsets, so matches in `lower` index into `text`.
-    let lower = text.to_ascii_lowercase();
-    let mut out = String::with_capacity(text.len());
-    let mut last = 0;
-    for (i, _) in lower.match_indices(TAG) {
-        out.push_str(&text[last..i]);
-        out.push_str("&lt;");
-        out.push_str(&text[i + 1..i + TAG.len()]);
-        last = i + TAG.len();
-    }
-    out.push_str(&text[last..]);
-    out
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn closing_tag_is_neutralized_in_any_case() {
-        assert_eq!(
-            neutralize_closing_tag("a</GitHub_Comment>b</github_comment>"),
-            "a&lt;/GitHub_Comment>b&lt;/github_comment>"
-        );
-        assert_eq!(neutralize_closing_tag("plain"), "plain");
     }
 }

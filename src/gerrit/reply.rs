@@ -1,10 +1,7 @@
 //! The `gerrit-reply` wrapper agents answer review on Gerrit with.
 
-use anyhow::{Context, Result};
-use std::{
-    os::unix::fs::PermissionsExt,
-    path::{Path, PathBuf},
-};
+use anyhow::Result;
+use std::path::{Path, PathBuf};
 
 /// The review tag `gerrit-reply` posts with. Gerrit shows a tag on nothing, unlike an HTML
 /// marker in the text, and copies it to the review's message and comments, so mothership can
@@ -14,15 +11,7 @@ pub(super) const TAG: &str = "mothership";
 /// Writes `<home>/gerrit-reply/gerrit-reply` and returns its directory, which goes first on
 /// agents' `PATH`.
 pub(super) fn install(home: &Path) -> Result<PathBuf> {
-    // A directory of its own: it goes first on agents' PATH, so nothing else may live there.
-    let bin_dir = home.join("gerrit-reply");
-    std::fs::create_dir_all(&bin_dir).with_context(|| format!("creating {}", bin_dir.display()))?;
-    let script = bin_dir.join("gerrit-reply");
-    std::fs::write(&script, reply_script())
-        .with_context(|| format!("writing {}", script.display()))?;
-    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755))
-        .with_context(|| format!("making {} executable", script.display()))?;
-    Ok(bin_dir)
+    crate::review::install_reply(home, "gerrit-reply", &reply_script())
 }
 
 /// `gerrit-reply <change> <patch-set> [<comment-id> <path> [<line>] | --new <path> <line>]`,

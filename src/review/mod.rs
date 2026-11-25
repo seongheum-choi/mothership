@@ -3,11 +3,16 @@
 //! it continues and hand it to [`intake`].
 
 pub mod intake;
+pub mod text;
 
 use crate::repos::Repo;
-use anyhow::bail;
+use anyhow::{Context, Result, bail};
 use serde::Deserialize;
-use std::str::FromStr;
+use std::{
+    os::unix::fs::PermissionsExt,
+    path::{Path, PathBuf},
+    str::FromStr,
+};
 
 /// `REVIEW_BACKEND`, or a `repos.json` entry's `review_backend`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
@@ -51,6 +56,20 @@ impl FromStr for ReviewBackend {
             other => bail!("unknown REVIEW_BACKEND {other:?} (supported: github, gerrit)"),
         }
     }
+}
+
+/// Writes the reply wrapper `script` to `<home>/<name>/<name>` and returns its directory, which
+/// goes first on agents' `PATH`.
+pub fn install_reply(home: &Path, name: &str, script: &str) -> Result<PathBuf> {
+    // A directory of its own: it goes first on agents' PATH, so nothing else may live there.
+    let bin_dir = home.join(name);
+    std::fs::create_dir_all(&bin_dir).with_context(|| format!("creating {}", bin_dir.display()))?;
+    let script_path = bin_dir.join(name);
+    std::fs::write(&script_path, script)
+        .with_context(|| format!("writing {}", script_path.display()))?;
+    std::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o755))
+        .with_context(|| format!("making {} executable", script_path.display()))?;
+    Ok(bin_dir)
 }
 
 /// Warns about the git repositories that review in Gerrit while `GERRIT_URL` is unset: their

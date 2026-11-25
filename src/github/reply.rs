@@ -2,28 +2,17 @@
 //! `origin` points at.
 
 use anyhow::{Context, Result, bail};
-use std::{
-    os::unix::fs::PermissionsExt,
-    path::{Path, PathBuf},
-};
+use std::path::{Path, PathBuf};
 
 /// Hidden marker `gh-reply` appends to every reply. The agent posts as the owner's own
 /// account, so neither login nor bot type tells its replies apart from the owner's.
 // ponytail: once agents post with a GitHub App user token (SH-198), check `performed_via_github_app` instead.
 pub(super) const MARKER: &str = "<!-- mothership -->";
 
-/// Writes `<home>/gh-reply/gh-reply` and returns its directory, which goes first on agents'
-/// `PATH`.
+/// Writes `<home>/gh-reply/gh-reply` and returns its directory, which goes first on
+/// agents' `PATH`.
 pub(super) fn install(home: &Path) -> Result<PathBuf> {
-    // A directory of its own: it goes first on agents' PATH, so nothing else may live there.
-    let bin_dir = home.join("gh-reply");
-    std::fs::create_dir_all(&bin_dir).with_context(|| format!("creating {}", bin_dir.display()))?;
-    let script = bin_dir.join("gh-reply");
-    std::fs::write(&script, reply_script())
-        .with_context(|| format!("writing {}", script.display()))?;
-    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755))
-        .with_context(|| format!("making {} executable", script.display()))?;
-    Ok(bin_dir)
+    crate::review::install_reply(home, "gh-reply", &reply_script())
 }
 
 /// `owner/name` of the `origin` remote of the clone at `path`.

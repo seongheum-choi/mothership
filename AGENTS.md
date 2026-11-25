@@ -41,7 +41,7 @@ One file, one responsibility. A file's logic, everything before `#[cfg(test)]` m
 | `sessions.rs` | Session lookups shared by surfaces: a pre-routing session's repository, the session that owns a pull request or a Gerrit topic |
 | `worktree.rs` | Git worktrees per issue |
 | `sandbox.rs` | Home directory read restrictions, `MOTHERSHIP_HOME` edit restrictions and Bash's network allowlist |
-| `review/` | Review systems: `ReviewBackend` and the delivery instructions it gives agents (`mod.rs`), review feedback continuing a Linear session, with its hourly prompt cap per session (`intake.rs`) |
+| `review/` | Review systems: `ReviewBackend`, the delivery instructions it gives agents and installing the reply wrappers they answer review with (`mod.rs`), untrusted review text: a closing tag that would end its quote block, and whether it mentions the agent (`text.rs`), review feedback continuing a Linear session, with its hourly prompt cap per session (`intake.rs`) |
 | `tunnel.rs` | Extension point for ingress |
 
 ## How a prompt becomes a turn
