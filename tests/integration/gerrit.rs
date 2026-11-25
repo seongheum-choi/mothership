@@ -73,7 +73,6 @@ impl GerritMock {
         f(&self.recorded.lock().expect("gerrit mock poisoned"))
     }
 
-    /// Sets what change `number`'s messages and comments are.
     pub fn set_review(&self, number: u64, messages: Value, comments: Value) {
         let mut recorded = self.recorded.lock().expect("gerrit mock poisoned");
         recorded.messages.insert(number.to_string(), messages);

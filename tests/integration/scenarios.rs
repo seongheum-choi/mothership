@@ -309,7 +309,6 @@ pub(crate) fn argv(call: &Value) -> Vec<String> {
         .collect()
 }
 
-/// The value after the first `name` in `args`.
 pub(crate) fn flag<'a>(args: &'a [String], name: &str) -> Result<&'a str> {
     args.windows(2)
         .find(|w| w[0] == name)
@@ -2258,10 +2257,8 @@ async fn model_labels_beat_the_mode_and_bad_ones_are_ignored(ctx: Ctx) -> Result
     Ok(())
 }
 
-/// How long to wait for what a host run does. The wait spans a turn's start, the watcher's
-/// poll of up to a second, and two more starts of this test binary (as `sandbox-exec` and as
-/// `codex` or `sh`): more than any other wait here, so it ran out of the usual 15s under load
-/// that made a turn alone take 12s to start.
+/// How long to wait for what a host run does: a turn's start, the watcher's poll of up to a
+/// second and two more starts of this test binary, which under load outlast the usual 15s.
 const HOST_RUN_PATIENCE: Duration = Duration::from_secs(30);
 
 /// A Codex run the agent asks for in `MOTHERSHIP_RUNS` runs under `HOST_SANDBOX` with a profile

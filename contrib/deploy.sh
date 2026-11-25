@@ -52,9 +52,8 @@ codesign --force --sign "$identity" --keychain "$keychain" --identifier mothersh
     target/release/mothership
 codesign --verify target/release/mothership
 
-# A restart kills running agents, so wait until no turn is running, draining only once idle
-# and for at most HOLD_LIMIT seconds (see contrib/wait-idle.sh). If this script stops while the
-# drain holds turns, SIGUSR2 lets them start.
+# A restart kills running agents, so wait for idle first (see contrib/wait-idle.sh); the EXIT
+# trap ends a drain this script leaves behind.
 service=gui/$(id -u)/$label
 drain() { launchctl kill SIGUSR1 "$service"; }
 undrain() { launchctl kill SIGUSR2 "$service"; }

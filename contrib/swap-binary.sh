@@ -3,13 +3,14 @@
 # service manager and `logs` (where the service's last log lines are) and call `keep_previous`
 # before building and `swap_binary` after.
 #
-# `keep_previous` keeps the binary in place as `<bin>.prev`. It runs before the build because
-# `bin` may be the build output itself, which the build overwrites with the new binary. If `/status` does
-# not report the new commit within `answer_timeout` seconds, `.prev` goes back in place and the
-# service restarts again, so a binary that dies at start does not leave the instance down.
+# `keep_previous` copies the binary to `<bin>.prev` before the build, because `bin` may be the
+# build output itself. If `/status` does not report the new commit within `answer_timeout`
+# seconds, `.prev` goes back in place, so a binary that dies at start does not leave the instance
+# down.
 #
-# Inputs: bin, commit, status_url, answer_timeout. `keep_previous` needs only bin. `swap_binary <new binary>` returns 0 once the
-# new commit answers and 1 otherwise, whether or not the rollback brought the old one back.
+# Inputs: bin, commit, status_url, answer_timeout; `keep_previous` needs only bin.
+# `swap_binary <new binary>` returns 0 once the new commit answers and 1 otherwise, whether or
+# not the rollback brought the old one back.
 
 answer_timeout=${answer_timeout:-30}
 
