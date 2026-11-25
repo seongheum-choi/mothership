@@ -67,8 +67,6 @@ impl Linear {
     }
 }
 
-/// Whether `ws` may be pinned, given the `LINEAR_WORKSPACE` setting and the workspace
-/// already pinned, if any.
 fn check_pin(want: Option<&str>, pinned: Option<&Workspace>, ws: &Workspace) -> Result<()> {
     if let Some(want) = want
         && !ws.is(want)

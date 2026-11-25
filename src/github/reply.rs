@@ -6,11 +6,11 @@ use std::path::{Path, PathBuf};
 
 /// Hidden marker `gh-reply` appends to every reply. The agent posts as the owner's own
 /// account, so neither login nor bot type tells its replies apart from the owner's.
-// ponytail: once agents post with a GitHub App user token (SH-198), check `performed_via_github_app` instead.
+// ponytail: once agents post with a GitHub App user token, check `performed_via_github_app`
+// instead.
 pub(super) const MARKER: &str = "<!-- mothership -->";
 
-/// Writes `<home>/gh-reply/gh-reply` and returns its directory, which goes first on
-/// agents' `PATH`.
+/// Writes `<home>/gh-reply/gh-reply` and returns its directory.
 pub(super) fn install(home: &Path) -> Result<PathBuf> {
     crate::review::install_reply(home, "gh-reply", &reply_script())
 }

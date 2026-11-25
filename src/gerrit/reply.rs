@@ -8,18 +8,16 @@ use std::path::{Path, PathBuf};
 /// tell the agent's own replies from new feedback.
 pub(super) const TAG: &str = "mothership";
 
-/// Writes `<home>/gerrit-reply/gerrit-reply` and returns its directory, which goes first on
-/// agents' `PATH`.
+/// Writes `<home>/gerrit-reply/gerrit-reply` and returns its directory.
 pub(super) fn install(home: &Path) -> Result<PathBuf> {
     crate::review::install_reply(home, "gerrit-reply", &reply_script())
 }
 
 /// `gerrit-reply <change> <patch-set> [<comment-id> <path> [<line>] | --new <path> <line>]`,
-/// body on stdin: a reply that resolves the comment's thread, a new comment on the line that
-/// leaves its thread open for an answer, or else a review message on the patch set. `--new`
-/// marks the new comment: by argument count alone it would read as a reply. Posted to
-/// `POST /a/changes/{change}/revisions/{patch-set}/review` with [`TAG`], with the credentials
-/// from the environment, which reach curl on its standard input rather than its command line.
+/// body on stdin: a reply that resolves the comment's thread, a new unresolved comment on the
+/// line, or else a review message on the patch set. `--new` marks the new comment, which by
+/// argument count alone would read as a reply. The credentials reach curl on its standard input
+/// rather than its command line.
 fn reply_script() -> String {
     format!(
         r#"#!/bin/sh

@@ -46,8 +46,7 @@ impl Linear {
 
     /// Posts `body` under the root comment of `issue`'s newest session of this instance and
     /// runs it as that session's next turn, as a reply in the thread would. With `dry_run`,
-    /// only says where it would go. Refuses, writing nothing, an empty body or a session
-    /// without a root comment.
+    /// only says where it would go.
     pub async fn session_reply(
         &self,
         app: &Arc<App>,

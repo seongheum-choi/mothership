@@ -53,8 +53,7 @@ struct Origin {
 struct Origins(Vec<Origin>);
 
 impl Origins {
-    /// Resolves the origins of the git repositories; a repository whose origin is not
-    /// `owner/name` is left out.
+    /// A repository whose origin is not `owner/name` is left out.
     fn resolve(repos: &[Repo]) -> Self {
         let mut origins = Vec::new();
         for repo in repos.iter().filter(|r| r.git) {
@@ -92,7 +91,6 @@ impl Origins {
     }
 }
 
-/// Runtime state of the GitHub surface.
 pub struct GitHub {
     /// Origins of the git repositories; events from any other repository are ignored.
     origins: RwLock<Arc<Origins>>,
@@ -103,8 +101,7 @@ pub struct GitHub {
 }
 
 impl GitHub {
-    /// Resolves the origins of the git repositories and installs `<home>/gh-reply/gh-reply`.
-    /// No origin at all is an error.
+    /// Installs `<home>/gh-reply/gh-reply`; no origin at all is an error.
     pub fn new(repos: &[Repo], home: &Path) -> Result<Self> {
         let origins = Origins::resolve(repos);
         if origins.0.is_empty() {
@@ -193,8 +190,8 @@ async fn webhook(State(app): State<Arc<App>>, headers: HeaderMap, body: Bytes) -
     };
     app.refresh();
     if let Err(reason) = feedback.screen(!github.origins().names(&feedback.repo).is_empty(), cfg) {
-        // Who and what kind only: the text is untrusted and may be long. Debug: most review
-        // traffic is not for the agent, and at info it buried everything else in the log.
+        // Who and what kind only: the text is untrusted and may be long. Debug, since most
+        // review traffic is not for the agent.
         tracing::debug!(
             "github {} by @{} ({}): {reason}, ignored",
             feedback.kind.label(),
@@ -233,8 +230,7 @@ mod tests {
         assert!(!verify("s", body, ""), "missing header");
     }
 
-    /// Repositories `app` and `site` (both on `o/r`, say a second clone on another base branch)
-    /// and `lib` on `o/lib`.
+    /// `app` and `site` share `o/r`, as a second clone on another base branch would.
     pub(super) fn origins() -> Origins {
         let origin = |name: &str, full_name: &str| Origin {
             name: name.into(),

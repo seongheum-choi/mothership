@@ -31,7 +31,6 @@ use std::{
     sync::{Arc, Mutex, RwLock},
 };
 
-/// Runtime state of the Gerrit backend.
 pub struct Gerrit {
     /// Holds `gerrit-reply`; put first on agents' `PATH`.
     pub bin_dir: PathBuf,
@@ -114,9 +113,10 @@ async fn webhook(State(app): State<Arc<App>>, headers: HeaderMap, body: Bytes) -
     StatusCode::OK
 }
 
-/// Adds what an agent needs to push to and answer on Gerrit to its environment `env`: the URL,
-/// the account's HTTP credentials, and a git credential helper that hands them to git for URLs
-/// under `GERRIT_URL` only, in place of any helper the global or system config has there. `inherited` is the `GIT_CONFIG_COUNT` the agent would otherwise get.
+/// Adds what an agent needs to push to and answer on Gerrit to `env`: the URL, the account's
+/// HTTP credentials, and a git credential helper that hands them to git for URLs under
+/// `GERRIT_URL` only, in place of any helper the global or system config has there.
+/// `inherited` is the `GIT_CONFIG_COUNT` the agent would otherwise get.
 pub fn agent_env(cfg: &GerritConfig, env: &mut Vec<(String, String)>, inherited: Option<String>) {
     // Configuration through the environment adds to entries `AGENT_ENV` or mothership's own
     // environment already numbered, instead of replacing them.
@@ -144,8 +144,8 @@ pub fn agent_env(cfg: &GerritConfig, env: &mut Vec<(String, String)>, inherited:
 }
 
 /// Environment for the git mothership itself runs against `origin`, such as the fetch before a
-/// worktree is cut: with Gerrit on, the credentials and helper agents get, so an `origin` under
-/// `GERRIT_URL` answers it; without Gerrit, nothing, and git runs as it always did.
+/// worktree is cut: the credentials and helper agents get, so an `origin` under `GERRIT_URL`
+/// answers it; empty without Gerrit.
 pub fn git_env(cfg: Option<&GerritConfig>) -> Vec<(String, String)> {
     let mut env = Vec::new();
     if let Some(cfg) = cfg {

@@ -14,9 +14,8 @@ use std::sync::Arc;
 /// How the reply that no Linear issue was found begins, and how mothership knows it again.
 const NO_ISSUE: &str = "I couldn't find the Linear issue for this pull request";
 
-/// Opens a Linear session for the pull request of `feedback` and starts its first turn with
-/// the feedback, or answers on GitHub that no Linear issue was found. `names` are the
-/// repositories whose origin the pull request is in.
+/// Opens a session for the pull request, or answers that no Linear issue was found; `names` are
+/// the repositories whose origin the pull request is in.
 pub(super) async fn open(app: Arc<App>, feedback: Feedback, head: Head, names: &[&str]) {
     let pr_url = &feedback.pr_url;
     let Some(issue) = find_issue(&app, &feedback, &head).await else {
@@ -207,7 +206,6 @@ async fn reply(app: &App, feedback: &Feedback, text: &str) -> Result<()> {
     Ok(())
 }
 
-/// Runs `gh <args>` in the clone of the pull request's repository and returns its output.
 async fn gh(app: &App, feedback: &Feedback, args: &[&str]) -> Result<Vec<u8>> {
     let github = app.github.as_ref().context("github feedback is off")?;
     github.gh(&feedback.repo, args).await

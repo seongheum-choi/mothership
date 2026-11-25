@@ -43,7 +43,7 @@ impl Linear {
     }
 
     /// Opens a Linear session on the issue for the pull request, records it, and starts its
-    /// first turn with the opening's prompt. Returns the session id.
+    /// first turn with the opening's prompt.
     pub async fn open_for_pull_request(
         &self,
         app: &Arc<App>,

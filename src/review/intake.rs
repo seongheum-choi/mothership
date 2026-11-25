@@ -66,9 +66,8 @@ pub struct Prompt<'a> {
     pub text: String,
 }
 
-/// Starts a turn on `sid` with `prompt` unless `budget` has paused the session. The first
-/// refusal of a pause stops the running turn and tells the session why. Returns whether the
-/// prompt was submitted.
+/// Starts a turn unless `budget` has paused the session, whose first refusal stops the running
+/// turn and tells the session why. Returns whether the prompt was submitted.
 pub async fn submit(app: &Arc<App>, sid: &str, budget: &Mutex<Budget>, prompt: Prompt<'_>) -> bool {
     let Prompt {
         source,
