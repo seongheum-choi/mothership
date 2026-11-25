@@ -10,12 +10,14 @@ mod command;
 mod container;
 mod process;
 mod request;
+mod runtime;
 mod sandbox;
 mod seatbelt;
 mod seccomp;
 
 pub use codex::{CodexHome, runner as codex_runner};
 pub use command::prompt as commands_prompt;
+pub use runtime::Runtime;
 pub use sandbox::prompt as sandbox_prompt;
 
 use crate::app::App;
@@ -26,6 +28,7 @@ use std::{
     fs::File,
     io::Write,
     path::{Path, PathBuf},
+    sync::Arc,
     time::Duration,
 };
 
@@ -65,8 +68,8 @@ pub struct Host {
     pub sandbox: String,
     /// The repository's `sandbox_image`, for `sandbox` runs; `None` refuses them.
     pub sandbox_image: Option<String>,
-    /// `CONTAINER_RUNTIME`, which starts `sandbox` runs' containers.
-    pub container_runtime: String,
+    /// `CONTAINER_RUNTIME`, which starts `sandbox` runs' containers, shared by every session.
+    pub container_runtime: Arc<Runtime>,
 }
 
 /// Paths a Codex run reads besides the session's: Codex's home (its login and config) and

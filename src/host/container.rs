@@ -7,27 +7,13 @@ use super::{
     Host,
     process::{keep_end, tail},
     request,
+    runtime::RUNTIME_ENV,
     sandbox::{SandboxRun, run_args},
 };
 use serde_json::{Map, Value, json};
 use std::{process::Stdio, time::Duration};
 use tokio::process::Command;
 
-/// Of mothership's environment, what the runtime CLI gets to find its daemon. The container
-/// gets none of it.
-const RUNTIME_ENV: [&str; 10] = [
-    "PATH",
-    "HOME",
-    // Where rootless nerdctl finds its containerd and rootlesskit.
-    "XDG_RUNTIME_DIR",
-    "CONTAINERD_ADDRESS",
-    "CONTAINERD_NAMESPACE",
-    "CONTAINERD_SNAPSHOTTER",
-    "NERDCTL_TOML",
-    "DOCKER_HOST",
-    "DOCKER_CONTEXT",
-    "DOCKER_CONFIG",
-];
 /// The most one artifact, and all of a run's together, may take.
 const PER_FILE: u64 = 16 << 20;
 const TOTAL: u64 = 64 << 20;
@@ -46,15 +32,17 @@ impl Host {
         )?;
         let name = format!("mothership-sandbox-{}", request::unique());
         let args = run_args(&name, image, &self.cwd, &run.limits)?;
+        // Declared before the container, so the runtime is held until it is removed.
+        let _lease = self.container_runtime.acquire().await?;
         // Before it starts, so a run cut short at any point still removes it.
         let _container = Container {
-            runtime: self.container_runtime.clone(),
+            runtime: self.container_runtime.cli.clone(),
             name: name.clone(),
         };
         let started = tokio::time::timeout(STEP, self.runtime().args(&args).output())
             .await
             .map_err(|_| "the container did not start within two minutes".to_string())?
-            .map_err(|e| format!("cannot start {}: {e}", self.container_runtime))?;
+            .map_err(|e| format!("cannot start {}: {e}", self.container_runtime.cli))?;
         if !started.status.success() {
             return Err(format!(
                 "cannot start a container from {image}: {}",
@@ -64,7 +52,7 @@ impl Host {
         let mut child = (self.runtime())
             .args(["exec", &name, "/bin/sh", "-c", SCRIPT, "sh", &run.command])
             .spawn()
-            .map_err(|e| format!("cannot start {}: {e}", self.container_runtime))?;
+            .map_err(|e| format!("cannot start {}: {e}", self.container_runtime.cli))?;
         let output = tokio::spawn(keep_end(child.stdout.take()));
         // Only the CLI's own complaints: the command's stderr is in its stdout.
         let complaints = tokio::spawn(keep_end(child.stderr.take()));
@@ -161,21 +149,8 @@ impl Host {
         Ok(out.stdout)
     }
 
-    /// The runtime CLI with only [`RUNTIME_ENV`], its output read, killed when dropped.
     fn runtime(&self) -> Command {
-        let mut command = Command::new(&self.container_runtime);
-        command
-            .env_clear()
-            .envs(
-                RUNTIME_ENV
-                    .iter()
-                    .filter_map(|k| Some((k, std::env::var_os(k)?))),
-            )
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true);
-        command
+        self.container_runtime.command()
     }
 }
 
@@ -209,10 +184,10 @@ impl Drop for Container {
 mod tests {
     use super::*;
     use crate::host::{
-        CodexHome,
+        CodexHome, Runtime,
         sandbox::{CEILING, Limits},
     };
-    use std::path::PathBuf;
+    use std::{path::PathBuf, sync::Arc};
 
     /// A session's runs directory and a workspace with a file in it, for a repository with
     /// `image`.
@@ -240,7 +215,7 @@ mod tests {
             },
             sandbox: String::new(),
             sandbox_image: image.map(String::from),
-            container_runtime: runtime.into(),
+            container_runtime: Arc::new(Runtime::new(runtime.into(), None, None, Duration::ZERO)),
         }
     }
 

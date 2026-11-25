@@ -79,6 +79,13 @@ pub struct AgentConfig {
     /// `CONTAINER_RUNTIME`: nerdctl, or another Docker-compatible CLI, starting `sandbox` runs'
     /// containers.
     pub container_runtime: String,
+    /// `CONTAINER_START`: a shell command, such as `colima start`, that starts the runtime when
+    /// a sandbox run finds it down.
+    pub container_start: Option<String>,
+    /// `CONTAINER_STOP`: a shell command that stops a runtime `CONTAINER_START` started.
+    pub container_stop: Option<String>,
+    /// `CONTAINER_IDLE`: how long after the last sandbox run that is.
+    pub container_idle: Duration,
 }
 
 impl Config {
@@ -142,6 +149,9 @@ impl Config {
                 container_runtime: vars
                     .get("CONTAINER_RUNTIME")
                     .unwrap_or_else(|| "nerdctl".into()),
+                container_start: vars.get("CONTAINER_START"),
+                container_stop: vars.get("CONTAINER_STOP"),
+                container_idle: seconds(&vars, "CONTAINER_IDLE", 1800)?,
             },
             mcp_configs: vars.get("MCP_CONFIGS").map_or_default(|list| {
                 list.split(',')

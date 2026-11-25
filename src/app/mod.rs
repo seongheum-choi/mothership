@@ -47,6 +47,8 @@ pub struct App {
     pub gerrit: Option<Gerrit>,
     /// Where each session's `TMPDIR` is.
     pub tmp: TmpRoot,
+    /// What `sandbox` runs start their containers through, and whether mothership started it.
+    pub container_runtime: Arc<crate::host::Runtime>,
     /// Sessions on the same issue share a worktree; one agent at a time per workspace.
     workspace_locks: Mutex<HashMap<PathBuf, Arc<tokio::sync::Mutex<()>>>>,
     /// New turns wait for a restart instead of starting (SIGUSR1, until SIGUSR2).
@@ -96,6 +98,12 @@ impl App {
             github_user: cfg.github_app.clone().map(UserToken::new),
             gerrit,
             tmp,
+            container_runtime: Arc::new(crate::host::Runtime::new(
+                cfg.agent.container_runtime.clone(),
+                cfg.agent.container_start.clone(),
+                cfg.agent.container_stop.clone(),
+                cfg.agent.container_idle,
+            )),
             workspace_locks: Mutex::default(),
             draining: AtomicBool::new(false),
             cfg,
