@@ -120,11 +120,8 @@ async fn webhook(State(app): State<Arc<App>>, headers: HeaderMap, body: Bytes) -
 pub fn agent_env(cfg: &GerritConfig, env: &mut Vec<(String, String)>, inherited: Option<String>) {
     // Configuration through the environment adds to entries `AGENT_ENV` or mothership's own
     // environment already numbered, instead of replacing them.
-    let count = env
-        .iter()
-        .rev()
-        .find(|(k, _)| k == "GIT_CONFIG_COUNT")
-        .map(|(_, v)| v.clone())
+    let count = crate::config::last_value(env, "GIT_CONFIG_COUNT")
+        .map(str::to_owned)
         .or(inherited)
         .and_then(|v| v.trim().parse::<usize>().ok())
         .unwrap_or(0);
@@ -165,6 +162,7 @@ const CREDENTIAL_HELPER: &str = "!f() { if [ \"$1\" = get ]; then printf 'userna
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::last_value;
 
     pub(super) fn cfg() -> GerritConfig {
         GerritConfig {
@@ -196,49 +194,49 @@ mod tests {
         Event::parse(&comment_added()).expect("comment-added parses")
     }
 
-    fn get<'a>(env: &'a [(String, String)], key: &str) -> Option<&'a str> {
-        env.iter()
-            .rev()
-            .find(|(k, _)| k == key)
-            .map(|(_, v)| v.as_str())
-    }
-
     #[test]
     fn git_env_without_gerrit_changes_nothing() {
         assert_eq!(git_env(None), Vec::<(String, String)>::new());
         let env = git_env(Some(&cfg()));
-        assert_eq!(get(&env, "GERRIT_USERNAME"), Some("acme-bot"));
-        assert!(get(&env, "GIT_CONFIG_COUNT").is_some());
+        assert_eq!(last_value(&env, "GERRIT_USERNAME"), Some("acme-bot"));
+        assert!(last_value(&env, "GIT_CONFIG_COUNT").is_some());
     }
 
     #[test]
     fn credential_helper_takes_the_next_free_git_config_slot() {
         let mut env = Vec::new();
         agent_env(&cfg(), &mut env, None);
-        assert_eq!(get(&env, "GIT_CONFIG_COUNT"), Some("2"));
+        assert_eq!(last_value(&env, "GIT_CONFIG_COUNT"), Some("2"));
         for key in ["GIT_CONFIG_KEY_0", "GIT_CONFIG_KEY_1"] {
             assert_eq!(
-                get(&env, key),
+                last_value(&env, key),
                 Some("credential.https://gerrit.example.com.helper")
             );
         }
         assert_eq!(
-            get(&env, "GIT_CONFIG_VALUE_0"),
+            last_value(&env, "GIT_CONFIG_VALUE_0"),
             Some(""),
             "empties the list"
         );
-        assert_eq!(get(&env, "GIT_CONFIG_VALUE_1"), Some(CREDENTIAL_HELPER));
-        assert_eq!(get(&env, "GERRIT_HTTP_PASSWORD"), Some("secret"));
+        assert_eq!(
+            last_value(&env, "GIT_CONFIG_VALUE_1"),
+            Some(CREDENTIAL_HELPER)
+        );
+        assert_eq!(last_value(&env, "GERRIT_HTTP_PASSWORD"), Some("secret"));
 
         let mut env = vec![("GIT_CONFIG_COUNT".to_string(), "2".to_string())];
         agent_env(&cfg(), &mut env, Some("5".into()));
-        assert_eq!(get(&env, "GIT_CONFIG_COUNT"), Some("4"), "AGENT_ENV wins");
-        assert!(get(&env, "GIT_CONFIG_KEY_3").is_some());
+        assert_eq!(
+            last_value(&env, "GIT_CONFIG_COUNT"),
+            Some("4"),
+            "AGENT_ENV wins"
+        );
+        assert!(last_value(&env, "GIT_CONFIG_KEY_3").is_some());
 
         let mut env = Vec::new();
         agent_env(&cfg(), &mut env, Some("1".into()));
-        assert_eq!(get(&env, "GIT_CONFIG_COUNT"), Some("3"), "inherited");
-        assert!(get(&env, "GIT_CONFIG_KEY_2").is_some());
+        assert_eq!(last_value(&env, "GIT_CONFIG_COUNT"), Some("3"), "inherited");
+        assert!(last_value(&env, "GIT_CONFIG_KEY_2").is_some());
     }
 
     #[test]

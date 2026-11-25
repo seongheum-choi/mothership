@@ -91,11 +91,8 @@ impl App {
         }
         let bin_dirs = self.bin_dirs();
         if !bin_dirs.is_empty() {
-            let path = env
-                .iter()
-                .rev()
-                .find(|(k, _)| k == "PATH")
-                .map(|(_, v)| v.clone())
+            let path = crate::config::last_value(&env, "PATH")
+                .map(str::to_owned)
                 .or_else(|| std::env::var("PATH").ok())
                 .unwrap_or_default();
             let mut dirs: Vec<String> = bin_dirs.iter().map(|d| d.display().to_string()).collect();
