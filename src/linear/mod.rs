@@ -130,8 +130,10 @@ impl Surface for Linear {
         system_prompt.push_str(&work_instructions(mode.as_ref(), &delivery));
         if app.cfg.agent.host_sandbox.is_some() {
             system_prompt.extend(crate::host::commands_prompt(&repo.commands));
-            if repo.sandbox_image.is_some() {
-                system_prompt.push_str(&crate::host::sandbox_prompt());
+            if repo.sandbox_image.is_some()
+                && let Ok(limits) = &repo.sandbox_limits
+            {
+                system_prompt.push_str(&crate::host::sandbox_prompt(limits));
             }
         }
 
@@ -146,6 +148,7 @@ impl Surface for Linear {
             mcp_configs: repo.mcp_configs.clone(),
             commands: repo.commands.clone(),
             sandbox_image: repo.sandbox_image.clone(),
+            sandbox_limits: repo.sandbox_limits.clone(),
             permission_mode: mode
                 .as_ref()
                 .and_then(|m| m.permission_mode.clone())

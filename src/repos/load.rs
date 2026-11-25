@@ -33,6 +33,9 @@ struct Entry {
     #[serde(default)]
     commands: BTreeMap<String, String>,
     sandbox_image: Option<String>,
+    /// Checked by [`crate::host::limits::ceiling`]; a bad one refuses only sandbox runs.
+    #[serde(default)]
+    sandbox_limits: serde_json::Value,
     /// `claude` or `codex`; serde names any other value.
     runner: Option<Runner>,
     model: Option<String>,
@@ -71,9 +74,17 @@ pub fn load(path: &Path, user_home: &Path) -> Result<Option<Vec<Repo>>> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
     };
-    checked(&text, user_home)
-        .with_context(|| format!("in {}", path.display()))
-        .map(Some)
+    let repos = checked(&text, user_home).with_context(|| format!("in {}", path.display()))?;
+    for repo in &repos {
+        if let Err(e) = &repo.sandbox_limits {
+            tracing::error!(
+                "settings: repo {:?} in {}: {e}; its sandbox runs are refused",
+                repo.name,
+                path.display()
+            );
+        }
+    }
+    Ok(Some(repos))
 }
 
 /// The repositories `text` lists, checked on disk, with their prompt files read.
@@ -161,6 +172,7 @@ pub(super) fn parse(text: &str, user_home: &Path) -> Result<(Vec<Repo>, Vec<Opti
             review: entry.review_backend,
             commands: entry.commands,
             sandbox_image: entry.sandbox_image,
+            sandbox_limits: crate::host::limits::ceiling(&entry.sandbox_limits),
             name,
             models,
         });
@@ -273,6 +285,24 @@ mod tests {
             &home(),
         );
         assert!(format!("{:#}", err.unwrap_err()).contains("unknown variant `gpt`"));
+    }
+
+    #[test]
+    fn reads_sandbox_limits_and_keeps_a_repository_whose_limits_are_bad() {
+        let (repos, _) = parse(
+            r#"[{"name": "a", "path": "/a", "sandbox_limits": {"memory_mb": 8192}},
+                {"name": "b", "path": "/b", "sandbox_limits": {"disk_mb": 0}},
+                {"name": "c", "path": "/c"}]"#,
+            &home(),
+        )
+        .unwrap();
+        let ceiling = crate::host::limits::ceiling(&serde_json::Value::Null).unwrap();
+        assert_eq!(repos[0].sandbox_limits.as_ref().unwrap().memory_mb, 8192);
+        assert!(
+            (repos[1].sandbox_limits.as_ref().unwrap_err()).contains("sandbox_limits.disk_mb"),
+            "only its sandbox runs are refused"
+        );
+        assert_eq!(repos[2].sandbox_limits, Ok(ceiling));
     }
 
     #[test]

@@ -4,18 +4,10 @@
 //! place to write, those limits, an environment of the image's own and [`ENV`], and nothing of
 //! the host's (home, credentials, sockets); and what the system prompt says about it.
 
+use super::limits::{Limits, requested};
 use serde_json::Value;
 use std::path::Path;
 
-/// The most a request may ask for, and what it gets for a limit it leaves out.
-pub const CEILING: Limits = Limits {
-    memory_mb: 4096,
-    cpus: 2.0,
-    pids: 512,
-    file_size_mb: 1024,
-    disk_mb: 2048,
-    timeout_secs: 1800,
-};
 /// How many files a request may name in `artifacts`.
 const MAX_ARTIFACTS: usize = 32;
 /// The environment the container gets besides its image's own: everything a tool writes
@@ -38,21 +30,9 @@ pub struct SandboxRun {
     pub artifacts: Vec<String>,
 }
 
-/// What the container may use; each is at most [`CEILING`]'s.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Limits {
-    pub memory_mb: u64,
-    pub cpus: f64,
-    pub pids: u64,
-    /// The largest file any process may write.
-    pub file_size_mb: u64,
-    /// The size of the scratch tmpfs.
-    pub disk_mb: u64,
-    pub timeout_secs: u64,
-}
-
-/// `{"kind": "sandbox", "command": …, "limits"?: {…}, "artifacts"?: […]}`.
-pub fn parse(value: &Value) -> Result<SandboxRun, String> {
+/// `{"kind": "sandbox", "command": …, "limits"?: {…}, "artifacts"?: […]}`, each limit at
+/// most `ceiling`'s.
+pub fn parse(value: &Value, ceiling: &Limits) -> Result<SandboxRun, String> {
     let command = value["command"]
         .as_str()
         .filter(|c| !c.trim().is_empty())
@@ -72,49 +52,8 @@ pub fn parse(value: &Value) -> Result<SandboxRun, String> {
     };
     Ok(SandboxRun {
         command: command.to_string(),
-        limits: limits(&value["limits"])?,
+        limits: requested(&value["limits"], ceiling)?,
         artifacts,
-    })
-}
-
-fn limits(value: &Value) -> Result<Limits, String> {
-    const NAMES: [&str; 6] = [
-        "memory_mb",
-        "cpus",
-        "pids",
-        "file_size_mb",
-        "disk_mb",
-        "timeout_secs",
-    ];
-    let given = match value {
-        Value::Null => &serde_json::Map::new(),
-        Value::Object(given) => given,
-        _ => return Err("`limits` must be a JSON object".into()),
-    };
-    if let Some(name) = given.keys().find(|k| !NAMES.contains(&k.as_str())) {
-        return Err(format!("`limits` has no `{name}`; it takes {NAMES:?}"));
-    }
-    let whole = |name: &str, ceiling: u64| match given.get(name) {
-        None => Ok(ceiling),
-        Some(v) => v
-            .as_u64()
-            .filter(|n| (1..=ceiling).contains(n))
-            .ok_or_else(|| format!("`limits.{name}` must be a whole number from 1 to {ceiling}")),
-    };
-    let cpus = match given.get("cpus") {
-        None => CEILING.cpus,
-        Some(v) => v
-            .as_f64()
-            .filter(|c| *c > 0.0 && *c <= CEILING.cpus)
-            .ok_or_else(|| format!("`limits.cpus` must be above 0 and at most {}", CEILING.cpus))?,
-    };
-    Ok(Limits {
-        memory_mb: whole("memory_mb", CEILING.memory_mb)?,
-        cpus,
-        pids: whole("pids", CEILING.pids)?,
-        file_size_mb: whole("file_size_mb", CEILING.file_size_mb)?,
-        disk_mb: whole("disk_mb", CEILING.disk_mb)?,
-        timeout_secs: whole("timeout_secs", CEILING.timeout_secs)?,
     })
 }
 
@@ -161,7 +100,7 @@ pub fn run_args(
     .map(String::from)
     .to_vec();
     let memory = format!("{}m", l.memory_mb);
-    let fsize = l.file_size_mb << 20;
+    let fsize = l.file_size_mb.saturating_mul(1 << 20);
     args.extend([
         "--memory".into(),
         memory.clone(),
@@ -195,9 +134,9 @@ pub fn run_args(
     Ok(args)
 }
 
-/// What the session's system prompt says when its repository has a `sandbox_image`.
-pub fn prompt() -> String {
-    let c = CEILING;
+/// What the session's system prompt says when its repository has a `sandbox_image`, whose
+/// ceiling is `c`.
+pub fn prompt(c: &Limits) -> String {
     format!(
         "To run this repository's code (tests, a proof of concept, a database) without network \
          or access to anything but the workspace, write `{{\"kind\": \"sandbox\", \"command\": \
@@ -224,15 +163,19 @@ pub fn prompt() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::host::limits::CEILING;
     use serde_json::json;
 
     #[test]
     fn takes_lower_limits_and_defaults_to_the_ceiling() {
-        let run = parse(&json!({
-            "command": "cargo test",
-            "limits": {"memory_mb": 512, "cpus": 0.5, "timeout_secs": 60},
-            "artifacts": ["report.json", "out-1.txt"],
-        }))
+        let run = parse(
+            &json!({
+                "command": "cargo test",
+                "limits": {"memory_mb": 512, "cpus": 0.5, "timeout_secs": 60},
+                "artifacts": ["report.json", "out-1.txt"],
+            }),
+            &CEILING,
+        )
         .unwrap();
         assert_eq!(run.command, "cargo test");
         assert_eq!(
@@ -245,7 +188,7 @@ mod tests {
             }
         );
         assert_eq!(run.artifacts, ["report.json", "out-1.txt"]);
-        let bare = parse(&json!({"command": "true"})).unwrap();
+        let bare = parse(&json!({"command": "true"}), &CEILING).unwrap();
         assert_eq!(
             (bare.limits, bare.artifacts),
             (CEILING, Vec::<String>::new())
@@ -321,7 +264,7 @@ mod tests {
             json!({"command": "x", "artifacts": "a"}),
             json!({"command": "x", "artifacts": vec!["a"; MAX_ARTIFACTS + 1]}),
         ] {
-            assert!(parse(&bad).is_err(), "{bad}");
+            assert!(parse(&bad, &CEILING).is_err(), "{bad}");
         }
     }
 }

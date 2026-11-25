@@ -8,6 +8,7 @@ mod bwrap;
 mod codex;
 mod command;
 mod container;
+pub mod limits;
 mod process;
 mod request;
 mod runtime;
@@ -68,6 +69,9 @@ pub struct Host {
     pub sandbox: String,
     /// The repository's `sandbox_image`, for `sandbox` runs; `None` refuses them.
     pub sandbox_image: Option<String>,
+    /// The repository's `sandbox_limits`, the most a `sandbox` run may ask for; an error
+    /// refuses them.
+    pub sandbox_limits: Result<limits::Limits, String>,
     /// `CONTAINER_RUNTIME`, which starts `sandbox` runs' containers, shared by every session.
     pub container_runtime: Arc<Runtime>,
 }
@@ -199,7 +203,7 @@ pub fn watch(key: String, host: Host) -> Watch {
                     continue;
                 }
                 let outcome = match request::read_plain(&request::request(&host.runs, &id)) {
-                    Ok(text) => match request::parse(&text) {
+                    Ok(text) => match request::parse(&text, &host.sandbox_limits) {
                         Ok(req) => host.serve(&key, &id, &req).await,
                         Err(e) => Err(format!("refused: {e}")),
                     },

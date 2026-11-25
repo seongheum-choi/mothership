@@ -33,6 +33,8 @@ pub struct Place<'a> {
     pub commands: BTreeMap<String, String>,
     /// The repository's `sandbox_image`, for its `sandbox` runs.
     pub sandbox_image: Option<String>,
+    /// The repository's `sandbox_limits`, or why its `sandbox` runs are refused.
+    pub sandbox_limits: Result<crate::host::limits::Limits, String>,
     pub permission_mode: String,
     /// The mode and repository a runner or model may come from.
     pub scopes: Scopes<'a>,
@@ -65,6 +67,7 @@ impl App {
             host_settings: settings.host,
             commands: place.commands,
             sandbox_image: place.sandbox_image,
+            sandbox_limits: place.sandbox_limits,
             cwd: place.cwd,
             system_prompt: place.system_prompt,
             resume: rec.resume(chosen.runner),
