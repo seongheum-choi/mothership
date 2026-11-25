@@ -70,26 +70,28 @@ pub fn load(path: &Path, user_home: &Path) -> Result<Option<Vec<Repo>>> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
     };
-    let (mut repos, prompt_files) =
-        parse(&text, user_home).with_context(|| format!("in {}", path.display()))?;
+    checked(&text, user_home)
+        .with_context(|| format!("in {}", path.display()))
+        .map(Some)
+}
+
+/// The repositories `text` lists, checked on disk, with their prompt files read.
+fn checked(text: &str, user_home: &Path) -> Result<Vec<Repo>> {
+    let (mut repos, prompt_files) = parse(text, user_home)?;
     let mut resolved = Vec::new();
     for (repo, prompt_file) in repos.iter_mut().zip(prompt_files) {
-        resolved.push(check_on_disk(repo).with_context(|| format!("in {}", path.display()))?);
+        resolved.push(check_on_disk(repo)?);
         if let Some(file) = prompt_file {
-            repo.prompt = Some(std::fs::read_to_string(&file).with_context(|| {
-                format!(
-                    "in {}: repo {:?} prompt_file {}",
-                    path.display(),
-                    repo.name,
-                    file.display()
-                )
-            })?);
+            repo.prompt =
+                Some(std::fs::read_to_string(&file).with_context(|| {
+                    format!("repo {:?} prompt_file {}", repo.name, file.display())
+                })?);
         }
     }
     // `parse` compares paths as written; one clone reached through a symlink, or as `/tmp`
     // and `/private/tmp`, only shows up resolved.
-    no_overlap(repos.iter().zip(resolved)).with_context(|| format!("in {}", path.display()))?;
-    Ok(Some(repos))
+    no_overlap(repos.iter().zip(resolved))?;
+    Ok(repos)
 }
 
 /// Fails when one repository's path, as compared, is or lies inside another's. Each error
@@ -337,6 +339,25 @@ mod tests {
         let loaded = load(&file, &home());
         std::fs::remove_dir_all(&dir).unwrap();
         loaded
+    }
+
+    #[test]
+    fn a_missing_prompt_file_names_the_file_and_the_repo() {
+        let error = load_in(
+            "prompt",
+            |_| {},
+            r#"[{"name": "a", "path": "{dir}", "git": false, "prompt_file": "{dir}/p.md"}]"#,
+        )
+        .unwrap_err();
+        let dir =
+            std::env::temp_dir().join(format!("mothership-load-prompt-{}", std::process::id()));
+        let want = format!(
+            "in {}: repo \"a\" prompt_file {}: ",
+            dir.join("repos.json").display(),
+            dir.join("p.md").display()
+        );
+        let error = format!("{error:#}");
+        assert!(error.starts_with(&want), "{error}");
     }
 
     #[test]
