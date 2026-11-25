@@ -76,7 +76,8 @@ pub struct AgentConfig {
     /// runs for a session. `None` when it is not a file at startup: sessions are then not told
     /// about host runs, so their workflows keep that work instead of asking for it.
     pub host_sandbox: Option<String>,
-    /// `CONTAINER_RUNTIME`: the Docker-compatible CLI starting `sandbox` runs' containers.
+    /// `CONTAINER_RUNTIME`: nerdctl, or another Docker-compatible CLI, starting `sandbox` runs'
+    /// containers.
     pub container_runtime: String,
 }
 
@@ -140,7 +141,7 @@ impl Config {
                 .filter(|path| std::path::Path::new(path).is_file()),
                 container_runtime: vars
                     .get("CONTAINER_RUNTIME")
-                    .unwrap_or_else(|| "docker".into()),
+                    .unwrap_or_else(|| "nerdctl".into()),
             },
             mcp_configs: vars.get("MCP_CONFIGS").map_or_default(|list| {
                 list.split(',')

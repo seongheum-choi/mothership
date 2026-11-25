@@ -1,7 +1,7 @@
 //! Runs a `sandbox` request in a disposable container (see `sandbox.rs` for what it is
-//! allowed) through `CONTAINER_RUNTIME`, a Docker-compatible CLI: starting it, running the
-//! command in it within its time limit, copying out only the files the request names, and
-//! removing it however the run ends.
+//! allowed) through `CONTAINER_RUNTIME`, nerdctl or another Docker-compatible CLI: starting it,
+//! running the command in it within its time limit, copying out only the files the request
+//! names, and removing it however the run ends.
 
 use super::{
     Host,
@@ -15,13 +15,18 @@ use tokio::process::Command;
 
 /// Of mothership's environment, what the runtime CLI gets to find its daemon. The container
 /// gets none of it.
-const RUNTIME_ENV: [&str; 6] = [
+const RUNTIME_ENV: [&str; 10] = [
     "PATH",
     "HOME",
+    // Where rootless nerdctl finds its containerd and rootlesskit.
+    "XDG_RUNTIME_DIR",
+    "CONTAINERD_ADDRESS",
+    "CONTAINERD_NAMESPACE",
+    "CONTAINERD_SNAPSHOTTER",
+    "NERDCTL_TOML",
     "DOCKER_HOST",
     "DOCKER_CONTEXT",
     "DOCKER_CONFIG",
-    "XDG_RUNTIME_DIR",
 ];
 /// The most one artifact, and all of a run's together, may take.
 const PER_FILE: u64 = 16 << 20;
@@ -250,7 +255,7 @@ mod tests {
     #[tokio::test]
     async fn refuses_a_repository_without_an_image_and_a_missing_runtime() {
         let r = run("true", CEILING, &[]);
-        let unset = host("unset", None, "docker").sandbox("a", &r).await;
+        let unset = host("unset", None, "nerdctl").sandbox("a", &r).await;
         assert!(unset.unwrap_err().contains("sandbox_image"));
         let missing = host("missing", Some("img"), "/nonexistent/docker");
         assert!(
@@ -263,18 +268,21 @@ mod tests {
     }
 
     /// A host whose runtime has the test image, or `None` (with why) where it cannot run here:
-    /// no runtime, its socket out of reach, or the image not pulled. `MOTHERSHIP_TEST_SANDBOX_IMAGE`
-    /// names the image (default `busybox`); it needs `sh`, `head`, `mkdir`, `sleep`, `seq` and
-    /// `wget`.
-    fn docker(name: &str) -> Option<Host> {
-        let image = std::env::var("MOTHERSHIP_TEST_SANDBOX_IMAGE").unwrap_or("busybox".into());
-        let inspected = std::process::Command::new("docker")
+    /// no runtime, its daemon out of reach, or the image not pulled.
+    /// `MOTHERSHIP_TEST_CONTAINER_RUNTIME` names the runtime (default `nerdctl`) and
+    /// `MOTHERSHIP_TEST_SANDBOX_IMAGE` the image (default `busybox`), which needs `sh`, `head`,
+    /// `mkdir`, `sleep`, `seq` and `wget`.
+    fn runtime_host(name: &str) -> Option<Host> {
+        let var = |k: &str, default: &str| std::env::var(k).unwrap_or(default.into());
+        let runtime = var("MOTHERSHIP_TEST_CONTAINER_RUNTIME", "nerdctl");
+        let image = var("MOTHERSHIP_TEST_SANDBOX_IMAGE", "busybox");
+        let inspected = std::process::Command::new(&runtime)
             .args(["image", "inspect", &image])
             .output();
         let why = match inspected {
-            Ok(out) if out.status.success() => return Some(host(name, Some(&image), "docker")),
+            Ok(out) if out.status.success() => return Some(host(name, Some(&image), &runtime)),
             Ok(out) => String::from_utf8_lossy(&out.stderr).trim().to_string(),
-            Err(e) => format!("no docker: {e}"),
+            Err(e) => format!("no {runtime}: {e}"),
         };
         // CI pulls the image, so there a skip would only hide that these stopped running.
         assert!(std::env::var_os("CI").is_none(), "no sandbox on CI: {why}");
@@ -293,7 +301,7 @@ mod tests {
 
     #[tokio::test]
     async fn reaches_no_other_host() {
-        let Some(h) = docker("net") else { return };
+        let Some(h) = runtime_host("net") else { return };
         let r = run(
             "echo \"nets: $(ls /sys/class/net | tr '\\n' ' ')\"\n\
              wget -q -T 3 -O /dev/null http://1.1.1.1 && echo reached",
@@ -307,9 +315,11 @@ mod tests {
 
     #[tokio::test]
     async fn writes_only_the_scratch() {
-        let Some(h) = docker("write") else { return };
+        let Some(h) = runtime_host("write") else {
+            return;
+        };
         let r = run(
-            "for p in /work/x /work/source.txt /etc/x /x /tmp/x /dev/x /dev/shm/x; do \
+            "for p in /work/x /work/source.txt /etc/x /x /tmp/x /dev/x /dev/shm/x /dev/mqueue/x; do \
                (echo w >> $p) 2>/dev/null && echo wrote $p; done\n\
              echo ok > /scratch/ok && echo scratch",
             CEILING,
@@ -327,7 +337,9 @@ mod tests {
 
     #[tokio::test]
     async fn holds_memory_processes_file_size_and_time() {
-        let Some(h) = docker("limits") else { return };
+        let Some(h) = runtime_host("limits") else {
+            return;
+        };
         let small = Limits {
             memory_mb: 64,
             ..CEILING
@@ -395,7 +407,7 @@ mod tests {
 
     #[tokio::test]
     async fn sees_only_the_allowed_environment() {
-        let Some(h) = docker("env") else { return };
+        let Some(h) = runtime_host("env") else { return };
         let lines = output(&result(&h, &run("env", CEILING, &[])).await);
         assert!(lines.contains(&"HOME=/scratch/home".into()), "{lines:?}");
         assert!(
@@ -408,7 +420,7 @@ mod tests {
 
     #[tokio::test]
     async fn promotes_only_listed_files_within_the_cap() {
-        let Some(h) = docker("art") else { return };
+        let Some(h) = runtime_host("art") else { return };
         let r = run(
             "echo hi > /scratch/a; echo no > /scratch/b; mkfifo /scratch/fifo\n\
              head -c 17000000 /dev/zero > /scratch/big",
@@ -429,7 +441,9 @@ mod tests {
 
     #[tokio::test]
     async fn answers_an_error_without_the_image() {
-        let Some(mut h) = docker("noimg") else { return };
+        let Some(mut h) = runtime_host("noimg") else {
+            return;
+        };
         h.sandbox_image = Some("mothership-no-such-image:none".into());
         let e = h
             .sandbox("r1", &run("true", CEILING, &[]))

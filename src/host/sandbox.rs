@@ -147,8 +147,6 @@ pub fn run_args(
         "--network",
         "none",
         "--read-only",
-        "--ipc",
-        "none",
         "--cap-drop",
         "ALL",
         "--security-opt",
@@ -184,6 +182,11 @@ pub fn run_args(
         "--mount".into(),
         format!("type=bind,src={ws},dst=/work,readonly"),
     ]);
+    // The runtime's own `/dev/shm` and `/dev/mqueue` are writable by anyone; a mount at the same
+    // place replaces them. nerdctl has no `--ipc none` to leave them out.
+    for dir in ["/dev/shm", "/dev/mqueue"] {
+        args.extend(["--mount".into(), format!("type=tmpfs,dst={dir},readonly")]);
+    }
     for var in ENV {
         args.extend(["--env".into(), var.into()]);
     }
@@ -262,7 +265,6 @@ mod tests {
         let args = run_args("c1", "img:1", Path::new("/w/SH-1"), &l).unwrap();
         for pair in [
             ["--network", "none"],
-            ["--ipc", "none"],
             ["--pull", "never"],
             ["--cap-drop", "ALL"],
             ["--user", USER],
@@ -282,18 +284,22 @@ mod tests {
         }
         assert!(args.contains(&"--read-only".into()));
         assert_eq!(args[args.len() - 2..], ["img:1", "86400"]);
-        // Exactly one mount and no other way in: the workspace, read-only.
-        let mounts = [
-            "--mount",
-            "-v",
-            "--volume",
-            "--volumes-from",
-            "--privileged",
-        ];
+        // No other way in: the workspace read-only, and empty read-only directories.
+        let mounts: Vec<&str> = (args.windows(2))
+            .filter(|w| w[0] == "--mount")
+            .map(|w| w[1].as_str())
+            .collect();
         assert_eq!(
-            args.iter().filter(|a| mounts.contains(&a.as_str())).count(),
-            1
+            mounts,
+            [
+                "type=bind,src=/w/SH-1,dst=/work,readonly",
+                "type=tmpfs,dst=/dev/shm,readonly",
+                "type=tmpfs,dst=/dev/mqueue,readonly",
+            ]
         );
+        for way_in in ["-v", "--volume", "--volumes-from", "--privileged", "--ipc"] {
+            assert!(!args.contains(&way_in.into()), "{way_in}");
+        }
         assert!(run_args("c1", "img:1", Path::new("/w/a,src=/"), &l).is_err());
     }
 
