@@ -43,33 +43,17 @@ pub async fn ensure(
     let path = dir.to_str().context("worktree path is not UTF-8")?;
     if has_branch(repo, branch).await {
         git(repo, &["worktree", "add", path, branch]).await?;
-    } else if has_ref(repo, &format!("refs/remotes/origin/{branch}")).await {
-        git(
-            repo,
-            &[
-                "worktree",
-                "add",
-                "-b",
-                branch,
-                path,
-                &format!("origin/{branch}"),
-            ],
-        )
-        .await?;
     } else {
-        git(
-            repo,
-            &[
-                "worktree",
-                "add",
-                "--no-track",
-                "-b",
-                branch,
-                path,
-                &format!("origin/{base}"),
-            ],
-        )
-        .await?;
+        let remote = format!("origin/{branch}");
+        let (track, start) = if has_ref(repo, &format!("refs/remotes/{remote}")).await {
+            (None, remote)
+        } else {
+            (Some("--no-track"), format!("origin/{base}"))
+        };
+        let mut args = vec!["worktree", "add"];
+        args.extend(track);
+        args.extend(["-b", branch, path, &start]);
+        git(repo, &args).await?;
     }
     Ok(dir.to_path_buf())
 }
@@ -312,6 +296,42 @@ mod tests {
             .expect("git runs");
         assert!(out.status.success(), "git {args:?}: {out:?}");
         String::from_utf8_lossy(&out.stdout).trim().to_string()
+    }
+
+    #[tokio::test]
+    async fn continues_a_branch_on_origin_and_cuts_a_new_one_untracked() {
+        let tmp = std::env::temp_dir().join(format!("mothership-remote-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).expect("temp dir");
+        let (src, clone) = (tmp.join("src"), tmp.join("clone"));
+        run(&tmp, &["init", "-q", "-b", "main", "src"]);
+        run(&src, &["commit", "-q", "--allow-empty", "-m", "first"]);
+        let main = run(&src, &["rev-parse", "HEAD"]);
+        run(&tmp, &["clone", "-q", "src", "clone"]);
+        run(&src, &["checkout", "-q", "-b", "a-1"]);
+        run(&src, &["commit", "-q", "--allow-empty", "-m", "on a-1"]);
+        let on_a1 = run(&src, &["rev-parse", "HEAD"]);
+
+        let continued = ensure(&clone, &tmp.join("A-1"), "a-1", "main", &[])
+            .await
+            .expect("continue origin/a-1");
+        assert_eq!(run(&continued, &["rev-parse", "HEAD"]), on_a1);
+        assert_eq!(
+            run(&continued, &["rev-parse", "--abbrev-ref", "a-1@{upstream}"]),
+            "origin/a-1"
+        );
+
+        let cut = ensure(&clone, &tmp.join("A-2"), "a-2", "main", &[])
+            .await
+            .expect("cut from origin/main");
+        assert_eq!(run(&cut, &["rev-parse", "HEAD"]), main);
+        assert!(
+            git(&cut, &["rev-parse", "--abbrev-ref", "a-2@{upstream}"])
+                .await
+                .is_err(),
+            "a new branch has no upstream"
+        );
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[tokio::test]
