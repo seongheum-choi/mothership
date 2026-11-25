@@ -21,7 +21,7 @@ pub use device::start as start_login;
 pub use user_token::{UserToken, UserTokens};
 
 use crate::{app::App, repos::Repo, review::intake::Budget};
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use axum::{
     Router,
     body::Bytes,
@@ -50,7 +50,7 @@ struct Origin {
 
 /// The origins of the git repositories, replaced whole when the repository list is reloaded.
 #[derive(Debug)]
-pub struct Origins(Vec<Origin>);
+struct Origins(Vec<Origin>);
 
 impl Origins {
     /// Resolves the origins of the git repositories; a repository whose origin is not
@@ -122,6 +122,28 @@ impl GitHub {
 
     fn origins(&self) -> Arc<Origins> {
         self.origins.read().expect("origins poisoned").clone()
+    }
+
+    /// Runs `gh <args>` in the clone of the GitHub repository `repo` and returns its output.
+    async fn gh(&self, repo: &str, args: &[&str]) -> Result<Vec<u8>> {
+        let origins = self.origins();
+        let clone = origins
+            .clone_of(repo)
+            .with_context(|| format!("no repository has origin {repo}"))?;
+        let out = tokio::process::Command::new("gh")
+            .args(args)
+            .current_dir(clone)
+            .output()
+            .await
+            .context("running gh")?;
+        if !out.status.success() {
+            bail!(
+                "gh {}: {}",
+                args.iter().take(2).copied().collect::<Vec<_>>().join(" "),
+                String::from_utf8_lossy(&out.stderr).trim()
+            );
+        }
+        Ok(out.stdout)
     }
 
     /// Resolves the origins again for a reloaded repository list.

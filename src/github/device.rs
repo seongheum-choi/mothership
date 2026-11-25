@@ -1,9 +1,9 @@
 //! Logging in to the GitHub App with the device flow: at startup, with no user token stored,
 //! the log says where to enter a code, and the token arrives once the operator has.
 
-use super::user_token::{Answer, OAUTH_URL, grant};
+use super::user_token::{Answer, grant, post_form};
 use crate::{app::App, store::now_secs};
-use anyhow::{Context, Result, bail};
+use anyhow::{Result, bail};
 use serde::Deserialize;
 use std::{sync::Arc, time::Duration};
 
@@ -35,19 +35,14 @@ pub fn start(app: &Arc<App>) {
 
 async fn login(app: &App) -> Result<()> {
     let cfg = &app.github_user.as_ref().expect("checked by start").cfg;
-    let res = app
-        .http
-        .post(format!("{OAUTH_URL}/login/device/code"))
-        .header("Accept", "application/json")
-        .form(&[("client_id", cfg.client_id.as_str())])
-        .send()
-        .await
-        .context("GitHub device code endpoint")?;
-    let status = res.status();
-    if !status.is_success() {
-        bail!("GitHub device code endpoint: HTTP {status}");
-    }
-    let code: Authorization = res.json().await.context("GitHub device code answer")?;
+    let code: Authorization = post_form(
+        app,
+        "login/device/code",
+        &[("client_id", cfg.client_id.as_str())],
+        "GitHub device code endpoint",
+        "GitHub device code answer",
+    )
+    .await?;
     tracing::warn!(
         "GitHub App login: open {} and enter {} within {} minutes, as the account agents act as",
         code.verification_uri,

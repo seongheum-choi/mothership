@@ -5,10 +5,10 @@
 
 use crate::{app::App, config::GitHubAppConfig, store::now_secs};
 use anyhow::{Context, Result, bail};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 /// GitHub's OAuth host, for the device flow and the token grants.
-pub(super) const OAUTH_URL: &str = "https://github.com";
+const OAUTH_URL: &str = "https://github.com";
 
 /// A turn gets a token good for at least this long: refreshed once less than this remains of
 /// its 8 hours, so turns with long background work keep a working `gh`.
@@ -98,19 +98,38 @@ pub(super) async fn grant(
     if let Some(secret) = &cfg.client_secret {
         form.push(("client_secret", secret));
     }
+    post_form(
+        app,
+        "login/oauth/access_token",
+        &form,
+        "GitHub token endpoint",
+        "GitHub token endpoint answer",
+    )
+    .await
+}
+
+/// Posts `form` to `path` on GitHub's OAuth host and reads the JSON answer. `endpoint` names
+/// the endpoint in errors and `answer` its answer.
+pub(super) async fn post_form<T: DeserializeOwned>(
+    app: &App,
+    path: &str,
+    form: &[(&str, &str)],
+    endpoint: &'static str,
+    answer: &'static str,
+) -> Result<T> {
     let res = app
         .http
-        .post(format!("{OAUTH_URL}/login/oauth/access_token"))
+        .post(format!("{OAUTH_URL}/{path}"))
         .header("Accept", "application/json")
-        .form(&form)
+        .form(form)
         .send()
         .await
-        .context("GitHub token endpoint")?;
+        .context(endpoint)?;
     let status = res.status();
     if !status.is_success() {
-        bail!("GitHub token endpoint: HTTP {status}");
+        bail!("{endpoint}: HTTP {status}");
     }
-    res.json().await.context("GitHub token endpoint answer")
+    res.json().await.context(answer)
 }
 
 /// The token for the next turn, refreshed first when it is close to expiring. `None` (no app,
