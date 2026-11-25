@@ -1,0 +1,4 @@
+# Supply-chain cooldown: when resolving, Cargo skips crate versions published less than a week ago.
+# Versions already in Cargo.lock are kept, so this only bites on `cargo update` and new dependencies.
+[registry]
+global-min-publish-age = "7 days"

@@ -420,10 +420,12 @@ See [AGENTS.md](AGENTS.md) for the code standards.
 
 ```sh
 mise install          # Rust 1.100 (mise.toml)
-scripts/check.sh      # fmt, clippy (pedantic, warnings are errors), tests
+scripts/check.sh      # fmt, clippy (pedantic, warnings are errors), unused dependencies, tests
 git config core.hooksPath .githooks   # run the check before every commit
 cargo run
 ```
+
+[`.cargo/config.toml`](.cargo/config.toml) sets a dependency cooldown: `cargo update` and new dependencies resolve only to crate versions published at least 7 days ago (`registry.global-min-publish-age`). Versions already in `Cargo.lock` are kept; `CARGO_RESOLVER_INCOMPATIBLE_PUBLISH_AGE=allow` overrides it for one command, e.g. for an urgent security release.
 
 `cargo test` includes [`tests/integration`](tests/integration), which runs the built binary against local stand-ins for Linear (through `LINEAR_API_URL`), Zulip, GitHub webhooks, `claude` and `gh`. `cargo test --test integration -- <name>` runs only the scenarios whose name contains `<name>`; a failed one keeps its directory and prints the end of mothership's log.
 

@@ -5,12 +5,12 @@ mothership is a long-running service that other people's work depends on, so cha
 ## Standards
 
 - **Style baseline:** the [Rust API Guidelines](https://rust-lang.github.io/api-guidelines/) for naming, conversions, documentation and type design, applied as far as they fit a binary crate.
-- **Lints:** `cargo clippy --all-targets` with `clippy::pedantic` (configured in `Cargo.toml`) must stay at zero warnings. `scripts/check.sh` treats warnings as errors. Silence a lint only on the item that needs it, with `#[expect(clippy::..., reason = "...")]`.
+- **Lints:** `cargo clippy --all-targets` with `clippy::pedantic` (configured in `Cargo.toml`) must stay at zero warnings. `scripts/check.sh` treats warnings as errors. Cargo's `unused_dependencies` lint is set to `deny` in `[lints.cargo]`, so an unused dependency fails the build. Silence a lint only on the item that needs it, with `#[expect(clippy::..., reason = "...")]`.
 - **Formatting:** `cargo fmt` with default settings.
 - **Errors:** `anyhow::Result` with `.context(...)` at I/O and API boundaries. Log with `{e:#}` so the cause chain shows. Panics only for broken invariants, with an `expect` message that names the invariant.
 - **Logging:** `tracing` macros, never `println!` or `eprintln!`. Prefix session-scoped lines with `[{key}]`.
 - **Unsafe:** forbidden (`unsafe_code = "forbid"`).
-- **Dependencies:** add one only when the standard library or an existing dependency can't do the job in a few lines.
+- **Dependencies:** add one only when the standard library or an existing dependency can't do the job in a few lines. `.cargo/config.toml` sets a 7-day `registry.global-min-publish-age`, so the resolver skips versions published in the last week unless they are already in `Cargo.lock`; keep `Cargo.toml`'s minimum versions at versions the lock already has.
 - **Tests:** every branch-heavy pure function (parsers, mappings, path logic) has a unit test next to it. No mocking frameworks. Network and process boundaries are checked by running the binary.
 - **Docs:** each module starts with a `//!` line saying what it is for. Comments explain why, not what.
 - **Language:** everything in this repository is in English: code comments, docs, commit messages, and pull request titles and bodies. Linear issues may be written in Korean; translate an issue's title when it becomes a pull request title, keeping the key (`SH-123: ...`).
