@@ -100,7 +100,7 @@ impl Host {
 
 /// Reads `pipe` to its end, keeping the last [`OUTPUT_CAP`] bytes; reading on rather than
 /// stopping keeps a chatty process from blocking on a full pipe.
-async fn keep_end(pipe: Option<impl AsyncRead + Unpin>) -> Vec<u8> {
+pub(super) async fn keep_end(pipe: Option<impl AsyncRead + Unpin>) -> Vec<u8> {
     let Some(mut pipe) = pipe else {
         return Vec::new();
     };

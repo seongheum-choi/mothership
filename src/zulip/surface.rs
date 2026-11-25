@@ -52,6 +52,7 @@ fn launch(app: &App, key: &str) -> Result<Launch> {
         deny: &read_only,
         mcp_configs: Vec::new(),
         commands: BTreeMap::new(),
+        sandbox_image: None,
         permission_mode: app.cfg.agent.chat_permission_mode.clone(),
         scopes: choice::Scopes::default(),
     };

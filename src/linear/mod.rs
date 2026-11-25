@@ -130,6 +130,9 @@ impl Surface for Linear {
         system_prompt.push_str(&work_instructions(mode.as_ref(), &delivery));
         if app.cfg.agent.host_sandbox.is_some() {
             system_prompt.extend(crate::host::commands_prompt(&repo.commands));
+            if repo.sandbox_image.is_some() {
+                system_prompt.push_str(&crate::host::sandbox_prompt());
+            }
         }
 
         let mut readable = vec![repo.path.clone()];
@@ -142,6 +145,7 @@ impl Surface for Linear {
             deny: mode.as_ref().map_or(&[], |m| &m.deny),
             mcp_configs: repo.mcp_configs.clone(),
             commands: repo.commands.clone(),
+            sandbox_image: repo.sandbox_image.clone(),
             permission_mode: mode
                 .as_ref()
                 .and_then(|m| m.permission_mode.clone())

@@ -14,6 +14,8 @@ pub enum Request {
     Codex(CodexRun),
     /// One of the repository's `commands`, by name.
     Command(String),
+    /// A command in a disposable container: see [`super::container`].
+    Sandbox(super::sandbox::SandboxRun),
 }
 
 /// A Codex run: the prompt it gets on stdin, and what shapes its final message.
@@ -28,7 +30,7 @@ pub struct CodexRun {
 }
 
 /// `{"kind": "codex", "prompt": …, "schema"?: {…}, "effort"?: …, "model"?: …}` or
-/// `{"kind": "command", "name": …}`.
+/// `{"kind": "command", "name": …}`, or a `sandbox` request (see [`super::sandbox::parse`]).
 pub fn parse(text: &str) -> Result<Request, String> {
     let value: Value = serde_json::from_str(text).map_err(|e| format!("not JSON: {e}"))?;
     match value["kind"].as_str() {
@@ -37,7 +39,8 @@ pub fn parse(text: &str) -> Result<Request, String> {
             Some(name) if plain(name) => Ok(Request::Command(name.to_string())),
             _ => Err("`name` must name one of the repository's commands".into()),
         },
-        _ => Err("`kind` must be \"codex\" or \"command\"".into()),
+        Some("sandbox") => super::sandbox::parse(&value).map(Request::Sandbox),
+        _ => Err("`kind` must be \"codex\", \"command\" or \"sandbox\"".into()),
     }
 }
 

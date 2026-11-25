@@ -180,6 +180,8 @@ fn prepare(app: &Arc<App>, key: &str, launch: &mut Launch) -> Result<(ProgressTa
         settings: launch.settings.clone(),
         codex_settings: launch.host_settings.clone(),
         commands: launch.commands.clone(),
+        sandbox_image: launch.sandbox_image.clone(),
+        container_runtime: app.cfg.agent.container_runtime.clone(),
         codex: app
             .codex_bin()
             .unwrap_or_else(|| app.cfg.agent.codex_bin.clone().into()),

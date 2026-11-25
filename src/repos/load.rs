@@ -1,7 +1,7 @@
 //! Reading and validating `<home>/repos.json`.
 
 use super::Repo;
-use super::disk::check_on_disk;
+use super::disk::{check_on_disk, no_overlap};
 use super::select::same;
 use crate::agent::Runner;
 use crate::config::{ModelFields, check_effort};
@@ -32,6 +32,7 @@ struct Entry {
     mcp_configs: Vec<String>,
     #[serde(default)]
     commands: BTreeMap<String, String>,
+    sandbox_image: Option<String>,
     /// `claude` or `codex`; serde names any other value.
     runner: Option<Runner>,
     model: Option<String>,
@@ -94,36 +95,6 @@ fn checked(text: &str, user_home: &Path) -> Result<Vec<Repo>> {
     Ok(repos)
 }
 
-/// Fails when one repository's path, as compared, is or lies inside another's.
-fn no_overlap<'a>(paths: impl IntoIterator<Item = (&'a Repo, PathBuf)>) -> Result<()> {
-    let paths: Vec<_> = paths.into_iter().collect();
-    let shown = |repo: &Repo, compared: &Path| {
-        let written = repo.path.display();
-        if compared == repo.path {
-            format!("repo {:?} path {written}", repo.name)
-        } else {
-            format!(
-                "repo {:?} path {written} (resolved {})",
-                repo.name,
-                compared.display()
-            )
-        }
-    };
-    for (i, (repo, path)) in paths.iter().enumerate() {
-        if let Some((other, other_path)) = paths[..i]
-            .iter()
-            .find(|(_, p)| p.starts_with(path) || path.starts_with(p))
-        {
-            bail!(
-                "{} overlaps {}",
-                shown(repo, path),
-                shown(other, other_path)
-            );
-        }
-    }
-    Ok(())
-}
-
 /// Parses and validates `repos.json`, also returning each entry's resolved `prompt_file` for
 /// the caller to read.
 pub(super) fn parse(text: &str, user_home: &Path) -> Result<(Vec<Repo>, Vec<Option<PathBuf>>)> {
@@ -167,6 +138,13 @@ pub(super) fn parse(text: &str, user_home: &Path) -> Result<(Vec<Repo>, Vec<Opti
                 "repo {name:?} command {bad:?} needs a name of letters, digits, - and _ and a command"
             );
         }
+        if let Some(image) = entry.sandbox_image.as_deref().filter(|i| {
+            i.is_empty()
+                || i.starts_with('-')
+                || i.chars().any(|c| c.is_whitespace() || c.is_control())
+        }) {
+            bail!("repo {name:?} sandbox_image {image:?} is not an image name");
+        }
         repos.push(Repo {
             path,
             base_branch: entry.base_branch.unwrap_or_else(|| "main".into()),
@@ -182,6 +160,7 @@ pub(super) fn parse(text: &str, user_home: &Path) -> Result<(Vec<Repo>, Vec<Opti
             git: entry.git,
             review: entry.review_backend,
             commands: entry.commands,
+            sandbox_image: entry.sandbox_image,
             name,
             models,
         });
@@ -235,7 +214,8 @@ mod tests {
     fn parses_entries_with_defaults() {
         let (repos, prompts) = parse(
             r#"[{"name": "app", "path": "/src/app", "prompt_file": "~/p.md",
-                 "mcp_configs": ["/etc/mcp.json"], "commands": {"pnpm-install": "pnpm i"}},
+                 "mcp_configs": ["/etc/mcp.json"], "commands": {"pnpm-install": "pnpm i"},
+                 "sandbox_image": "mothership-sandbox/app:1"},
                 {"name": "lib", "path": "/src/lib/", "base_branch": "trunk"},
                 {"name": "notes", "path": "~/notes", "git": false}]"#,
             &home(),
@@ -246,6 +226,11 @@ mod tests {
         assert_eq!(repos[0].mcp_configs, [PathBuf::from("/etc/mcp.json")]);
         assert_eq!(repos[0].commands["pnpm-install"], "pnpm i");
         assert!(repos[1].commands.is_empty());
+        assert_eq!(
+            repos[0].sandbox_image.as_deref(),
+            Some("mothership-sandbox/app:1")
+        );
+        assert_eq!(repos[1].sandbox_image, None);
         assert_eq!(repos[1].path, PathBuf::from("/src/lib"));
         assert_eq!(repos[1].base_branch, "trunk");
         assert_eq!(repos[2].path, PathBuf::from("/Users/me/notes"));
@@ -447,5 +432,9 @@ mod tests {
             )
             .contains("Linear team")
         );
+        for image in ["", "--privileged", "a b"] {
+            let json = format!(r#"[{{"name": "a", "path": "/a", "sandbox_image": "{image}"}}]"#);
+            assert!(error(&json).contains("not an image name"), "{image:?}");
+        }
     }
 }

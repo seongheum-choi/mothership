@@ -31,6 +31,8 @@ pub struct Place<'a> {
     pub mcp_configs: Vec<PathBuf>,
     /// The repository's commands the session may ask mothership to run.
     pub commands: BTreeMap<String, String>,
+    /// The repository's `sandbox_image`, for its `sandbox` runs.
+    pub sandbox_image: Option<String>,
     pub permission_mode: String,
     /// The mode and repository a runner or model may come from.
     pub scopes: Scopes<'a>,
@@ -62,6 +64,7 @@ impl App {
             settings: settings.agent,
             host_settings: settings.host,
             commands: place.commands,
+            sandbox_image: place.sandbox_image,
             cwd: place.cwd,
             system_prompt: place.system_prompt,
             resume: rec.resume(chosen.runner),
