@@ -20,11 +20,16 @@ jobs:
   check:
     name: check.sh
     runs-on: ubuntu-latest
+    env:
+      # The image the sandbox run tests in src/host/container.rs start; pinned so a new busybox
+      # cannot change what they test.
+      MOTHERSHIP_TEST_SANDBOX_IMAGE: busybox:1.37@sha256:a7dbc319b1438115a207e11930dc4bb3e643dcb3ec0bdd694bb36cd8fad289ec
     steps:
       - uses: actions/checkout@v7
       # Installs the Rust toolchain pinned in mise.toml, so CI and local builds use the same compiler.
       - uses: jdx/mise-action@v5
       - uses: Swatinem/rust-cache@v2
+      - run: docker pull "$MOTHERSHIP_TEST_SANDBOX_IMAGE"
       - run: scripts/check.sh
 
   gitleaks:

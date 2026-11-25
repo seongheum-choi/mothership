@@ -182,6 +182,8 @@ struct Container {
 }
 
 impl Drop for Container {
+    // shortcut: blocks a tokio worker for as long as `rm --force` takes (well under a second
+    // with a healthy daemon); spawn it instead if a slow daemon ever stalls other sessions.
     fn drop(&mut self) {
         let _ = std::process::Command::new(&self.runtime)
             .args(["rm", "--force", &self.name])
@@ -269,17 +271,15 @@ mod tests {
         let inspected = std::process::Command::new("docker")
             .args(["image", "inspect", &image])
             .output();
-        match inspected {
-            Ok(out) if out.status.success() => Some(host(name, Some(&image), "docker")),
-            Ok(out) => {
-                eprintln!("skipped: {}", String::from_utf8_lossy(&out.stderr).trim());
-                None
-            }
-            Err(e) => {
-                eprintln!("skipped: no docker: {e}");
-                None
-            }
-        }
+        let why = match inspected {
+            Ok(out) if out.status.success() => return Some(host(name, Some(&image), "docker")),
+            Ok(out) => String::from_utf8_lossy(&out.stderr).trim().to_string(),
+            Err(e) => format!("no docker: {e}"),
+        };
+        // CI pulls the image, so there a skip would only hide that these stopped running.
+        assert!(std::env::var_os("CI").is_none(), "no sandbox on CI: {why}");
+        eprintln!("skipped: {why}");
+        None
     }
 
     async fn result(h: &Host, r: &SandboxRun) -> Value {

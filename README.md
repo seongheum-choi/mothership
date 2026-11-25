@@ -449,7 +449,7 @@ cargo run
 
 `cargo test` includes [`tests/integration`](tests/integration), which runs the built binary against local stand-ins for Linear (through `LINEAR_API_URL`), Zulip, GitHub webhooks, `claude` and `gh`. `cargo test --test integration -- <name>` runs only the scenarios whose name contains `<name>`; a failed one keeps its directory and prints the end of mothership's log.
 
-The [sandbox run](#sandbox-runs) tests in `src/host/container.rs` start real containers through `docker` from a local `busybox` image (`MOTHERSHIP_TEST_SANDBOX_IMAGE` names another), and print `skipped:` and pass where Docker or the image is out of reach, as inside the Bash sandbox; `docker pull busybox` before running them.
+The [sandbox run](#sandbox-runs) tests in `src/host/container.rs` start real containers through `docker` from a local `busybox` image (`MOTHERSHIP_TEST_SANDBOX_IMAGE` names another), and print `skipped:` and pass where Docker or the image is out of reach, as inside the Bash sandbox; `docker pull busybox` before running them. On CI (`CI` set) they fail instead of skipping, and CI pulls the image pinned in its workflow.
 
 An agent working on mothership inside the Bash sandbox cannot pass the scenarios that check a process tree is killed (`linear_stop_kills_the_agent`, `linear_agent_that_never_starts_is_stopped`, `sigterm_stops_running_agents`), since the sandbox blocks signalling those processes; CI is the gate for them.
 
