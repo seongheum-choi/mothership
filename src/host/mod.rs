@@ -68,9 +68,7 @@ pub struct Host {
 /// its binaries, found on the agent's `PATH` (see [`codex::binaries`]).
 pub fn codex_paths(app: &App) -> Vec<PathBuf> {
     let mut paths = vec![codex_home(app)];
-    if let Some(bin) =
-        crate::agent::limit::locate(&app.cfg.agent.codex_bin, app.agent_path().as_deref())
-    {
+    if let Some(bin) = app.codex_bin() {
         paths.extend(codex::binaries(&bin));
     }
     paths

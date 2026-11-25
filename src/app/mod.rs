@@ -172,15 +172,21 @@ impl App {
     }
 
     /// Whether a turn that hit Claude Code's usage limit can move to Codex: `CODEX_BIN` is there
-    /// on the `PATH` the agent would run with, not this process's, and `HOST_SANDBOX` to
-    /// confine it (see [`crate::host::codex_runner`]).
+    /// (see [`Self::codex_bin`]) and `HOST_SANDBOX` to confine it (see
+    /// [`crate::host::codex_runner`]).
     pub fn codex_installed(&self) -> bool {
-        self.cfg.agent.host_sandbox.is_some()
-            && limit::installed(&self.cfg.agent.codex_bin, self.agent_path().as_deref())
+        self.cfg.agent.host_sandbox.is_some() && self.codex_bin().is_some()
+    }
+
+    /// Where `CODEX_BIN` is: a path to a file, or a name found on the `PATH` the agent would run
+    /// with, not this process's. Every use of the binary, running it or letting a sandbox read
+    /// it, takes it from here, so they cannot disagree.
+    pub fn codex_bin(&self) -> Option<PathBuf> {
+        limit::locate(&self.cfg.agent.codex_bin, self.agent_path().as_deref())
     }
 
     /// The `PATH` agent processes get, when `AGENT_ENV` carries one. Without it they inherit this
-    /// process's, which [`limit::installed`] falls back to.
+    /// process's, which [`limit::locate`] falls back to.
     pub fn agent_path(&self) -> Option<String> {
         self.cfg
             .agent_env

@@ -166,9 +166,9 @@ pub fn binaries(bin: &Path) -> Vec<PathBuf> {
 pub fn runner(app: &App, key: &str, launch: &Launch) -> anyhow::Result<Confined> {
     let sandbox = (app.cfg.agent.host_sandbox.clone())
         .context("HOST_SANDBOX is not a file, so Codex cannot run confined to the session")?;
-    let bin = &app.cfg.agent.codex_bin;
-    let bin =
-        crate::agent::limit::locate(bin, app.agent_path().as_deref()).unwrap_or_else(|| bin.into());
+    let bin = app
+        .codex_bin()
+        .unwrap_or_else(|| app.cfg.agent.codex_bin.clone().into());
     let own = app.session_dir(key);
     let codex = CodexHome::of(app, key);
     let filter = super::run_root(&app.cfg.home).join(super::seccomp::FILE);
