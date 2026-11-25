@@ -71,8 +71,7 @@ pub(super) struct Turn<'a, S: Surface> {
 }
 
 impl<S: Surface> Turn<'_, S> {
-    /// Runs one agent process. `tickets` holds prompts it is answering; on error the caller
-    /// fails whatever is left. Prompts that arrive after its input closed go to `queued`.
+    /// Runs one agent process; `tickets` and `queued` work as in [`Self::drive`].
     async fn run(
         &self,
         prompt: &str,
@@ -114,7 +113,8 @@ impl<S: Surface> Turn<'_, S> {
         driven
     }
 
-    /// Runs `launch`, and once more on Codex when Claude Code ended it on its usage limit.
+    /// Runs `launch`, and once more on Codex with every prompt it was given when Claude Code
+    /// ended it on its usage limit.
     async fn drive_all(
         &self,
         launch: Launch,
@@ -125,8 +125,6 @@ impl<S: Surface> Turn<'_, S> {
         progress: &mut ProgressTail,
     ) -> Result<()> {
         let (app, surface, key) = (self.app, &self.reg.surface, self.key);
-        // A Claude turn that ends on the usage limit runs again on Codex, with every prompt
-        // it was given.
         let retry = (launch.runner == Runner::Claude).then(|| launch.clone());
         let mut prompt = prompt.to_string();
         let ended = self

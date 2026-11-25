@@ -78,7 +78,6 @@ pub fn usage(asked: bool) -> ExitCode {
     }
 }
 
-/// Runs a `session` command against the running instance and prints its answer.
 pub fn session(command: Session) -> Result<ExitCode> {
     let request = match command {
         Session::Status { issue } => Request::Status { issue },

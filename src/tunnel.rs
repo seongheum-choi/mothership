@@ -1,7 +1,5 @@
-//! Public ingress for webhooks. Any tunnel is a supervised child process; adding one (ngrok,
-//! tailscale funnel, ...) means adding a variant and its command.
-//!
-//! Running no tunnel at all is fine too: anything that forwards to `BIND` works.
+//! Public ingress for webhooks: each tunnel is a supervised child process. Running none is fine
+//! too; anything that forwards to `BIND` works.
 
 use std::time::Duration;
 use tokio::process::Command;

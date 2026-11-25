@@ -6,8 +6,7 @@ use super::Runner;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
-/// Whether a turn runs on Codex rather than `configured`: only one that would run Claude Code
-/// switches, and only until the limit resets at `resets_at` (Unix seconds).
+/// Whether a turn moves to Codex; `resets_at` and `now` are Unix seconds.
 pub fn applies(configured: Runner, resets_at: u64, now: u64) -> bool {
     configured == Runner::Claude && now < resets_at
 }

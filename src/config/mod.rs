@@ -21,7 +21,6 @@ use std::{
 };
 use vars::{Vars, parse_home_entries, parse_paths};
 
-/// `HOST_SANDBOX` when unset: the platform's own.
 const DEFAULT_HOST_SANDBOX: &str = if cfg!(target_os = "macos") {
     "/usr/bin/sandbox-exec"
 } else {
@@ -63,9 +62,7 @@ pub struct Config {
 /// The CLIs fixed at startup; which one runs a turn and its model settings are reloaded with
 /// `.env` (see [`Live`]).
 pub struct AgentConfig {
-    /// `CLAUDE_BIN`
     pub claude_bin: String,
-    /// `CODEX_BIN`
     pub codex_bin: String,
     /// Permission mode for chat sessions; issue sessions always bypass prompts.
     pub chat_permission_mode: String,
@@ -75,10 +72,9 @@ pub struct AgentConfig {
     /// `AGENT_BACKGROUND_TIMEOUT`: how long an agent that answered may keep running for its
     /// background tasks before its input closes.
     pub background_timeout: Duration,
-    /// `HOST_SANDBOX`: the `sandbox-exec` (macOS) or `bwrap` (Linux) that confines what
-    /// mothership runs for a session. `None` when it is not a file at startup: sessions are
-    /// then not told about host runs, so their workflows keep that work instead of asking for
-    /// it.
+    /// `HOST_SANDBOX`: the `sandbox-exec` (macOS) or `bwrap` (Linux) confining what mothership
+    /// runs for a session. `None` when it is not a file at startup: sessions are then not told
+    /// about host runs, so their workflows keep that work instead of asking for it.
     pub host_sandbox: Option<String>,
 }
 

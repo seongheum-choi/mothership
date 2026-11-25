@@ -85,9 +85,9 @@ pub(super) fn parse_list(list: &str) -> Vec<String> {
 
 /// A comma-separated path list (`SANDBOX_READ`, `SANDBOX_WRITE`) with `~` standing for the
 /// user's home, since the deny rules need absolute paths. The OS sandbox judges a symlink by
-/// its target, so a symlink's resolved target is listed after it. A path that does not exist
-/// yet is resolved through its nearest existing ancestor: `/tmp/corgi`, which corgi creates
-/// only when it runs tests, has to be allowed as `/private/tmp/corgi` on macOS.
+/// its target, so a symlink's resolved target is listed after it, and a path that does not
+/// exist yet is resolved through its nearest existing ancestor (`/tmp/x` is `/private/tmp/x`
+/// on macOS).
 pub(super) fn parse_paths(key: &str, list: Option<&str>, user_home: &Path) -> Result<Vec<PathBuf>> {
     let mut paths = Vec::new();
     for p in parse_list(list.unwrap_or_default()) {

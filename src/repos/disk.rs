@@ -37,9 +37,8 @@ pub(super) fn check_on_disk(repo: &Repo) -> Result<PathBuf> {
             .output()
             .context("running git")?;
         // A subdirectory of a clone, or anything under a `$HOME` kept in git, is inside a
-        // repository too, but worktrees are cut from the clone's top.
-        // git's own complaint (not a repository, `safe.directory`) is the useful part when
-        // it fails.
+        // repository too, but worktrees are cut from the clone's top. When git fails, its own
+        // complaint (not a repository, `safe.directory`) is the useful part.
         let why = String::from_utf8_lossy(&top.stderr).trim().to_string();
         let top = String::from_utf8_lossy(&top.stdout);
         let top = top.trim_end_matches('\n');
@@ -65,7 +64,6 @@ pub(super) fn check_on_disk(repo: &Repo) -> Result<PathBuf> {
     Ok(resolved)
 }
 
-/// The URL of the `origin` remote of the clone at `path`.
 pub fn origin_url(path: &Path) -> Result<String> {
     let out = std::process::Command::new("git")
         .arg("-C")

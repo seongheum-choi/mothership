@@ -72,7 +72,6 @@ impl Repo {
         }
     }
 
-    /// The review backend of this repository's sessions: its own, else the instance's.
     pub fn review_backend(&self, instance: ReviewBackend) -> ReviewBackend {
         self.review.unwrap_or(instance)
     }

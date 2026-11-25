@@ -1,7 +1,6 @@
-//! Settings that change without a restart: the repository list, re-read from `<home>/repos.json`
-//! (or `REPO_PATH`/`BASE_BRANCH`) when that file or `<home>/.env` has a new modification time,
-//! and the runner and model defaults from `.env`. Any other `.env` key is read once at startup, so a change
-//! to it is only logged.
+//! Settings that change without a restart: the repository list from `<home>/repos.json` (or
+//! `REPO_PATH`/`BASE_BRANCH`) and the runner and model defaults, re-read when `repos.json` or
+//! `.env` changes. Other `.env` keys are read once at startup, so a change to one is only logged.
 
 use super::{model::ModelDefaults, vars::Vars};
 use crate::repos::Repo;
@@ -44,7 +43,6 @@ impl Stamps {
     }
 }
 
-/// What the last load saw: the files' times and the `.env` entries.
 struct Seen {
     stamps: Stamps,
     env: HashMap<String, String>,

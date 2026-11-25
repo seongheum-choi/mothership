@@ -6,11 +6,11 @@ use tokio::process::Command;
 
 /// Returns the issue's worktree, creating it under `dir` with `branch` if needed.
 ///
-/// An existing `dir` is reused as is. An existing checkout of the branch (an earlier session, another tool's worktree) is
-/// reused, because git refuses a second one. A branch that exists locally or on origin is
-/// continued. A new branch starts from `origin/<base>` with no upstream, so a bare
-/// `git push` can never target the base branch. The fetch from origin runs with `fetch_env`
-/// added, such as the credentials of [`crate::gerrit::git_env`].
+/// An existing checkout of the branch (an earlier session, another tool's worktree) is reused,
+/// because git refuses a second one. A branch that exists locally or on origin is continued.
+/// A new branch starts from `origin/<base>` with no upstream, so a bare `git push` can never
+/// target the base branch. The fetch from origin runs with `fetch_env` added, such as the
+/// credentials of [`crate::gerrit::git_env`].
 pub async fn ensure(
     repo: &Path,
     dir: &Path,
@@ -31,7 +31,7 @@ pub async fn ensure(
     if dir.exists() {
         // The issue's own worktree. Reuse it on whatever branch it is now: skills move it
         // across stacked branches, and it may belong to another clone of the same repository.
-        // The caller keeps another repository's worktree out of `dir` with [`of_another_repository`].
+        // The caller keeps another repository's worktree out with `of_another_repository`.
         if git(dir, &["rev-parse", "--is-inside-work-tree"])
             .await
             .is_ok()
@@ -139,7 +139,6 @@ pub async fn remove(repo: &Path, dir: &Path) -> Result<bool> {
     Ok(true)
 }
 
-/// Whether the clone at `repo` has the local branch `branch`.
 pub async fn has_branch(repo: &Path, branch: &str) -> bool {
     has_ref(repo, &format!("refs/heads/{branch}")).await
 }

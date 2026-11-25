@@ -50,7 +50,6 @@ pub trait Surface: Send + Sync + Sized + 'static {
     }
 }
 
-/// Posted on a turn held while the instance drains for a restart.
 const HELD: &str =
     "mothership is restarting for an update; this turn starts as soon as it is back.";
 
@@ -88,8 +87,7 @@ pub enum Update {
 }
 
 impl Update {
-    /// A thought of the turn itself rather than of a subagent: notes mothership adds, and the
-    /// main agent's interim text.
+    /// A thought of the main agent or of mothership, not of a subagent.
     pub fn thought(text: impl Into<String>) -> Self {
         Self::Thought {
             text: text.into(),
@@ -132,7 +130,6 @@ impl<S: Surface> Registry<S> {
         self.live.lock().expect("live lock poisoned")
     }
 
-    /// What `/status` shows of each running turn.
     fn activity_map(&self) -> MutexGuard<'_, HashMap<String, Activity>> {
         self.activity.lock().expect("activity lock poisoned")
     }
