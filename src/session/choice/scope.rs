@@ -1,7 +1,7 @@
 //! Where one field of a turn's choice comes from: each scope's candidate, the narrowest one
 //! that is set, and the line that names the values and their sources.
 
-use super::labels;
+use super::{Scopes, labels};
 use crate::config::ModelFields;
 
 /// Where one field's value came from.
@@ -48,8 +48,24 @@ pub(super) fn label_value(label: &str) -> Option<String> {
     labels::value(label).map(String::from)
 }
 
+/// One field's candidates, narrowest first: the message's, the label's, then what the mode and
+/// the repository set, read with `field`.
+pub(super) fn candidates<'a, T: Clone>(
+    message: Candidate<'a, T>,
+    label: Candidate<'a, T>,
+    scopes: &Scopes<'a>,
+    field: impl Fn(&ModelFields) -> Option<&T>,
+) -> [Candidate<'a, T>; 4] {
+    [
+        message,
+        label,
+        from_scope(scopes.mode, Source::Mode, &field),
+        from_scope(scopes.repo, Source::Repo, &field),
+    ]
+}
+
 /// What a mode or a repository set for one field.
-pub(super) fn from_scope<'a, T: Clone>(
+fn from_scope<'a, T: Clone>(
     scope: Option<(&'a str, &'a ModelFields)>,
     source: fn(&'a str) -> Source<'a>,
     field: impl Fn(&ModelFields) -> Option<&T>,
