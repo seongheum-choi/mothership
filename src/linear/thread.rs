@@ -129,7 +129,6 @@ pub(super) fn root_comment(session: &Value) -> Option<&str> {
         .or_else(|| comment["id"].as_str())
 }
 
-/// The newest report among `nodes`.
 fn latest_report(nodes: &[Value]) -> Option<Report> {
     nodes
         .iter()

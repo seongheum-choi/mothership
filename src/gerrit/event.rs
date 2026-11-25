@@ -53,7 +53,7 @@ pub(super) struct Event {
 
 impl Event {
     /// Keeps `comment-added` events, in the JSON of `gerrit stream-events` and the webhooks
-    /// plugin; every other event is `None`.
+    /// plugin.
     pub(super) fn parse(p: &Value) -> Option<Self> {
         if p["type"] != "comment-added" {
             return None;
@@ -71,7 +71,7 @@ impl Event {
         })
     }
 
-    /// Why this review must not reach an agent, if it must not. `watched` tells whether the
+    /// Why this review must not reach an agent, if it must not; `watched` is whether the
     /// event's project is the origin of one of this instance's repositories.
     pub(super) fn screen(&self, watched: bool, cfg: &GerritConfig) -> Result<(), &'static str> {
         if !watched {

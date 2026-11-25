@@ -58,8 +58,7 @@ impl FromStr for ReviewBackend {
     }
 }
 
-/// Writes the reply wrapper `script` to `<home>/<name>/<name>` and returns its directory, which
-/// goes first on agents' `PATH`.
+/// Writes the reply wrapper `script` to `<home>/<name>/<name>` and returns its directory.
 pub fn install_reply(home: &Path, name: &str, script: &str) -> Result<PathBuf> {
     // A directory of its own: it goes first on agents' PATH, so nothing else may live there.
     let bin_dir = home.join(name);

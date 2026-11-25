@@ -28,7 +28,6 @@ impl Kind {
     }
 }
 
-/// A PR's head branch and the repository it lives in.
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct Head {
     pub(super) branch: String,
@@ -70,7 +69,6 @@ pub(super) struct Feedback {
     /// The pull request's title and description, which may link its Linear issue.
     pub(super) pr_title: String,
     pub(super) pr_body: String,
-    /// Review or comment id and its URL.
     pub(super) id: u64,
     pub(super) url: String,
     /// Unknown for `issue_comment`, which describes the PR as an issue.
@@ -78,10 +76,9 @@ pub(super) struct Feedback {
 }
 
 impl Feedback {
-    /// Keeps submitted reviews with text, new review comments, and new conversation comments
-    /// on a PR. A review without text adds nothing its line comments, which arrive as their
-    /// own events, don't already say. Edits are ignored. Bot authors are dropped: GitHub Apps
-    /// (Linear's link-back comments among them) would otherwise feed agents each other's output.
+    /// A review without text adds nothing its line comments, which arrive as their own events,
+    /// don't already say. Bot authors are dropped: GitHub Apps (Linear's link-back comments
+    /// among them) would otherwise feed agents each other's output.
     pub(super) fn parse(event: &str, p: &Value) -> Option<Self> {
         let s = |v: &Value| v.as_str().unwrap_or_default().to_string();
         let (kind, item, pr, head) = match (event, p["action"].as_str()?) {
@@ -132,7 +129,7 @@ impl Feedback {
         })
     }
 
-    /// Why this feedback must not reach an agent, if it must not. `watched` tells whether the
+    /// Why this feedback must not reach an agent, if it must not; `watched` is whether the
     /// event's repository is the origin of one of this instance's repositories.
     pub(super) fn screen(&self, watched: bool, cfg: &GitHubConfig) -> Result<(), &'static str> {
         if !watched {

@@ -7,7 +7,6 @@ use crate::{app::App, config::GitHubAppConfig, store::now_secs};
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
-/// GitHub's OAuth host, for the device flow and the token grants.
 const OAUTH_URL: &str = "https://github.com";
 
 /// A turn gets a token good for at least this long: refreshed once less than this remains of
@@ -87,7 +86,6 @@ impl Grant {
     }
 }
 
-/// Posts a grant to GitHub's token endpoint.
 pub(super) async fn grant(
     app: &App,
     cfg: &GitHubAppConfig,
@@ -108,8 +106,8 @@ pub(super) async fn grant(
     .await
 }
 
-/// Posts `form` to `path` on GitHub's OAuth host and reads the JSON answer. `endpoint` names
-/// the endpoint in errors and `answer` its answer.
+/// Posts `form` to `path` on GitHub's OAuth host; `endpoint` and `answer` name the endpoint
+/// and its answer in errors.
 pub(super) async fn post_form<T: DeserializeOwned>(
     app: &App,
     path: &str,

@@ -81,7 +81,6 @@ pub(super) async fn callback(
             );
         }
     };
-    // The token is stored only once its workspace is the one this instance serves.
     if let Err(e) = linear.pin(&app, ws) {
         // The details name workspaces, so they stay in the log, not the public response.
         tracing::warn!("refused Linear install: {e:#}");

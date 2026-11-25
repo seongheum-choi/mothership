@@ -6,8 +6,6 @@ use crate::{app::App, session::choice, store::SessionRec};
 use serde_json::{Value, json};
 use std::sync::Arc;
 
-/// Records the session, settles its repository and mode, then runs the prompt, or keeps it, and
-/// every reply after it, until a reply settles whatever is missing.
 pub(super) async fn start_turn(
     app: &Arc<App>,
     sid: &str,
