@@ -170,6 +170,7 @@ pub fn runner(app: &App, key: &str, launch: &Launch) -> anyhow::Result<Confined>
         &launch.host_settings,
         &launch.cwd,
         &own,
+        &own,
         Some(&codex),
     )
     .map_err(anyhow::Error::msg)?;
