@@ -41,8 +41,11 @@
     <key>ThrottleInterval</key>
     <integer>10</integer>
 
+    <!-- Standard, not Background: launchd gives every child (agents, host runs,
+         the browsers their tests start) the job's QoS, and Background QoS runs
+         them on efficiency cores with coalesced timers, several times slower. -->
     <key>ProcessType</key>
-    <string>Background</string>
+    <string>Standard</string>
 
     <key>StandardOutPath</key>
     <string>/Users/YOU/.mothership/logs/mothership.out.log</string>
