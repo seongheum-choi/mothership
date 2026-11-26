@@ -5,6 +5,7 @@
 mod background;
 pub mod choice;
 mod log;
+pub mod orphans;
 mod process;
 mod relay;
 mod turn;

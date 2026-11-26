@@ -148,8 +148,8 @@ pub(super) fn tail(bytes: &[u8], n: usize) -> String {
 /// A run's process group (its leader's pid). Dropped while the leader runs (a timeout, the
 /// turn ending), it kills the leader's whole tree, since Codex starts commands in groups of
 /// their own, and then the group. Once the leader exited, only the group is left to kill.
-// ponytail: a process that left both the tree and the group (setsid, a double fork) survives;
-// a per-run launchd job or a user per run would catch it.
+// A process that left both the tree and the group (setsid, a double fork) survives the run,
+// until `session::orphans` finds it by its environment once the session's issue closes.
 struct Group(Option<u32>);
 
 impl Group {

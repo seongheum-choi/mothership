@@ -1,5 +1,5 @@
 //! What closing, deleting or unassigning an issue ends: its running sessions, and once closed,
-//! its worktrees.
+//! its worktrees and the processes its sessions left running.
 
 use crate::{
     app::App,
@@ -58,8 +58,9 @@ pub(super) fn issue_change(p: &Value) -> Option<IssueChange<'_>> {
     }
 }
 
-/// Stops the issue's running sessions. A closed issue also marks its sessions closed and
-/// removes their worktrees (branches stay); one with uncommitted changes is kept and logged.
+/// Stops the issue's running sessions. A closed issue also marks its sessions closed, removes
+/// their worktrees (branches stay; one with uncommitted changes is kept and logged) and kills
+/// the processes they left running.
 pub(super) async fn on_issue_change(app: &Arc<App>, change: IssueChange<'_>) {
     let (issue_id, note) = match change {
         IssueChange::Closed(id) => (id, "The issue was closed, so I stopped working on it."),
@@ -150,6 +151,15 @@ pub(super) async fn on_issue_change(app: &Arc<App>, change: IssueChange<'_>) {
             }
         });
     }
+    // After the worktree locks, so the stopped turns are gone; a reopened session keeps its own.
+    let closed: Vec<String> = app.store.read(|s| {
+        s.sessions
+            .iter()
+            .filter(|(_, r)| r.issue_id == issue_id && r.closed)
+            .map(|(k, _)| k.clone())
+            .collect()
+    });
+    crate::session::orphans::kill_left(app, closed.iter().map(String::as_str));
 }
 
 /// The closed issue's workspaces that may go, each with the session that recorded it first
