@@ -43,6 +43,7 @@ pub const ALL: &[(&str, Scenario)] = scenarios![
     linear_closed_issue_keeps_worktrees_still_in_use,
     linear_refuses_other_workspaces_and_bad_signatures,
     linear_token_is_refreshed_at_startup,
+    linear_mcp_outlives_a_token_refresh,
     linear_routes_between_two_repositories,
     linear_refused_reply_is_not_kept,
     linear_lost_worktree_is_cut_again_where_its_branch_is,
@@ -807,6 +808,57 @@ async fn linear_token_is_refreshed_at_startup(ctx: Ctx) -> Result<()> {
         state["linear"]["access_token"] == mock::FRESH_TOKEN,
         "{state}"
     );
+    Ok(())
+}
+
+/// A turn's MCP config points at mothership, not at a Linear token: when the token the turn
+/// started with expires, the next MCP request is refreshed and reaches Linear with the new one.
+async fn linear_mcp_outlives_a_token_refresh(ctx: Ctx) -> Result<()> {
+    let h = Harness::start(&ctx, Setup::default()).await?;
+    let issue = issue(1, "Fix the thing.");
+    h.mock.add_issue(&issue);
+    ensure!(h.linear(created("s1", &issue, "go")).await? == 200);
+    h.activity("s1", "response", 1).await?;
+
+    let config: Value =
+        serde_json::from_slice(&std::fs::read(h.home.join(".mothership/mcp/s1.json"))?)?;
+    let server = &config["mcpServers"]["linear"];
+    let url = server["url"].as_str().context("MCP url")?;
+    let auth = server["headers"]["Authorization"]
+        .as_str()
+        .context("MCP authorization")?;
+    ensure!(!config.to_string().contains("Bearer token"), "{config}");
+
+    let http = reqwest::Client::new();
+    let refused = http.post(url).body("{}").send().await?;
+    ensure!(
+        refused.status() == 401,
+        "without the secret: {}",
+        refused.status()
+    );
+    ensure!(h.mock.read(|r| r.mcp_tokens.is_empty()));
+
+    let request = r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#;
+    let answer = http
+        .post(url)
+        .header("authorization", auth)
+        .header("content-type", "application/json")
+        .header("accept", "application/json, text/event-stream")
+        .body(request)
+        .send()
+        .await?;
+    ensure!(answer.status() == 200, "{}", answer.status());
+    ensure!(answer.headers()["mcp-session-id"] == "mcp-1");
+    ensure!(answer.headers()["content-type"] == "text/event-stream");
+    let body = answer.text().await?;
+    ensure!(
+        body == format!("event: message\ndata: {request}\n\n"),
+        "{body}"
+    );
+    let tokens = h.mock.read(|r| r.mcp_tokens.clone());
+    ensure!(tokens == ["token", mock::FRESH_TOKEN], "{tokens:?}");
+    let grants = h.mock.read(|r| r.token_grants.len());
+    ensure!(grants == 1, "{grants} token grants");
     Ok(())
 }
 

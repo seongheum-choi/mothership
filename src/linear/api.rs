@@ -87,7 +87,7 @@ impl Linear {
 
     /// Refreshes unless another task already replaced `stale`. Linear rotates refresh
     /// tokens, so two concurrent refreshes would invalidate each other.
-    async fn refresh(&self, app: &App, stale: &str) -> Result<()> {
+    pub(super) async fn refresh(&self, app: &App, stale: &str) -> Result<()> {
         let _guard = self.refresh_lock.lock().await;
         let current = app.store.read(|s| s.linear.clone());
         if current.access_token != stale {

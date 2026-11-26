@@ -32,7 +32,7 @@ use activity::{prefixed, thought, tool_activity};
 use anyhow::{Context, Result, bail};
 use axum::{
     Router,
-    routing::{get, post},
+    routing::{any, get, post},
 };
 use pin::Workspace;
 use std::{
@@ -60,6 +60,7 @@ pub fn routes() -> Router<Arc<App>> {
         .route("/webhook", post(webhook::webhook)) // legacy path some Linear apps are configured with
         .route("/oauth/authorize", get(oauth::authorize))
         .route("/callback", get(oauth::callback))
+        .route(mcp::PATH, any(mcp::proxy))
 }
 
 impl Surface for Linear {
