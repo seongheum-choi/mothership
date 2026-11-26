@@ -357,7 +357,9 @@ Any tunnel that forwards to `BIND` works. With `CLOUDFLARE_TOKEN` set, mothershi
 
 ## Operating on macOS (launchd)
 
-[`contrib/launchd/mothership.plist`](contrib/launchd/mothership.plist) is a user-agent template: it logs to `~/.mothership/logs/`, restarts the binary (`RunAtLoad`, `KeepAlive`, `ThrottleInterval`, `ProcessType=Background`), and carries only `PATH` in `EnvironmentVariables`. Secrets stay in `~/.mothership/.env`. Edit every `/Users/YOU` path and the binary path first — launchd does not expand `~`.
+[`contrib/launchd/mothership.plist`](contrib/launchd/mothership.plist) is a user-agent template: it logs to `~/.mothership/logs/`, restarts the binary (`RunAtLoad`, `KeepAlive`, `ThrottleInterval`), runs it at `ProcessType=Standard`, and carries only `PATH` in `EnvironmentVariables`. Secrets stay in `~/.mothership/.env`. Edit every `/Users/YOU` path and the binary path first — launchd does not expand `~`.
+
+launchd runs the job and every process it starts (agents, host runs, the browsers their tests open) at the job's `ProcessType`. `Background` confines them to efficiency cores and coalesces their timers, so a browser test suite that takes 20 seconds by hand takes two minutes and trips its own timeouts. A Mac installed from an older template that still says `Background` needs the key changed to `Standard` in `~/Library/LaunchAgents/com.mothership.agent.plist` and the job reloaded with `launchctl bootout` and `launchctl bootstrap`; `kickstart -k` keeps the loaded plist.
 
 ```sh
 cp contrib/launchd/mothership.plist ~/Library/LaunchAgents/com.mothership.agent.plist
