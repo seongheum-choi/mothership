@@ -52,6 +52,15 @@ async fn serve() -> Result<()> {
     cfg.sandbox.read.extend(stops);
     let tunnel = cfg.tunnel.take();
     let app = app::App::new(cfg)?;
+    // What closed sessions left running when an instance stopped before killing it.
+    let closed: Vec<String> = app.store.read(|s| {
+        s.sessions
+            .iter()
+            .filter(|(_, r)| r.closed)
+            .map(|(k, _)| k.clone())
+            .collect()
+    });
+    session::orphans::kill_left(&app, closed.iter().map(String::as_str));
     // Before `/status` reports `draining`: without a handler, SIGUSR1 would end the process.
     tokio::spawn(drain_signals(app.clone(), drain_signal_streams()?));
 
