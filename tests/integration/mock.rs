@@ -1,4 +1,4 @@
-//! Local stand-ins for Linear's GraphQL and OAuth token endpoints and Zulip's REST API, on one
+//! Local stand-ins for Linear's GraphQL, OAuth token and MCP endpoints and Zulip's REST API, on one
 //! port. They answer the calls mothership makes and record what it sent.
 
 use anyhow::{Context, Result};
@@ -39,6 +39,8 @@ pub struct Recorded {
     pub session_activities: HashMap<String, Vec<Value>>,
     /// `commentCreate` inputs; the n-th (from 1) creates comment `comment-<n>`.
     pub comments: Vec<Value>,
+    /// The bearer token of each `/mcp` request, in order.
+    pub mcp_tokens: Vec<String>,
     /// `/oauth/token` forms.
     pub token_grants: Vec<HashMap<String, String>>,
     /// Zulip `POST /messages` forms.
@@ -67,6 +69,7 @@ impl Mock {
         let router = Router::new()
             .route("/graphql", post(graphql))
             .route("/oauth/token", post(token))
+            .route("/mcp", post(mcp))
             .route("/api/v1/messages", post(zulip_message).get(zulip_history))
             .route(
                 "/api/v1/messages/{id}/reactions",
@@ -85,6 +88,14 @@ impl Mock {
             recorded,
             server,
         })
+    }
+
+    /// Points mothership's Linear GraphQL, OAuth and MCP calls here.
+    pub fn linear_env(&self) -> [(&'static str, String); 2] {
+        [
+            ("LINEAR_API_URL", self.url.clone()),
+            ("LINEAR_MCP_URL", format!("{}/mcp", self.url)),
+        ]
     }
 
     pub fn read<T>(&self, f: impl FnOnce(&Recorded) -> T) -> T {
@@ -199,6 +210,31 @@ async fn token(
         .token_grants
         .push(form);
     Json(json!({"access_token": FRESH_TOKEN, "refresh_token": "refresh-2"}))
+}
+
+/// Linear's MCP, which takes only a freshly refreshed token and answers the request back as a
+/// server-sent event.
+async fn mcp(State(recorded): State<Shared>, headers: HeaderMap, body: String) -> Response {
+    let token = headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .unwrap_or_default()
+        .to_string();
+    let fresh = token == FRESH_TOKEN;
+    recorded
+        .lock()
+        .expect("mock state poisoned")
+        .mcp_tokens
+        .push(token);
+    if !fresh {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    let headers = [
+        ("content-type", "text/event-stream"),
+        ("mcp-session-id", "mcp-1"),
+    ];
+    (headers, format!("event: message\ndata: {body}\n\n")).into_response()
 }
 
 async fn zulip_message(

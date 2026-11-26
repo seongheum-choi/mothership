@@ -16,6 +16,9 @@ pub struct LinearConfig {
     /// `LINEAR_API_URL`, the GraphQL and OAuth token host. Left unset except by the integration
     /// tests, which point it at a local mock.
     pub api_url: String,
+    /// `LINEAR_MCP_URL`, Linear's hosted MCP that mothership proxies for agents. Left unset
+    /// except by the integration tests.
+    pub mcp_url: String,
     /// `LINEAR_TRUSTED_USERS`: Linear user ids or emails who may call the agent; empty, anyone.
     pub trusted_users: Vec<String>,
 }
@@ -29,6 +32,9 @@ impl LinearConfig {
             workspace: vars.get("LINEAR_WORKSPACE"),
             seed_tokens,
             api_url: linear_api_url(vars.get("LINEAR_API_URL")),
+            mcp_url: vars
+                .get("LINEAR_MCP_URL")
+                .unwrap_or_else(|| "https://mcp.linear.app/mcp".into()),
             trusted_users: vars.list("LINEAR_TRUSTED_USERS"),
         })
     }

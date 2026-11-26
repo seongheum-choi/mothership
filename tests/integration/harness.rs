@@ -128,7 +128,6 @@ impl Harness {
             // fake `claude` makes none.
             ("MOTHERSHIP_ALLOW_LONG_TMPDIR", "1".into()),
             ("PATH", format!("{}:{path}", bin.display())),
-            ("LINEAR_API_URL", mock.url.clone()),
             ("LINEAR_CLIENT_ID", "client".into()),
             ("LINEAR_CLIENT_SECRET", "client-secret".into()),
             ("LINEAR_WEBHOOK_SECRET", LINEAR_SECRET.into()),
@@ -149,6 +148,7 @@ impl Harness {
             ("GIT_CONFIG_NOSYSTEM", "1".into()),
             ("GIT_TERMINAL_PROMPT", "0".into()),
         ]);
+        env.extend(mock.linear_env());
         if setup.zulip {
             env.extend([
                 ("ZULIP_SITE", mock.url.clone()),
