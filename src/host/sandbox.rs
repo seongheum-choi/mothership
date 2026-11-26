@@ -144,9 +144,10 @@ pub fn prompt(c: &Limits) -> String {
          `$MOTHERSHIP_RUNS` under a temporary name, rename it to `<id>.json`, and wait for \
          `<id>.out.json`. mothership runs the command with `/bin/sh -c` in a fresh container \
          from the repository's image: no network but its own loopback, the workspace read-only \
-         at `/work` (the working directory), and only `/scratch` writable (`HOME`, `TMPDIR`, \
-         `XDG_CACHE_HOME` and `CARGO_TARGET_DIR` are in it); the image holds the toolchains and \
-         dependency caches, and nothing is downloaded. `limits` may lower `memory_mb` \
+         at `/work` (the working directory), only `/scratch` writable, and an environment of \
+         the image's own variables and `{}`, `{}`, `{}` and `{}`, nothing of mothership's, the \
+         session's or yours; the image holds the toolchains and dependency caches, and nothing \
+         is downloaded. `limits` may lower `memory_mb` \
          ({}), `cpus` ({}), `pids` ({}), `file_size_mb` ({}), `disk_mb` ({}, the size of \
          `/scratch`) and `timeout_secs` ({}). `artifacts` names files at the top of \
          `/scratch` to keep; the rest of `/scratch` is gone after the run. Send the output of what \
@@ -156,7 +157,16 @@ pub fn prompt(c: &Limits) -> String {
          \"log\": <whole output>, \"artifacts\": {{<name>: <path>}}, \"skipped\": {{<name>: \
          <why>}}}}}}`; `{{\"error\": …}}` means it could not run, so there is no sandbox for \
          this work.\n\n",
-        c.memory_mb, c.cpus, c.pids, c.file_size_mb, c.disk_mb, c.timeout_secs
+        ENV[0],
+        ENV[1],
+        ENV[2],
+        ENV[3],
+        c.memory_mb,
+        c.cpus,
+        c.pids,
+        c.file_size_mb,
+        c.disk_mb,
+        c.timeout_secs
     )
 }
 
@@ -193,6 +203,27 @@ mod tests {
             (bare.limits, bare.artifacts),
             (CEILING, Vec::<String>::new())
         );
+    }
+
+    #[test]
+    fn prompt_names_every_control() {
+        let p = prompt(&CEILING);
+        for control in [
+            "no network but its own loopback",
+            "the workspace read-only at `/work`",
+            "only `/scratch` writable",
+            "an environment of the image's own variables and `HOME=/scratch/home`, \
+             `TMPDIR=/scratch/tmp`, `XDG_CACHE_HOME=/scratch/cache` and \
+             `CARGO_TARGET_DIR=/scratch/target`, nothing of mothership's, the session's or yours",
+            "`memory_mb` (4096)",
+            "`cpus` (2)",
+            "`pids` (512)",
+            "`file_size_mb` (1024)",
+            "`disk_mb` (2048, the size of `/scratch`)",
+            "`timeout_secs` (1800)",
+        ] {
+            assert!(p.contains(control), "{control:?} in {p}");
+        }
     }
 
     #[test]
