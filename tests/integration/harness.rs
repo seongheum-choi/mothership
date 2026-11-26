@@ -307,6 +307,18 @@ impl Harness {
         Ok(res.json().await?)
     }
 
+    /// The HTTP status `/status` answers a request forwarded by a tunnel with, which sets
+    /// `X-Forwarded-For` as ngrok and Tailscale Funnel do.
+    pub async fn status_through_tunnel(&self) -> Result<u16> {
+        let res = self
+            .http
+            .get(format!("{}/status", self.url))
+            .header("X-Forwarded-For", "203.0.113.7")
+            .send()
+            .await?;
+        Ok(res.status().as_u16())
+    }
+
     /// Runs `mothership <args>` against this instance's home with `stdin` as its input, as the
     /// control tower would, and returns how it exited and what it printed.
     pub async fn cli(&self, args: &[&str], stdin: &str) -> Result<std::process::Output> {
