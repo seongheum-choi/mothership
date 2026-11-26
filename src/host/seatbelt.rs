@@ -16,9 +16,11 @@ use std::{
 ///   `hooks`, other sessions' worktrees), and so do the names Claude Code's sandbox never lets
 ///   Bash write ([`PROTECTED_FILES`], [`PROTECTED_DIRS`]), but for `.idea`;
 /// - `own` (the run's own directory) is readable and writable whatever the rules say;
-/// - no directory it may write in can itself be removed, renamed or replaced, nor any `.git`
-///   moved away, since mothership reads and writes those paths again after the run, and a
-///   `.git` moved aside and back would carry hooks past the `.git/hooks` rule;
+/// - `workspace`, `own` and `session` (the session's directory, where it asks for runs) cannot
+///   themselves be removed, renamed or replaced, nor any `.git` moved away, since mothership
+///   reads and writes those paths again after the run, and a `.git` moved aside and back would
+///   carry hooks past the `.git/hooks` rule; the other `allowWrite` paths can, as under Claude
+///   Code's sandbox, so a tool may make and remove one as its lock (Playwright's `__dirlock`);
 /// - signals reach only processes in the same sandbox, as under Claude Code's;
 /// - [`ESCAPES`]: nothing outside the sandbox can be asked to run something for it.
 ///
@@ -29,13 +31,17 @@ pub(super) fn profile(
     workspace: &[PathBuf],
     always: &[String],
     own: &Path,
+    session: &Path,
 ) -> String {
     let deny = denied(settings);
     let roots = writable_roots(settings, workspace);
     let mut writable: Vec<String> = roots.iter().flat_map(|p| subpath(p)).collect();
     writable.extend(always.iter().cloned());
-    let mut fixed: Vec<String> = roots.iter().flat_map(|p| literal(p)).collect();
-    fixed.extend(literal(own));
+    let mut fixed: Vec<String> = (roots.iter())
+        .filter(|p| workspace.contains(p))
+        .flat_map(|p| literal(p))
+        .collect();
+    fixed.extend([own, session].into_iter().flat_map(literal));
 
     let mut sb = String::from("(version 1)\n(allow default)\n");
     sb.push_str("(deny signal)\n(allow signal (target same-sandbox))\n");
@@ -288,6 +294,7 @@ mod tests {
             &[PathBuf::from("/h/.m/worktrees/A")],
             &["(subpath \"/h/.codex/sessions\")".into()],
             Path::new("/h/.m/host-runs/r1"),
+            Path::new("/h/.m/progress/s1"),
         );
         let protected = protected_filters();
         assert_eq!(
@@ -303,8 +310,8 @@ mod tests {
                  (subpath \"/h/.m/progress/s1\") (subpath \"/h/.codex/sessions\"))\n\
                  (deny file-write* (subpath \"/h/.m/worktrees/B\") (literal \"/h/.m/repos/r/.git/config\") {})\n\
                  (allow file-read* file-write* (subpath \"/h/.m/host-runs/r1\"))\n\
-                 (deny file-write* (literal \"/h/.m/worktrees/A\") (literal \"/h/.cargo/registry\") \
-                 (literal \"/h/.m/progress/s1\") (literal \"/h/.m/host-runs/r1\"))\n\
+                 (deny file-write* (literal \"/h/.m/worktrees/A\") (literal \"/h/.m/host-runs/r1\") \
+                 (literal \"/h/.m/progress/s1\"))\n\
                  (deny file-write-unlink (regex #\"/\\.git$\"))\n",
                 ESCAPES,
                 protected.join(" ")
@@ -319,6 +326,7 @@ mod tests {
             &[PathBuf::from("/h/w")],
             &[],
             Path::new("/r"),
+            Path::new("/s"),
         );
         assert!(!made.contains("/h/w"), "{made}");
         assert!(
@@ -374,16 +382,28 @@ mod tests {
             return;
         }
         let base = std::env::temp_dir().join(format!("mothership-sbx-{}", std::process::id()));
-        for dir in ["ws/sub/.git/hooks", "secret/own", "sess", "outside"] {
+        for dir in [
+            "ws/sub/.git/hooks",
+            "secret/own",
+            "sess",
+            "outside",
+            "cache",
+        ] {
             std::fs::create_dir_all(base.join(dir)).unwrap();
         }
         let d = std::fs::canonicalize(&base).unwrap();
         std::fs::write(d.join("secret/s"), "s").unwrap();
         let settings = json!({
             "permissions": {"deny": [format!("Read(/{}/secret/**)", d.display())]},
-            "sandbox": {"filesystem": {"allowWrite": [d.join("sess")]}},
+            "sandbox": {"filesystem": {"allowWrite": [d.join("sess"), d.join("cache/lock")]}},
         });
-        let made = profile(&settings, &[d.join("ws")], &[], &d.join("secret/own"));
+        let made = profile(
+            &settings,
+            &[d.join("ws")],
+            &[],
+            &d.join("secret/own"),
+            &d.join("sess"),
+        );
         let runs = |cmd: &str| {
             std::process::Command::new("/usr/bin/sandbox-exec")
                 .args(["-p", &made, "/bin/sh", "-c", cmd])
@@ -399,6 +419,7 @@ mod tests {
             "test -d secret",
             "echo > sess/r.json",
             "echo > ws/sub/.git/x",
+            "mkdir cache/lock && echo > cache/lock/x && rm cache/lock/x && rmdir cache/lock",
         ] {
             assert!(runs(allowed), "{allowed}");
         }

@@ -15,17 +15,19 @@ mod runtime;
 mod sandbox;
 mod seatbelt;
 mod seccomp;
+mod watch;
 
 pub use codex::{CodexHome, runner as codex_runner};
 pub use command::prompt as commands_prompt;
 pub use runtime::Runtime;
 pub use sandbox::prompt as sandbox_prompt;
+pub use watch::{Watch, watch};
 
 use crate::app::App;
 use request::Request;
 use serde_json::Value;
 use std::{
-    collections::{BTreeMap, HashSet},
+    collections::BTreeMap,
     fs::File,
     io::Write,
     path::{Path, PathBuf},
@@ -144,7 +146,8 @@ pub fn env(settings: &Value, agent: &[(String, String)]) -> Vec<(String, String)
 }
 
 /// The command line before the program for a process working in `cwd` under `settings`; it may
-/// also write `/dev`, `own` and, for Codex, Codex's state in its home. Not the shared temporary
+/// also write `/dev`, `own` and, for Codex, Codex's state in its home. `session` is the
+/// session's directory, which mothership watches for requests, so the run may not replace it. Not the shared temporary
 /// directories, where one run could reach another's files or plant some for unconfined tools.
 /// bubblewrap does not start at all where there is no seccomp filter.
 pub fn confinement(
@@ -153,6 +156,7 @@ pub fn confinement(
     settings: &Value,
     cwd: &Path,
     own: &Path,
+    session: &Path,
     codex: Option<&CodexHome>,
 ) -> Result<Vec<String>, String> {
     let mut workspace = vec![cwd.to_path_buf()];
@@ -164,93 +168,11 @@ pub fn confinement(
     }
     let mut always = seatbelt::subpath(Path::new("/dev"));
     always.extend(codex.map_or_default(|c| codex::home_writes(&c.home)));
-    let profile = seatbelt::profile(settings, &workspace, &always, own);
+    let profile = seatbelt::profile(settings, &workspace, &always, own, session);
     Ok(vec![sandbox.into(), "-p".into(), profile])
 }
 
-/// Serves `host`'s requests one at a time until stopped or dropped; either kills a run in
-/// flight.
-pub struct Watch(tokio::task::JoinHandle<()>);
-
-impl Watch {
-    /// Stops serving and waits until a run in flight is killed, so the workspace is free.
-    pub async fn stop(&mut self) {
-        self.0.abort();
-        let _ = (&mut self.0).await;
-    }
-}
-
-impl Drop for Watch {
-    fn drop(&mut self) {
-        self.0.abort();
-    }
-}
-
-pub fn watch(key: String, host: Host) -> Watch {
-    Watch(tokio::spawn(async move {
-        let mut failed = HashSet::new();
-        loop {
-            // The agent may replace `runs/` with a link to somewhere mothership should not
-            // read requests from or write answers to.
-            let real = std::fs::symlink_metadata(&host.runs).is_ok_and(|m| m.is_dir());
-            let pending = if real {
-                request::pending(&host.runs)
-            } else {
-                Vec::new()
-            };
-            for id in pending {
-                if failed.contains(&id) {
-                    continue;
-                }
-                let outcome = match request::read_plain(&request::request(&host.runs, &id)) {
-                    Ok(text) => match request::parse(&text, &host.sandbox_limits) {
-                        Ok(req) => host.serve(&key, &id, &req).await,
-                        Err(e) => Err(format!("refused: {e}")),
-                    },
-                    Err(e) => Err(format!("unreadable request: {e}")),
-                };
-                if let Err(e) = request::write_answer(&host.runs, &id, outcome) {
-                    tracing::warn!("[{key}] cannot answer run {id}: {e}");
-                    failed.insert(id);
-                }
-            }
-            tokio::time::sleep(Duration::from_secs(1)).await;
-        }
-    }))
-}
-
 impl Host {
-    async fn serve(&self, key: &str, id: &str, req: &Request) -> Result<Value, String> {
-        let what = match req {
-            Request::Codex(_) => "Codex run".to_string(),
-            Request::Command(name) => format!("`{name}`"),
-            Request::Sandbox(_) => "Sandbox run".to_string(),
-        };
-        self.report(&format!("{what} {id} started"));
-        let outcome = match process::RunDir::create(&self.run_root) {
-            Ok(dir) => match req {
-                Request::Codex(run) => self.codex(&dir.0, run).await,
-                Request::Command(name) => {
-                    self.command(&dir.0, name, &request::log(&self.runs, id))
-                        .await
-                }
-                Request::Sandbox(run) => self.sandbox(id, run).await,
-            },
-            Err(e) => Err(format!("cannot make a directory for the run: {e}")),
-        };
-        match &outcome {
-            Ok(_) => self.report(&format!("{what} {id} finished")),
-            Err(e) => {
-                tracing::warn!("[{key}] {what} {id} failed: {e}");
-                self.report(&format!(
-                    "{what} {id} failed: {}",
-                    e.lines().next().unwrap_or_default()
-                ));
-            }
-        }
-        outcome
-    }
-
     /// [`confinement`] for one of this session's runs.
     fn profile(
         &self,
@@ -259,7 +181,15 @@ impl Host {
         codex: Option<&CodexHome>,
     ) -> Result<Vec<String>, String> {
         let filter = self.run_root.join(seccomp::FILE);
-        confinement(&self.sandbox, &filter, settings, &self.cwd, run_dir, codex)
+        confinement(
+            &self.sandbox,
+            &filter,
+            settings,
+            &self.cwd,
+            run_dir,
+            &self.runs,
+            codex,
+        )
     }
 
     fn report(&self, line: &str) {
@@ -304,7 +234,16 @@ mod tests {
         };
         let filter = d.join("seccomp.bpf");
         let made = |sandbox| {
-            confinement(sandbox, &filter, &settings(&d), &ws, &own, Some(&codex)).unwrap()
+            confinement(
+                sandbox,
+                &filter,
+                &settings(&d),
+                &ws,
+                &own,
+                &own,
+                Some(&codex),
+            )
+            .unwrap()
         };
 
         let bwrap = made("/usr/bin/bwrap");
