@@ -1144,7 +1144,8 @@ async fn linear_background_work_past_the_limit_is_given_up(ctx: Ctx) -> Result<(
 }
 
 /// A drained instance (SIGUSR1) keeps a new session's prompt in `state.json` and says so instead
-/// of starting a turn; SIGUSR2 runs it, and `/status` lists the running turn.
+/// of starting a turn; SIGUSR2 runs it, and `/status` lists the running turn, but not to a
+/// request a tunnel forwarded.
 async fn linear_turns_wait_while_draining(ctx: Ctx) -> Result<()> {
     let mut h = Harness::start(&ctx, Setup::default()).await?;
     h.signal("-USR1")?;
@@ -1176,6 +1177,7 @@ async fn linear_turns_wait_while_draining(ctx: Ctx) -> Result<()> {
         turn["workspace"] == "SH-64" && turn["background_tasks"] == 1,
         "{status}"
     );
+    ensure!(h.status_through_tunnel().await? == 404);
     ensure!(h.sessions()?["s64"]["held"].is_null(), "released once");
     let call = h.prompt_with(&context).await?;
     h.terminate().await?;
